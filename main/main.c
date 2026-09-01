@@ -599,226 +599,160 @@ static esp_err_t wait_for_touch_pour_result(
     }
 }
 
-static void print_help(void)
+static void enter_pairing_mode(void)
 {
-    printf(
-        "\nSetup commands:\n"
-        "  help                   Show commands\n"
-        "  scan                   List compatible Keg Scales\n"
-        "  pair KegScale-XXXX PIN Pair scale and save its six-digit update PIN\n"
-        "  unpair                 Clear saved scale\n"
-        "  status                 Show saved pairing\n"
-        "  sleep                  Sleep with timer + touch wake armed\n\n");
-}
+    int last_screen = -1;
 
-static void trim_line(char *line)
-{
-    size_t length = strlen(line);
-
-    while (length > 0 &&
-           isspace(
-               (unsigned char)line[length - 1])) {
-        line[--length] = '\0';
-    }
-
-    char *start = line;
-
-    while (*start != '\0' &&
-           isspace((unsigned char)*start)) {
-        ++start;
-    }
-
-    if (start != line) {
-        memmove(
-            line,
-            start,
-            strlen(start) + 1);
-    }
-}
-
-static void setup_console(void)
-{
-    print_help();
-
-    char line[96] = {0};
-    size_t line_length = 0;
-    bool prompt_shown = false;
+    display_ui_show_message(
+        "KEG DISPLAY",
+        "READY TO PAIR",
+        "OPEN SCALE WEBPAGE");
+    last_screen = 0;
 
     while (true) {
-        if (!prompt_shown) {
-            printf("display-setup> ");
-            fflush(stdout);
-            prompt_shown = true;
-        }
+        ble_client_peer_t candidates[
+            BLE_CLIENT_MAX_CANDIDATES] = {0};
+        size_t count = 0;
 
-        int ch = getchar();
-
-        if (ch == EOF) {
-            clearerr(stdin);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-
-        if (ch == '\b' || ch == 0x7f) {
-            if (line_length > 0) {
-                --line_length;
-                line[line_length] = '\0';
-            }
-            continue;
-        }
-
-        if (ch != '\r' && ch != '\n') {
-            if (isprint((unsigned char)ch) &&
-                line_length < sizeof(line) - 1) {
-                line[line_length++] = (char)ch;
-                line[line_length] = '\0';
-            }
-            continue;
-        }
-
-        /*
-         * idf_monitor sends console input as individual UART bytes rather than
-         * a canonical line. Accumulate those bytes and only interpret a
-         * command after Enter. Ignore the second byte of a CR/LF pair.
-         */
-        if (line_length == 0) {
-            continue;
-        }
-
-        line[line_length] = '\0';
-        line_length = 0;
-        prompt_shown = false;
-        printf("\n");
-        trim_line(line);
-
-        if (strcmp(line, "help") == 0) {
-            print_help();
-        } else if (
-            strcmp(line, "scan") == 0) {
-            ble_client_peer_t candidates[
-                BLE_CLIENT_MAX_CANDIDATES];
-
-            size_t count = 0;
+        esp_err_t err =
             scan_scales(
                 candidates,
                 &count);
 
-            if (count > 1) {
-                display_ui_show_candidates(
-                    candidates,
-                    count);
-            }
-        } else if (
-            strncmp(line, "pair ", 5) == 0) {
-            char scale_id[
-                BLE_CLIENT_SCALE_ID_MAX + 1] = {0};
-            unsigned long pairing_pin = 0;
+        if (err != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-            int parsed =
-                sscanf(
-                    line + 5,
-                    "%20s %lu",
-                    scale_id,
-                    &pairing_pin);
+        ble_client_peer_t *selected = NULL;
+        size_t pairing_count = 0;
 
-            if (parsed < 1 ||
-                (parsed == 2 &&
-                 (pairing_pin < 100000 ||
-                  pairing_pin > 999999))) {
-                printf(
-                    "Use: pair KegScale-XXXX 123456\n");
+        for (size_t i = 0; i < count; ++i) {
+            if (!candidates[i].pairing_mode) {
                 continue;
             }
 
-            ble_client_peer_t peer = {0};
+            ++pairing_count;
+            selected = &candidates[i];
+        }
 
-            esp_err_t err =
-                find_peer_by_id(
-                    scale_id,
-                    &peer);
+        if (pairing_count == 0) {
+            if (last_screen != 0) {
+                display_ui_show_message(
+                    "KEG DISPLAY",
+                    "READY TO PAIR",
+                    "OPEN SCALE WEBPAGE");
+                last_screen = 0;
+            }
+            continue;
+        }
 
-            if (err != ESP_OK) {
-                printf(
-                    "Could not find exact scale '%s'.\n",
-                    scale_id);
-                continue;
+        if (pairing_count > 1 ||
+            selected == NULL) {
+            if (last_screen != 1) {
+                display_ui_show_message(
+                    "KEG DISPLAY",
+                    "MULTIPLE SCALES",
+                    "PAIR ONE SCALE ONLY");
+                last_screen = 1;
             }
 
-            ble_client_scale_state_t state;
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        const uint32_t passkey =
+            100000U +
+            (esp_random() % 900000U);
+
+        display_ui_show_pairing_code(
+            selected->scale_id,
+            passkey);
+        last_screen = 2;
+
+        ESP_LOGI(
+            TAG,
+            "Pairing with %s using a one-time display-generated passkey",
+            selected->scale_id);
+
+        err =
+            ble_client_pair(
+                selected,
+                passkey);
+
+        if (err == ESP_OK) {
+            ble_client_scale_state_t state = {0};
 
             err =
                 validate_and_save_peer(
-                    &peer,
-                    &state,
-                    parsed == 2 ?
-                        (uint32_t)pairing_pin :
-                        0);
-
-            if (err != ESP_OK) {
-                printf(
-                    "Pairing failed: %s\n",
-                    esp_err_to_name(err));
-                continue;
-            }
-
-            printf(
-                "Paired to %s. Rendering current keg state.\n",
-                peer.scale_id);
-
-            render_if_needed(
-                &peer,
-                &state);
-
-            go_to_sleep();
-        } else if (
-            strcmp(line, "unpair") == 0) {
-            esp_err_t err =
-                pairing_clear();
+                    selected,
+                    &state);
 
             if (err == ESP_OK) {
-                memset(
-                    &s_retained,
-                    0,
-                    sizeof(s_retained));
-                printf("Pairing cleared.\n");
-            } else {
-                printf(
-                    "Unpair failed: %s\n",
-                    esp_err_to_name(err));
-            }
-        } else if (
-            strcmp(line, "status") == 0) {
-            pairing_config_t pairing = {0};
-            esp_err_t err =
-                pairing_load(&pairing);
+                display_ui_show_message(
+                    "PAIR DISPLAY",
+                    "SUCCESSFULLY",
+                    selected->scale_id);
 
-            if (err == ESP_OK &&
-                pairing.paired) {
-                char address[24];
-                ble_client_format_address(
-                    &pairing.peer,
-                    address,
-                    sizeof(address));
+                vTaskDelay(pdMS_TO_TICKS(1000));
 
-                printf(
-                    "Paired: %s at %s; update PIN %s\n",
-                    pairing.peer.scale_id,
-                    address,
-                    pairing.pairing_passkey >= 100000 ?
-                        "saved" :
-                        "not set");
-            } else {
-                printf("No scale paired.\n");
+                render_if_needed(
+                    selected,
+                    &state);
+
+                go_to_sleep();
             }
-        } else if (
-            strcmp(line, "sleep") == 0) {
-            go_to_sleep();
-        } else if (
-            line[0] != '\0') {
-            printf(
-                "Unknown command. Type 'help'.\n");
         }
+
+        ble_client_forget_peer(selected);
+        pairing_clear();
+
+        ESP_LOGW(
+            TAG,
+            "Display pairing attempt failed: %s",
+            esp_err_to_name(err));
+
+        display_ui_show_message(
+            "PAIR DISPLAY",
+            "PAIRING FAILED",
+            "TRY ADD DISPLAY AGAIN");
+
+        last_screen = 3;
+        vTaskDelay(pdMS_TO_TICKS(1500));
     }
+}
+
+static bool handle_unpair_request(
+    pairing_config_t *pairing,
+    const ble_client_scale_state_t *state)
+{
+    if (pairing == NULL ||
+        state == NULL ||
+        !state->unpair_requested) {
+        return false;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Authenticated scale requested display unpair");
+
+    ble_client_forget_peer(
+        &pairing->peer);
+    pairing_clear();
+
+    memset(
+        &s_retained,
+        0,
+        sizeof(s_retained));
+
+    display_ui_show_message(
+        "KEG DISPLAY",
+        "DISPLAY UNPAIRED",
+        "READY TO PAIR");
+
+    vTaskDelay(pdMS_TO_TICKS(750));
+    enter_pairing_mode();
+    return true;
 }
 
 void app_main(void)
