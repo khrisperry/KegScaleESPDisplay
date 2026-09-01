@@ -551,6 +551,13 @@ static esp_err_t wait_for_touch_pour_result(
                 state);
 
         if (err == ESP_OK) {
+            if (state->unpair_requested) {
+                ESP_LOGI(
+                    TAG,
+                    "Touch wake: authenticated unpair request received");
+                return ESP_OK;
+            }
+
             if (should_refresh(
                     &pairing->peer,
                     state)) {

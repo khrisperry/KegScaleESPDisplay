@@ -65,6 +65,7 @@ typedef struct {
     uint8_t display_config_revision;
     uint8_t display_flags;
     bool unpair_requested;
+    bool replacement_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     ble_client_update_offer_t update;
