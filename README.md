@@ -135,3 +135,8 @@ The timer wake remains enabled at the same time. The previous GPIO39 EXT0 button
 For a direct touch electrode, connect the electrode to GPIO12. A 470 ohm to 2 kohm series resistor near the ESP32 is recommended for noise/ESD protection; 510 ohms is a good starting value.
 
 If an active 3-pin capacitive-touch module is used instead of a passive electrode, its digital output should be treated as a GPIO wake signal rather than the ESP32 native touch input and the firmware configuration should be changed accordingly.
+
+
+### Touch wake waits for the pour
+
+A timer wake performs the normal quick BLE check. A GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 20 seconds total have elapsed. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
