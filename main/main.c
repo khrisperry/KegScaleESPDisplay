@@ -434,8 +434,8 @@ static void setup_console(void)
 {
     print_help();
 
-    char line[96];
-
+    char line[96] = {0};
+    size_t line_length = 0;
     bool prompt_shown = false;
 
     while (true) {
@@ -445,16 +445,44 @@ static void setup_console(void)
             prompt_shown = true;
         }
 
-        if (fgets(
-                line,
-                sizeof(line),
-                stdin) == NULL) {
+        int ch = getchar();
+
+        if (ch == EOF) {
             clearerr(stdin);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
 
+        if (ch == '\b' || ch == 0x7f) {
+            if (line_length > 0) {
+                --line_length;
+                line[line_length] = '\0';
+            }
+            continue;
+        }
+
+        if (ch != '\r' && ch != '\n') {
+            if (isprint((unsigned char)ch) &&
+                line_length < sizeof(line) - 1) {
+                line[line_length++] = (char)ch;
+                line[line_length] = '\0';
+            }
+            continue;
+        }
+
+        /*
+         * idf_monitor sends console input as individual UART bytes rather than
+         * a canonical line. Accumulate those bytes and only interpret a
+         * command after Enter. Ignore the second byte of a CR/LF pair.
+         */
+        if (line_length == 0) {
+            continue;
+        }
+
+        line[line_length] = '\0';
+        line_length = 0;
         prompt_shown = false;
+        printf("\n");
         trim_line(line);
 
         if (strcmp(line, "help") == 0) {
