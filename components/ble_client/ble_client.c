@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -95,6 +96,13 @@ static const ble_uuid128_t s_display_control_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x08, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_info_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x09, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -151,6 +159,15 @@ typedef struct __attribute__((packed)) {
     uint16_t reserved;
 } wire_display_control_t;
 
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    char version[19];
+} wire_display_info_t;
+
+_Static_assert(
+    sizeof(wire_display_info_t) == 20,
+    "Display info must fit in the default ATT write payload");
+
 typedef struct {
     ble_client_peer_t *items;
     size_t capacity;
@@ -184,6 +201,7 @@ typedef struct {
     uint16_t display_update_handle;
     uint16_t update_bundle_handle;
     uint16_t display_control_handle;
+    uint16_t display_info_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -193,6 +211,11 @@ typedef struct {
     size_t capacity;
     size_t length;
 } read_context_t;
+
+typedef struct {
+    SemaphoreHandle_t done;
+    int status;
+} write_context_t;
 
 static EventGroupHandle_t s_host_events;
 static uint8_t s_own_addr_type;
@@ -523,6 +546,12 @@ static int characteristic_disc_cb(
             context->display_control_handle =
                 characteristic->val_handle;
         }
+        else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_info_uuid.u) == 0) {
+            context->display_info_handle =
+                characteristic->val_handle;
+        }
 
         return 0;
     }
@@ -679,6 +708,65 @@ static esp_err_t read_value(
 
     *length = context.length;
     return ESP_OK;
+}
+
+static int write_cb(
+    uint16_t conn_handle,
+    const struct ble_gatt_error *error,
+    struct ble_gatt_attr *attr,
+    void *arg)
+{
+    (void)conn_handle;
+    (void)attr;
+
+    write_context_t *context = arg;
+    context->status = error->status;
+    xSemaphoreGive(context->done);
+    return 0;
+}
+
+static esp_err_t write_value(
+    uint16_t conn_handle,
+    uint16_t value_handle,
+    const void *value,
+    size_t value_size)
+{
+    SemaphoreHandle_t done =
+        xSemaphoreCreateBinary();
+
+    if (done == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    write_context_t context = {
+        .done = done,
+        .status = BLE_HS_EAPP,
+    };
+
+    int rc =
+        ble_gattc_write_flat(
+            conn_handle,
+            value_handle,
+            value,
+            (uint16_t)value_size,
+            write_cb,
+            &context);
+
+    if (rc != 0) {
+        vSemaphoreDelete(done);
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = wait_sem(done);
+    vSemaphoreDelete(done);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    return context.status == 0 ?
+        ESP_OK :
+        ESP_FAIL;
 }
 
 static esp_err_t read_long_value(
@@ -1107,7 +1195,8 @@ static esp_err_t discover_handles(
     uint16_t *display_config_handle,
     uint16_t *display_update_handle,
     uint16_t *update_bundle_handle,
-    uint16_t *display_control_handle)
+    uint16_t *display_control_handle,
+    uint16_t *display_info_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -1186,6 +1275,8 @@ static esp_err_t discover_handles(
         chr_context.update_bundle_handle;
     *display_control_handle =
         chr_context.display_control_handle;
+    *display_info_handle =
+        chr_context.display_info_handle;
 
     return ESP_OK;
 }
@@ -1269,6 +1360,7 @@ esp_err_t ble_client_fetch(
     uint16_t display_update_handle = 0;
     uint16_t update_bundle_handle = 0;
     uint16_t display_control_handle = 0;
+    uint16_t display_info_handle = 0;
 
     err =
         discover_handles(
@@ -1279,7 +1371,8 @@ esp_err_t ble_client_fetch(
             &display_config_handle,
             &display_update_handle,
             &update_bundle_handle,
-            &display_control_handle);
+            &display_control_handle,
+            &display_info_handle);
 
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
@@ -1445,6 +1538,52 @@ esp_err_t ble_client_fetch(
         }
     }
 
+    if (err == ESP_OK &&
+        display_info_handle != 0) {
+        esp_err_t info_err =
+            secure_connection(
+                conn_handle,
+                &connection);
+
+        if (info_err == ESP_OK) {
+            wire_display_info_t info = {
+                .protocol_version =
+                    BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+            };
+
+            const esp_app_desc_t *app =
+                esp_app_get_description();
+
+            if (app != NULL) {
+                strlcpy(
+                    info.version,
+                    app->version,
+                    sizeof(info.version));
+
+                info_err =
+                    write_value(
+                        conn_handle,
+                        display_info_handle,
+                        &info,
+                        sizeof(info));
+
+                if (info_err == ESP_OK) {
+                    ESP_LOGI(
+                        TAG,
+                        "Reported display firmware %s to scale",
+                        info.version);
+                }
+            }
+        }
+
+        if (info_err != ESP_OK) {
+            ESP_LOGW(
+                TAG,
+                "Could not report display firmware to scale: %s",
+                esp_err_to_name(info_err));
+        }
+    }
+
     disconnect_peer(conn_handle);
 
     if (err != ESP_OK) {
@@ -1545,6 +1684,7 @@ esp_err_t ble_client_fetch_update_bundle(
     uint16_t display_update_handle = 0;
     uint16_t update_bundle_handle = 0;
     uint16_t display_control_handle = 0;
+    uint16_t display_info_handle = 0;
 
     if (err == ESP_OK) {
         err =
