@@ -360,18 +360,6 @@ static void draw_text_centered_at(
         true);
 }
 
-static void draw_small_separator(
-    int x,
-    int y)
-{
-    epaper_fill_rect(
-        x,
-        y,
-        2,
-        2,
-        true);
-}
-
 static bool serving_size_near(
     float serving_size_oz,
     float target_oz)
@@ -463,17 +451,18 @@ esp_err_t display_ui_show_scale(
     epaper_clear(false);
 
     /*
-     * Finalized information hierarchy for the serving-focused layout:
+     * Serving-focused layout:
      *
-     *        [future battery]
-     *              30
-     *          PINTS LEFT
-     *          MILLER LITE
+     *   [future temp]       30        [future battery]
+     *                   PINTS LEFT
+     *                   MILLER LITE
      *
-     *   16 OZ  •  31.2 LB  •  3.80 GAL  •  76%
-     *             [future temp / settling]
+     *        16 OZ                   31.2 LB
+     *       3.80 GAL                    76%
      *
-     * The top-right remains reserved for the display's own battery reading.
+     * The two-row metric grid uses the available lower panel area instead of
+     * compressing four values into one tiny line. Temperature is reserved at
+     * upper-left and the display's own battery reading at upper-right.
      */
 
     char servings[8];
@@ -582,55 +571,43 @@ esp_err_t display_ui_show_scale(
         (double)state->remaining_percent);
 
     /*
-     * Four equal-priority supporting metrics. These are intentionally small;
-     * the serving count and beer identity should win from normal viewing
-     * distance.
+     * Two-by-two supporting metric grid. Scale 2 keeps these values readable
+     * while preserving clear hierarchy below the hero serving count.
      */
     draw_text_centered_at(
-        27,
-        98,
+        62,
+        92,
         serving_size,
-        1);
-
-    draw_small_separator(
-        56,
-        101);
+        2);
 
     draw_text_centered_at(
-        91,
-        98,
+        188,
+        92,
         weight,
-        1);
+        2);
 
-    draw_small_separator(
-        122,
-        101);
-
-    draw_text_centered_at(
-        159,
-        98,
-        gallons,
-        1);
-
-    draw_small_separator(
-        196,
-        101);
-
-    draw_text_centered_at(
-        224,
-        98,
-        percent,
-        1);
-
-    /*
-     * Future temperature will use this bottom strip. Stable is intentionally
-     * silent; only the transient settling state takes over the footer.
-     */
     if ((state->flags &
-         BLE_SCALE_FLAG_STABLE) == 0) {
+         BLE_SCALE_FLAG_STABLE) != 0) {
+        draw_text_centered_at(
+            62,
+            107,
+            gallons,
+            2);
+
+        draw_text_centered_at(
+            188,
+            107,
+            percent,
+            2);
+    } else {
+        /*
+         * An unsettled state is temporary and more useful than the second
+         * metric row. Normal refresh logic generally avoids rendering while
+         * settling, but this keeps initial/setup renders understandable.
+         */
         draw_text_centered_at(
             EPAPER_WIDTH / 2,
-            112,
+            107,
             "SETTLING...",
             1);
     }
