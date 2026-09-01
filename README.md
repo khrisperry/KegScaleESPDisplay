@@ -11,8 +11,8 @@ Initial hardware target:
 - 4 MB flash
 - 2.13-inch monochrome e-paper (122x250 native / 250x122 landscape, SSD1680-class panel)
 - Timer wake every 180 seconds
-- Button 1 (GPIO39) as a temporary manual wake source
-- Capacitive touch wake will be added later
+- Native capacitive touch wake on GPIO12 (ESP32 touch channel 5)
+- Timer wake every 180 seconds
 
 The scale remains the source of truth. This display does not perform tare, calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA.
 
@@ -74,7 +74,7 @@ Changes are developed on feature branches, compiled in GitHub Actions, hardware-
 The initial firmware is already structured around the final low-power workflow:
 
 - timer wake every 3 minutes
-- Button 1 / GPIO39 as a temporary manual wake source
+- native GPIO12 capacitive-touch wake
 - direct reconnect to one saved scale
 - exact-ID recovery scan if the BLE address changes
 - one-shot reads of status, keg name, and device information
@@ -121,5 +121,17 @@ The GitHub Actions build also targets classic ESP32.
 5. Confirm the e-paper panel initializes and orientation is correct.
 6. Confirm a meaningful scale change updates e-paper.
 7. Confirm a no-change 3-minute wake does not refresh e-paper.
-8. Confirm GPIO39 wakes from deep sleep.
-9. Measure actual V2.3.1 deep-sleep battery current.
+8. Confirm touching the GPIO12 electrode wakes from deep sleep and logs `wake=touch`.
+9. Tune the touch threshold percentage if needed.
+10. Measure actual V2.3.1 deep-sleep battery current.
+
+
+## Capacitive touch wake
+
+The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and sets the wake threshold to 8% below that value by default.
+
+The timer wake remains enabled at the same time. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
+
+For a direct touch electrode, connect the electrode to GPIO12. A 470 ohm to 2 kohm series resistor near the ESP32 is recommended for noise/ESD protection; 510 ohms is a good starting value.
+
+If an active 3-pin capacitive-touch module is used instead of a passive electrode, its digital output should be treated as a GPIO wake signal rather than the ESP32 native touch input and the firmware configuration should be changed accordingly.
