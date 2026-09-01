@@ -1,5 +1,6 @@
 #include "ble_client.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -168,10 +169,26 @@ static int scan_gap_event(struct ble_gap_event *event, void *arg)
             const bool has_service =
                 advertised_service_matches(&fields);
 
-            const bool has_scale_name =
-                fields.name != NULL &&
-                fields.name_len >= 9 &&
-                memcmp(fields.name, "KegScale-", 9) == 0;
+            bool has_scale_name = false;
+
+            if (fields.name != NULL &&
+                fields.name_len >= 9) {
+                static const char prefix[] =
+                    "kegscale-";
+
+                has_scale_name = true;
+
+                for (size_t i = 0;
+                     i < sizeof(prefix) - 1;
+                     ++i) {
+                    if ((char)tolower(
+                            (unsigned char)fields.name[i]) !=
+                        prefix[i]) {
+                        has_scale_name = false;
+                        break;
+                    }
+                }
+            }
 
             if (!has_service && !has_scale_name) {
                 break;
@@ -557,8 +574,14 @@ esp_err_t ble_client_scan(
     size_t out = 0;
 
     for (size_t i = 0; i < context.count; ++i) {
-        if (context.items[i].scale_id[0] == '\0' ||
-            !context.items[i].service_seen) {
+        /*
+         * Some BLE stacks / legacy advertisers split the device name and
+         * 128-bit service UUID across advertisement and scan-response packets
+         * in ways that are not always surfaced identically by the scanner.
+         * Keep any KegScale-named candidate here and validate the actual
+         * service + protocol after connecting before it can be paired.
+         */
+        if (context.items[i].scale_id[0] == '\0') {
             continue;
         }
 
