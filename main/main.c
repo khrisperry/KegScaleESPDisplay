@@ -251,8 +251,7 @@ static esp_err_t scan_scales(
 
 static esp_err_t validate_and_save_peer(
     const ble_client_peer_t *peer,
-    ble_client_scale_state_t *state,
-    uint32_t pairing_passkey)
+    ble_client_scale_state_t *state)
 {
     esp_err_t err =
         ble_client_fetch(
@@ -273,9 +272,7 @@ static esp_err_t validate_and_save_peer(
         return ESP_ERR_INVALID_VERSION;
     }
 
-    return pairing_save(
-        peer,
-        pairing_passkey);
+    return pairing_save(peer);
 }
 
 static esp_err_t find_peer_by_id(
@@ -397,8 +394,7 @@ static esp_err_t fetch_paired_state(
 
     ESP_RETURN_ON_ERROR(
         pairing_save(
-            &recovered,
-            pairing->pairing_passkey),
+            &recovered),
         TAG,
         "Could not repair saved BLE address");
 
@@ -465,16 +461,6 @@ static void install_display_update_if_needed(
         return;
     }
 
-    if (pairing->pairing_passkey < 100000 ||
-        pairing->pairing_passkey > 999999) {
-        ESP_LOGW(
-            TAG,
-            "Display update %s is available, but no pairing PIN is saved; re-pair with 'pair %s PIN'",
-            state->update.version,
-            pairing->peer.scale_id);
-        return;
-    }
-
     ESP_LOGI(
         TAG,
         "Display update %s is available; requesting encrypted Wi-Fi/OTA bundle",
@@ -484,7 +470,6 @@ static void install_display_update_if_needed(
     esp_err_t err =
         ble_client_fetch_update_bundle(
             &pairing->peer,
-            pairing->pairing_passkey,
             &bundle);
 
     if (err == ESP_OK &&
