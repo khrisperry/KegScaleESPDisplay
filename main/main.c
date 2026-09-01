@@ -12,6 +12,7 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -166,6 +167,7 @@ static void configure_wake_sources(void)
 
 static void go_to_sleep(void)
 {
+    pairing_reset_power_cycle_count();
     configure_wake_sources();
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
