@@ -44,3 +44,24 @@ The display does not depend on BLE notifications because deep sleep disconnects 
 On wake it reads the current snapshot. The scale-side sequence counter advances only for meaningful stable events, so a sleeping client can discover that something changed even if it missed the original notification.
 
 The display still compares actual fields defensively and never replaces a stable e-paper image with a settling snapshot.
+
+
+## Display configuration
+
+Optional characteristic:
+
+`8f7a0005-3f7b-4c61-a2b8-6d2f5b71c001`
+
+The display reads this 6-byte packet when available:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 1 | layout ID |
+| 2 | 1 | display/config revision |
+| 3 | 1 | future flags |
+| 4 | 2 | serving size in ounces x100 |
+
+Serving size lets the display show both the configured size and a friendly remaining-unit label, e.g. 12 oz -> CANS LEFT and 16 oz -> PINTS LEFT.
+
+For compatibility with older scale firmware that does not yet expose this characteristic, the display falls back to 16 oz / serving-focused layout.
