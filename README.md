@@ -9,7 +9,7 @@ Initial hardware target:
 - LILYGO T5 V2.3.1_2.13
 - ESP32
 - 4 MB flash
-- 2.13-inch monochrome e-paper (212x104, SSD1680-class panel)
+- 2.13-inch monochrome e-paper (122x250 native / 250x122 landscape, SSD1680-class panel)
 - Timer wake every 180 seconds
 - Button 1 (GPIO39) as a temporary manual wake source
 - Capacitive touch wake will be added later
@@ -67,3 +67,59 @@ V2.3.1 does **not** have the GPIO12 display-power switch added in V2.4.
 ## Development workflow
 
 Changes are developed on feature branches, compiled in GitHub Actions, hardware-tested, and merged after validation.
+
+
+## Current bring-up behavior
+
+The initial firmware is already structured around the final low-power workflow:
+
+- timer wake every 3 minutes
+- Button 1 / GPIO39 as a temporary manual wake source
+- direct reconnect to one saved scale
+- exact-ID recovery scan if the BLE address changes
+- one-shot reads of status, keg name, and device information
+- e-paper refresh only for meaningful changes
+- deep sleep after each successful check
+- no persistent Wi-Fi connection
+
+The display keeps the last image visible while sleeping.
+
+### First pairing
+
+Until the touch/configuration UI is added, pairing can be completed from the serial console.
+
+Commands:
+
+```text
+scan
+pair KegScale-B560
+status
+unpair
+sleep
+```
+
+If exactly one compatible Keg Scale is visible, the default configuration automatically validates and saves it. If multiple compatible scales are visible, firmware deliberately refuses to choose by signal strength.
+
+## Build
+
+ESP-IDF 6.0.1:
+
+```bash
+idf.py set-target esp32
+idf.py build
+idf.py -p COMx flash monitor
+```
+
+The GitHub Actions build also targets classic ESP32.
+
+## Hardware validation order
+
+1. Confirm firmware boots and scans BLE.
+2. Confirm it discovers the existing scale and reads protocol version 1.
+3. Confirm one-scale automatic pairing or explicit serial pairing.
+4. Confirm current keg values decode correctly.
+5. Confirm the e-paper panel initializes and orientation is correct.
+6. Confirm a meaningful scale change updates e-paper.
+7. Confirm a no-change 3-minute wake does not refresh e-paper.
+8. Confirm GPIO39 wakes from deep sleep.
+9. Measure actual V2.3.1 deep-sleep battery current.
