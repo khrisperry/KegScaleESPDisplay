@@ -20,10 +20,10 @@ static const char *TAG = "display_ota";
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAILED_BIT BIT1
-#define WIFI_CONNECT_TIMEOUT_MS 20000
+#define WIFI_CONNECT_TIMEOUT_MS 60000
 #define HTTP_TIMEOUT_MS 20000
 #define DOWNLOAD_BUFFER_SIZE 4096
-#define WIFI_MAX_RETRIES 5
+#define WIFI_MAX_RETRIES 10
 
 typedef struct {
     EventGroupHandle_t events;
@@ -45,15 +45,27 @@ static void wifi_event(
     int32_t event_id,
     void *event_data)
 {
-    (void)event_data;
     wifi_context_t *context = arg;
 
     if (event_base == WIFI_EVENT &&
         event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "OTA Wi-Fi station started");
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT &&
                event_id ==
                    WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *event =
+            (const wifi_event_sta_disconnected_t *)event_data;
+
+        ESP_LOGW(
+            TAG,
+            "OTA Wi-Fi disconnected; reason=%u retry=%u/%u",
+            event != NULL ?
+                (unsigned)event->reason :
+                0U,
+            context->retries,
+            WIFI_MAX_RETRIES);
+
         if (context->retries < WIFI_MAX_RETRIES) {
             ++context->retries;
             esp_wifi_connect();
@@ -64,7 +76,22 @@ static void wifi_event(
         }
     } else if (event_base == IP_EVENT &&
                event_id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *event =
+            (const ip_event_got_ip_t *)event_data;
+
         context->retries = 0;
+
+        if (event != NULL) {
+            ESP_LOGI(
+                TAG,
+                "OTA Wi-Fi got IP: " IPSTR,
+                IP2STR(&event->ip_info.ip));
+        } else {
+            ESP_LOGI(
+                TAG,
+                "OTA Wi-Fi got IP");
+        }
+
         xEventGroupSetBits(
             context->events,
             WIFI_CONNECTED_BIT);
@@ -181,9 +208,27 @@ static esp_err_t connect_wifi(
         err = esp_wifi_start();
     }
 
+    if (err == ESP_OK) {
+        /*
+         * OTA is a short, high-throughput operation. Keep the radio fully
+         * awake while associating, obtaining DHCP, and downloading so weak
+         * links are not made worse by station power saving.
+         */
+        err =
+            esp_wifi_set_ps(
+                WIFI_PS_NONE);
+    }
+
     if (err != ESP_OK) {
         return err;
     }
+
+    ESP_LOGI(
+        TAG,
+        "Waiting up to %u seconds for OTA Wi-Fi and DHCP",
+        (unsigned)(
+            WIFI_CONNECT_TIMEOUT_MS /
+            1000U));
 
     EventBits_t bits =
         xEventGroupWaitBits(
@@ -195,9 +240,32 @@ static esp_err_t connect_wifi(
             pdMS_TO_TICKS(
                 WIFI_CONNECT_TIMEOUT_MS));
 
-    return (bits & WIFI_CONNECTED_BIT) != 0 ?
-        ESP_OK :
-        ESP_ERR_TIMEOUT;
+    if ((bits & WIFI_CONNECTED_BIT) != 0) {
+        return ESP_OK;
+    }
+
+    if ((bits & WIFI_FAILED_BIT) != 0) {
+        ESP_LOGW(
+            TAG,
+            "OTA Wi-Fi gave up after %u reconnect attempts",
+            context->retries);
+        return ESP_FAIL;
+    }
+
+    wifi_ap_record_t ap = {0};
+
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "OTA Wi-Fi timed out after association; RSSI=%d dBm",
+            (int)ap.rssi);
+    } else {
+        ESP_LOGW(
+            TAG,
+            "OTA Wi-Fi timed out before obtaining an IP address");
+    }
+
+    return ESP_ERR_TIMEOUT;
 }
 
 static void stop_wifi(
