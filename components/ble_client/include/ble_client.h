@@ -21,6 +21,7 @@ typedef struct {
     uint8_t address[6];
     uint8_t address_type;
     int8_t rssi;
+    bool service_seen;
 } ble_client_peer_t;
 
 typedef struct {
