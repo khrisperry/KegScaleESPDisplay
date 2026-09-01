@@ -46,6 +46,7 @@ typedef struct {
     uint8_t address_type;
     int8_t rssi;
     bool service_seen;
+    bool pairing_mode;
 } ble_client_peer_t;
 
 typedef struct {
@@ -63,6 +64,7 @@ typedef struct {
     uint8_t layout_id;
     uint8_t display_config_revision;
     uint8_t display_flags;
+    bool unpair_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     ble_client_update_offer_t update;
@@ -85,14 +87,20 @@ esp_err_t ble_client_scan(
     size_t *count,
     uint32_t duration_ms);
 
+esp_err_t ble_client_pair(
+    const ble_client_peer_t *peer,
+    uint32_t display_passkey);
+
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state);
 
 esp_err_t ble_client_fetch_update_bundle(
     const ble_client_peer_t *peer,
-    uint32_t pairing_passkey,
     ble_client_update_bundle_t *bundle);
+
+esp_err_t ble_client_forget_peer(
+    const ble_client_peer_t *peer);
 
 bool ble_client_state_is_compatible(
     const ble_client_peer_t *peer,

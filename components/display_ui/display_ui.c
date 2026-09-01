@@ -89,6 +89,65 @@ esp_err_t display_ui_show_message(
     return present();
 }
 
+esp_err_t display_ui_show_pairing_code(
+    const char *scale_id,
+    uint32_t passkey)
+{
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    epaper_clear(false);
+    epaper_draw_rect(
+        0,
+        0,
+        EPAPER_WIDTH,
+        EPAPER_HEIGHT,
+        true);
+
+    draw_centered(
+        7,
+        "PAIR DISPLAY",
+        2,
+        true);
+
+    if (scale_id != NULL) {
+        draw_centered(
+            29,
+            scale_id,
+            1,
+            true);
+    }
+
+    draw_centered(
+        48,
+        "ENTER THIS CODE ON",
+        1,
+        true);
+    draw_centered(
+        60,
+        "THE SCALE WEBPAGE",
+        1,
+        true);
+
+    char code[16];
+    snprintf(
+        code,
+        sizeof(code),
+        "%03lu %03lu",
+        (unsigned long)(passkey / 1000U),
+        (unsigned long)(passkey % 1000U));
+
+    draw_centered(
+        82,
+        code,
+        3,
+        true);
+
+    return present();
+}
+
 esp_err_t display_ui_show_candidates(
     const ble_client_peer_t *candidates,
     size_t count)
