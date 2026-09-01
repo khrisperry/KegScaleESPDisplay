@@ -12,7 +12,8 @@ This display consumes the read-only BLE service implemented by KegScaleESP.
 | Device info | `8f7a0004-3f7b-4c61-a2b8-6d2f5b71c001` | Verify protocol and logical scale ID |
 | Display configuration | `8f7a0005-3f7b-4c61-a2b8-6d2f5b71c001` | Serving size and layout metadata |
 | Display update offer | `8f7a0006-3f7b-4c61-a2b8-6d2f5b71c001` | Latest compatible display firmware |
-| Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read |
+| Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
+| Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
 
 ## 20-byte snapshot
 
@@ -71,6 +72,8 @@ For compatibility with older scale firmware that does not yet expose this charac
 
 ## Encrypted display OTA
 
-The update offer is non-secret and may be read during the normal wake cycle. If its hardware ID matches `lilygo_t5_v2_3_1` and the version differs from the running application, the display reconnects using its saved six-digit scale PIN and establishes a bonded LE Secure Connections session.
+The update offer is non-secret and may be read during the normal wake cycle. If its hardware ID matches `lilygo_t5_v2_3_1` and the version differs from the running application, the display reconnects using its persistent BLE bond and establishes an authenticated encrypted session. No pairing code is stored or reused.
 
-The Wi-Fi/OTA bundle requires authenticated encryption. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
+The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionally verifies that the connected peer is the specifically authorized bonded display. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
+
+The display-control characteristic is also restricted to the exact authorized bond. A remove/replace request sets an unpair flag; after reading it, the display clears its local bond and pairing identity.
