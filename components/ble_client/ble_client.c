@@ -27,6 +27,7 @@ static const char *TAG = "ble_client";
 #define HOST_SYNC_BIT BIT0
 #define GATT_TIMEOUT_MS 10000
 #define CONNECT_TIMEOUT_MS 4000
+#define PAIRING_SECURITY_TIMEOUT_MS 120000
 #define UPDATE_FLAG_VALID (1U << 0)
 #define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
 #define DISPLAY_CONTROL_UNPAIR (1U << 0)
@@ -1023,9 +1024,19 @@ static esp_err_t secure_connection(
         return ESP_FAIL;
     }
 
+    TickType_t security_timeout =
+        pdMS_TO_TICKS(
+            context->pairing_passkey >= 100000 &&
+            context->pairing_passkey <= 999999 ?
+                PAIRING_SECURITY_TIMEOUT_MS :
+                GATT_TIMEOUT_MS);
+
     esp_err_t err =
-        wait_sem(
-            context->security_done);
+        xSemaphoreTake(
+            context->security_done,
+            security_timeout) == pdTRUE ?
+                ESP_OK :
+                ESP_ERR_TIMEOUT;
 
     vSemaphoreDelete(
         context->security_done);
