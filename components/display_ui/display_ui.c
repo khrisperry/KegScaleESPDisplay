@@ -372,6 +372,80 @@ static void draw_small_separator(
         true);
 }
 
+static bool serving_size_near(
+    float serving_size_oz,
+    float target_oz)
+{
+    float delta =
+        serving_size_oz - target_oz;
+
+    if (delta < 0.0f) {
+        delta = -delta;
+    }
+
+    return delta <= 0.25f;
+}
+
+static const char *serving_count_label(
+    float serving_size_oz)
+{
+    if (serving_size_near(
+            serving_size_oz,
+            12.0f)) {
+        return "CANS LEFT";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            16.0f)) {
+        return "PINTS LEFT";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            32.0f)) {
+        return "CROWLERS LEFT";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            64.0f)) {
+        return "GROWLERS LEFT";
+    }
+
+    return "SERVINGS LEFT";
+}
+
+static void format_serving_size(
+    float serving_size_oz,
+    char *buffer,
+    size_t buffer_size)
+{
+    const int whole =
+        (int)(serving_size_oz + 0.5f);
+
+    float delta =
+        serving_size_oz - (float)whole;
+
+    if (delta < 0.0f) {
+        delta = -delta;
+    }
+
+    if (delta < 0.05f) {
+        snprintf(
+            buffer,
+            buffer_size,
+            "%d OZ",
+            whole);
+    } else {
+        snprintf(
+            buffer,
+            buffer_size,
+            "%.1F OZ",
+            (double)serving_size_oz);
+    }
+}
+
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state)
@@ -389,12 +463,51 @@ esp_err_t display_ui_show_scale(
     epaper_clear(false);
 
     /*
-     * Visual safe area:
-     * - y=6 keeps content away from the physical top edge that clipped the
-     *   original black header.
-     * - x=190..244 is intentionally reserved for future battery percentage.
-     * - the bottom row leaves room for future temperature/status information.
+     * Finalized information hierarchy for the serving-focused layout:
+     *
+     *        [future battery]
+     *              30
+     *          PINTS LEFT
+     *          MILLER LITE
+     *
+     *   16 OZ  •  31.2 LB  •  3.80 GAL  •  76%
+     *             [future temp / settling]
+     *
+     * The top-right remains reserved for the display's own battery reading.
      */
+
+    char servings[8];
+
+    snprintf(
+        servings,
+        sizeof(servings),
+        "%u",
+        (unsigned)state->remaining_servings);
+
+    draw_hero_number(
+        EPAPER_WIDTH / 2,
+        9,
+        servings);
+
+    const char *count_label =
+        serving_count_label(
+            state->serving_size_oz);
+
+    int label_scale = 2;
+
+    if (epaper_text_width(
+            count_label,
+            label_scale) >
+        EPAPER_WIDTH - 12) {
+        label_scale = 1;
+    }
+
+    draw_text_centered_at(
+        EPAPER_WIDTH / 2,
+        56,
+        count_label,
+        label_scale);
+
     char keg_name[
         BLE_CLIENT_KEG_NAME_MAX + 1];
 
@@ -411,16 +524,15 @@ esp_err_t display_ui_show_scale(
     }
 
     /*
-     * Header uses the existing compact bitmap face at 2x, but it is now
-     * unboxed and given breathing room. Keep it inside the battery-reserved
-     * area. Drop to 1x only for unusually long keg names.
+     * Match the count-label size whenever the beer name fits. Longer names
+     * gracefully fall back to the compact face rather than clipping.
      */
-    int keg_scale = 2;
+    int keg_scale = label_scale;
 
     while (epaper_text_width(
                keg_name,
                keg_scale) >
-           174) {
+           EPAPER_WIDTH - 12) {
         if (keg_scale > 1) {
             keg_scale = 1;
             continue;
@@ -435,51 +547,21 @@ esp_err_t display_ui_show_scale(
         keg_name[length - 1] = '\0';
     }
 
-    epaper_draw_text(
-        8,
-        7,
-        keg_name,
-        keg_scale,
-        true);
-
-    /*
-     * Reserved battery region:
-     * x=190..244, y=6..20
-     *
-     * Nothing is drawn until real battery data exists. This avoids showing
-     * fake "--%" values while preserving the final layout.
-     */
-
-    char servings[8];
-
-    snprintf(
-        servings,
-        sizeof(servings),
-        "%u",
-        (unsigned)state->remaining_servings);
-
-    /*
-     * Hero content: servings is deliberately the largest and most central
-     * piece of information on the display.
-     */
-    draw_hero_number(
-        EPAPER_WIDTH / 2,
-        29,
-        servings);
-
     draw_text_centered_at(
         EPAPER_WIDTH / 2,
-        76,
-        "SERVINGS LEFT",
-        2);
+        75,
+        keg_name,
+        keg_scale);
 
-    /*
-     * Secondary metrics share one compact row. Their centers are fixed so
-     * battery/temperature additions later do not force this row to move.
-     */
+    char serving_size[16];
     char weight[20];
     char gallons[20];
     char percent[12];
+
+    format_serving_size(
+        state->serving_size_oz,
+        serving_size,
+        sizeof(serving_size));
 
     snprintf(
         weight,
@@ -499,37 +581,50 @@ esp_err_t display_ui_show_scale(
         "%.0F%%",
         (double)state->remaining_percent);
 
+    /*
+     * Four equal-priority supporting metrics. These are intentionally small;
+     * the serving count and beer identity should win from normal viewing
+     * distance.
+     */
     draw_text_centered_at(
-        43,
+        27,
+        98,
+        serving_size,
+        1);
+
+    draw_small_separator(
+        56,
+        101);
+
+    draw_text_centered_at(
+        91,
         98,
         weight,
         1);
 
     draw_small_separator(
-        82,
+        122,
         101);
 
     draw_text_centered_at(
-        125,
+        159,
         98,
         gallons,
         1);
 
     draw_small_separator(
-        170,
+        196,
         101);
 
     draw_text_centered_at(
-        208,
+        224,
         98,
         percent,
         1);
 
     /*
-     * Bottom status strip:
-     * - Future temperature may occupy the left side.
-     * - Stable is intentionally quiet.
-     * - Settling is surfaced because it is actionable/temporary.
+     * Future temperature will use this bottom strip. Stable is intentionally
+     * silent; only the transient settling state takes over the footer.
      */
     if ((state->flags &
          BLE_SCALE_FLAG_STABLE) == 0) {
