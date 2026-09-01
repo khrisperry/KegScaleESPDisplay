@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "epaper.h"
+#include "esp_check.h"
 #include "esp_log.h"
 
 static const char *TAG = "display_ui";
