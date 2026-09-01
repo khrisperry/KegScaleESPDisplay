@@ -48,6 +48,13 @@ static void init_nvs(void)
     ESP_ERROR_CHECK(err);
 }
 
+static bool is_touch_wake(void)
+{
+    return
+        (esp_sleep_get_wakeup_causes() &
+         BIT(ESP_SLEEP_WAKEUP_TOUCHPAD)) != 0;
+}
+
 static const char *wake_reason(void)
 {
     const uint32_t causes =
@@ -386,6 +393,93 @@ static void render_if_needed(
     }
 }
 
+static esp_err_t wait_for_touch_pour_result(
+    pairing_config_t *pairing,
+    ble_client_scale_state_t *state,
+    bool *meaningful_change)
+{
+    if (pairing == NULL ||
+        state == NULL ||
+        meaningful_change == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *meaningful_change = false;
+
+    ESP_LOGI(
+        TAG,
+        "Touch wake: waiting %d seconds before checking the pour",
+        CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
+
+    vTaskDelay(
+        pdMS_TO_TICKS(
+            CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS *
+            1000));
+
+    const TickType_t started =
+        xTaskGetTickCount();
+
+    const TickType_t remaining_window =
+        pdMS_TO_TICKS(
+            (CONFIG_KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS -
+             CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS) *
+            1000);
+
+    while (true) {
+        esp_err_t err =
+            fetch_paired_state(
+                pairing,
+                state);
+
+        if (err == ESP_OK) {
+            if (should_refresh(
+                    &pairing->peer,
+                    state)) {
+                *meaningful_change = true;
+
+                ESP_LOGI(
+                    TAG,
+                    "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb",
+                    (unsigned)state->sequence,
+                    (unsigned)state->remaining_servings,
+                    (double)state->total_weight_lbs);
+
+                return ESP_OK;
+            }
+
+            ESP_LOGI(
+                TAG,
+                "Touch wake: no settled meaningful change yet; seq=%u stable=%s",
+                (unsigned)state->sequence,
+                (state->flags &
+                 BLE_SCALE_FLAG_STABLE) ?
+                    "yes" :
+                    "no");
+        } else {
+            ESP_LOGW(
+                TAG,
+                "Touch wake scale check failed: %s",
+                esp_err_to_name(err));
+        }
+
+        const TickType_t elapsed =
+            xTaskGetTickCount() -
+            started;
+
+        if (elapsed >= remaining_window) {
+            ESP_LOGI(
+                TAG,
+                "Touch wake observation window ended with no new settled change");
+            return err;
+        }
+
+        vTaskDelay(
+            pdMS_TO_TICKS(
+                CONFIG_KEG_DISPLAY_TOUCH_RETRY_SECONDS *
+                1000));
+    }
+}
+
 static void print_help(void)
 {
     printf(
@@ -594,16 +688,45 @@ void app_main(void)
 
     init_nvs();
 
-    ESP_ERROR_CHECK(
-        ble_client_init());
-
     pairing_config_t pairing = {0};
     esp_err_t err =
         pairing_load(&pairing);
 
+    const bool touch_wake =
+        is_touch_wake();
+
+    ESP_ERROR_CHECK(
+        ble_client_init());
+
     if (err == ESP_OK &&
         pairing.paired) {
         ble_client_scale_state_t state;
+
+#if CONFIG_KEG_DISPLAY_TOUCH_WAKE
+        if (touch_wake) {
+            bool meaningful_change = false;
+
+            err =
+                wait_for_touch_pour_result(
+                    &pairing,
+                    &state,
+                    &meaningful_change);
+
+            if (err == ESP_OK &&
+                meaningful_change) {
+                render_if_needed(
+                    &pairing.peer,
+                    &state);
+            } else if (err != ESP_OK) {
+                ESP_LOGW(
+                    TAG,
+                    "Touch wake ended without a successful final scale read: %s",
+                    esp_err_to_name(err));
+            }
+
+            go_to_sleep();
+        }
+#endif
 
         err =
             fetch_paired_state(
