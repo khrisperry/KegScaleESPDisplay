@@ -894,6 +894,18 @@ void app_main(void)
                     esp_err_to_name(err));
             }
 
+            /*
+             * Touch wake already has a fresh authenticated scale state.
+             * Process a pending display OTA here too so a user can wake the
+             * display to install an update instead of waiting for the next
+             * timer wake.
+             */
+            if (err == ESP_OK) {
+                install_display_update_if_needed(
+                    &pairing,
+                    &state);
+            }
+
             go_to_sleep();
         }
 #endif
