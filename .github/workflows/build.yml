@@ -1,0 +1,33 @@
+name: ESP-IDF Build
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - 'feature/**'
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build ESP32 firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32
+          path: '.'
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: keg-scale-display-esp32
+          path: |
+            build/keg_scale_display.bin
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flash_args
