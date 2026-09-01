@@ -320,13 +320,40 @@ static esp_err_t fetch_paired_state(
     }
 
     /*
-     * The logical KegScale-XXXX identity is stable. If the controller address
-     * ever changes, scan for the exact saved ID and repair only that pairing.
+     * A visible scale can occasionally miss a connection establishment even
+     * though its saved address is still correct. Retry the known address once
+     * before spending several seconds scanning for identity recovery.
+     */
+    ESP_LOGW(
+        TAG,
+        "Direct connection to %s failed; retrying saved address once",
+        pairing->peer.scale_id);
+
+    vTaskDelay(pdMS_TO_TICKS(750));
+
+    err =
+        ble_client_fetch(
+            &pairing->peer,
+            state);
+
+    if (err == ESP_OK &&
+        ble_client_state_is_compatible(
+            &pairing->peer,
+            state)) {
+        ESP_LOGI(
+            TAG,
+            "Saved-address BLE retry succeeded");
+        return ESP_OK;
+    }
+
+    /*
+     * The logical KegScale-XXXX identity is stable. Only after two direct
+     * failures do an exact-ID scan to repair a genuinely changed BLE address.
      * Never fall back to strongest RSSI or a different scale.
      */
     ESP_LOGW(
         TAG,
-        "Direct connection to %s failed; looking for the exact saved ID",
+        "Saved-address retry failed; looking for exact ID %s",
         pairing->peer.scale_id);
 
     ble_client_peer_t recovered = {0};
@@ -339,6 +366,13 @@ static esp_err_t fetch_paired_state(
     if (err != ESP_OK) {
         return err;
     }
+
+    /*
+     * Give the controller a short handoff interval after active scanning.
+     * This avoids immediately starting a connection on the same radio state
+     * transition that completed the discovery procedure.
+     */
+    vTaskDelay(pdMS_TO_TICKS(250));
 
     err =
         ble_client_fetch(
