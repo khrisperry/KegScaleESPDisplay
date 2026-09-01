@@ -5,6 +5,7 @@ idf_component_register(
         ble_client
         display_ui
         pairing
+        touch_wake
         nvs_flash
         esp_driver_gpio
         esp_hw_support
