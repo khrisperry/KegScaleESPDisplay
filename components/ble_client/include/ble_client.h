@@ -15,6 +15,30 @@ extern "C" {
 #define BLE_CLIENT_DEVICE_INFO_MAX 96
 #define BLE_CLIENT_MAX_CANDIDATES 8
 #define BLE_CLIENT_PROTOCOL_VERSION 1
+#define BLE_CLIENT_UPDATE_PROTOCOL_VERSION 1
+#define BLE_CLIENT_UPDATE_HARDWARE_MAX 32
+#define BLE_CLIENT_UPDATE_VERSION_MAX 32
+#define BLE_CLIENT_UPDATE_URL_MAX 256
+#define BLE_CLIENT_UPDATE_SHA256_MAX 64
+
+typedef struct {
+    bool valid;
+    bool scale_wifi_connected;
+    uint32_t size_bytes;
+    char hardware[BLE_CLIENT_UPDATE_HARDWARE_MAX + 1];
+    char version[BLE_CLIENT_UPDATE_VERSION_MAX + 1];
+    char sha256[BLE_CLIENT_UPDATE_SHA256_MAX + 1];
+} ble_client_update_offer_t;
+
+typedef struct {
+    uint32_t size_bytes;
+    char ssid[33];
+    char password[65];
+    char hardware[BLE_CLIENT_UPDATE_HARDWARE_MAX + 1];
+    char version[BLE_CLIENT_UPDATE_VERSION_MAX + 1];
+    char url[BLE_CLIENT_UPDATE_URL_MAX + 1];
+    char sha256[BLE_CLIENT_UPDATE_SHA256_MAX + 1];
+} ble_client_update_bundle_t;
 
 typedef struct {
     char scale_id[BLE_CLIENT_SCALE_ID_MAX + 1];
@@ -22,6 +46,7 @@ typedef struct {
     uint8_t address_type;
     int8_t rssi;
     bool service_seen;
+    bool pairing_mode;
 } ble_client_peer_t;
 
 typedef struct {
@@ -39,8 +64,11 @@ typedef struct {
     uint8_t layout_id;
     uint8_t display_config_revision;
     uint8_t display_flags;
+    bool unpair_requested;
+    bool replacement_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
+    ble_client_update_offer_t update;
 } ble_client_scale_state_t;
 
 enum {
@@ -60,9 +88,20 @@ esp_err_t ble_client_scan(
     size_t *count,
     uint32_t duration_ms);
 
+esp_err_t ble_client_pair(
+    const ble_client_peer_t *peer,
+    uint32_t display_passkey);
+
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state);
+
+esp_err_t ble_client_fetch_update_bundle(
+    const ble_client_peer_t *peer,
+    ble_client_update_bundle_t *bundle);
+
+esp_err_t ble_client_forget_peer(
+    const ble_client_peer_t *peer);
 
 bool ble_client_state_is_compatible(
     const ble_client_peer_t *peer,

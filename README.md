@@ -18,19 +18,22 @@ The scale remains the source of truth. This display does not perform tare, calib
 
 ## Pairing model
 
-The display stores exactly one scale identity in NVS.
+The display stores exactly one scale identity in NVS and NimBLE stores the authenticated BLE bond keys in NVS. The six-digit pairing code is temporary and is never stored.
 
-On every normal wake it scans only for the Keg Scale BLE service and connects only to the saved scale identity. It does not connect to whichever scale happens to have the strongest signal.
+Initial setup is driven entirely from the scale web interface:
 
-During initial setup:
+1. Open the scale web page and expand **Display**.
+2. Click **Add display**. The scale advertises an explicit five-minute pairing window.
+3. An unpaired display scans continuously for a Keg Scale in pairing mode.
+4. The display generates a random six-digit code and shows the target KegScale-XXXX identity plus the code on e-paper.
+5. The scale web page shows the detected display and enables the code field.
+6. Enter the display code on the scale webpage and click **Pair Display**.
+7. NimBLE creates an authenticated LE Secure Connections bond on both devices.
+8. The display saves only the scale identity/address, renders the current keg state, and returns to its normal sleep cycle.
 
-1. Scan for Keg Scale peripherals.
-2. If exactly one compatible scale is found, the display may select and save it automatically.
-3. If multiple compatible scales are found, the display refuses to guess.
-4. Until a touch/setup UI is added, the serial console can list candidates and select one by its advertised `KegScale-XXXX` identity.
-5. Pairing stores the BLE address, address type, and logical advertised scale ID.
+On every normal wake the display reconnects only to its saved scale identity. It never chooses a scale by signal strength.
 
-Later captive-portal or touch configuration can reuse the same pairing component without changing BLE connection behavior.
+**Remove display** is delivered as an authenticated command on the display's next wake. **Replace display** first removes the old bond and then opens a new pairing window. If the original scale is permanently unavailable, three deliberate power cycles before the display reaches its normal deep-sleep path clear the saved pairing and return the display to recovery pairing mode. USB/NVS erase remains the last-resort service recovery method.
 
 ## Source scale BLE protocol
 
@@ -86,19 +89,9 @@ The display keeps the last image visible while sleeping.
 
 ### First pairing
 
-Until the touch/configuration UI is added, pairing can be completed from the serial console.
+No serial interaction is required for normal pairing. Start **Add display** from the scale web page and enter the one-time six-digit code shown on the e-paper display.
 
-Commands:
-
-```text
-scan
-pair KegScale-B560
-status
-unpair
-sleep
-```
-
-If exactly one compatible Keg Scale is visible, the default configuration automatically validates and saves it. If multiple compatible scales are visible, firmware deliberately refuses to choose by signal strength.
+An unpaired display stays awake and scans for an explicitly pairing-enabled scale, so initial setup does not wait for the normal three-minute sleep interval.
 
 ## Build
 
@@ -140,3 +133,4 @@ If an active 3-pin capacitive-touch module is used instead of a passive electrod
 ### Touch wake waits for the pour
 
 A timer wake performs the normal quick BLE check. A GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 20 seconds total have elapsed. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
+The scale also coordinates display firmware updates. The display reads a version offer over BLE, retrieves home Wi-Fi credentials and update metadata only through an authenticated encrypted BLE session, performs an HTTPS A/B OTA download, validates the image size and SHA-256 digest, and turns Wi-Fi back off before rebooting.

@@ -44,6 +44,8 @@ The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0
 
 RTC memory remembers the last image-driving state across deep sleep without writing flash every three minutes.
 
+Firmware update offers are checked during the same timer-wake BLE read. When a compatible new version is offered, the display uses its saved pairing PIN to authenticate the BLE link, retrieves the home Wi-Fi and OTA metadata in RAM, downloads by HTTPS into the inactive OTA slot, validates the manifest size and SHA-256 digest, turns Wi-Fi off, and reboots. Normal wake cycles never start Wi-Fi.
+
 The display refreshes when:
 
 - first valid state is obtained

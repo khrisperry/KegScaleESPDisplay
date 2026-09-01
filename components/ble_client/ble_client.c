@@ -8,20 +8,36 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
+#include "host/ble_store.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
+#include "store/config/ble_store_config.h"
+
+/* ESP-IDF's NimBLE examples declare this library entry point explicitly. */
+void ble_store_config_init(void);
 
 static const char *TAG = "ble_client";
 
 #define HOST_SYNC_BIT BIT0
 #define GATT_TIMEOUT_MS 10000
 #define CONNECT_TIMEOUT_MS 4000
+#define DISCONNECT_TIMEOUT_MS 3000
+#define DISCONNECT_POLL_MS 25
+#define PAIRING_SECURITY_TIMEOUT_MS 120000
+#define UPDATE_FLAG_VALID (1U << 0)
+#define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
+#define DISPLAY_CONTROL_UNPAIR (1U << 0)
+#define PAIRING_ADV_MAGIC_0 0x4b
+#define PAIRING_ADV_MAGIC_1 0x53
+#define PAIRING_ADV_VERSION 1
+#define PAIRING_ADV_FLAG_ACTIVE (1U << 0)
 
 static const ble_uuid128_t s_service_uuid =
     BLE_UUID128_INIT(
@@ -58,6 +74,27 @@ static const ble_uuid128_t s_display_config_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x05, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_update_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x06, 0x00, 0x7a, 0x8f);
+
+static const ble_uuid128_t s_update_bundle_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x07, 0x00, 0x7a, 0x8f);
+
+static const ble_uuid128_t s_display_control_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x08, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -85,6 +122,35 @@ _Static_assert(
     sizeof(wire_display_config_t) == 6,
     "Scale BLE display config layout changed");
 
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t flags;
+    uint16_t reserved;
+    uint32_t size_bytes;
+    char hardware[BLE_CLIENT_UPDATE_HARDWARE_MAX + 1];
+    char version[BLE_CLIENT_UPDATE_VERSION_MAX + 1];
+    char sha256[BLE_CLIENT_UPDATE_SHA256_MAX + 1];
+} wire_display_update_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t flags;
+    uint16_t reserved;
+    uint32_t size_bytes;
+    char ssid[33];
+    char password[65];
+    char hardware[BLE_CLIENT_UPDATE_HARDWARE_MAX + 1];
+    char version[BLE_CLIENT_UPDATE_VERSION_MAX + 1];
+    char url[BLE_CLIENT_UPDATE_URL_MAX + 1];
+    char sha256[BLE_CLIENT_UPDATE_SHA256_MAX + 1];
+} wire_update_bundle_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t flags;
+    uint16_t reserved;
+} wire_display_control_t;
+
 typedef struct {
     ble_client_peer_t *items;
     size_t capacity;
@@ -94,8 +160,11 @@ typedef struct {
 
 typedef struct {
     SemaphoreHandle_t done;
+    SemaphoreHandle_t security_done;
     int status;
+    int security_status;
     uint16_t conn_handle;
+    uint32_t pairing_passkey;
 } connect_context_t;
 
 typedef struct {
@@ -112,6 +181,9 @@ typedef struct {
     uint16_t keg_name_handle;
     uint16_t device_info_handle;
     uint16_t display_config_handle;
+    uint16_t display_update_handle;
+    uint16_t update_bundle_handle;
+    uint16_t display_control_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -125,6 +197,16 @@ typedef struct {
 static EventGroupHandle_t s_host_events;
 static uint8_t s_own_addr_type;
 static bool s_initialized;
+static connect_context_t *s_active_connection;
+
+static void secure_zero(void *value, size_t size)
+{
+    volatile uint8_t *bytes = value;
+
+    while (size-- > 0) {
+        *bytes++ = 0;
+    }
+}
 
 static bool same_address(
     const ble_client_peer_t *candidate,
@@ -230,6 +312,19 @@ static int scan_gap_event(struct ble_gap_event *event, void *arg)
                 candidate->service_seen = true;
             }
 
+            if (fields.mfg_data != NULL &&
+                fields.mfg_data_len >= 4 &&
+                fields.mfg_data[0] ==
+                    PAIRING_ADV_MAGIC_0 &&
+                fields.mfg_data[1] ==
+                    PAIRING_ADV_MAGIC_1 &&
+                fields.mfg_data[2] ==
+                    PAIRING_ADV_VERSION) {
+                candidate->pairing_mode =
+                    (fields.mfg_data[3] &
+                     PAIRING_ADV_FLAG_ACTIVE) != 0;
+            }
+
             if (has_scale_name) {
                 size_t name_len = fields.name_len;
 
@@ -257,7 +352,21 @@ static int scan_gap_event(struct ble_gap_event *event, void *arg)
 
 static int connect_gap_event(struct ble_gap_event *event, void *arg)
 {
-    connect_context_t *context = arg;
+    (void)arg;
+    connect_context_t *context =
+        s_active_connection;
+
+    if (context == NULL) {
+        if (event->type ==
+            BLE_GAP_EVENT_DISCONNECT) {
+            ESP_LOGI(
+                TAG,
+                "Scale disconnected; reason=%d",
+                event->disconnect.reason);
+        }
+
+        return 0;
+    }
 
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
@@ -272,14 +381,66 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
-            if (context->conn_handle ==
-                event->disconnect.conn.conn_handle) {
-                ESP_LOGI(
-                    TAG,
-                    "Scale disconnected; reason=%d",
-                    event->disconnect.reason);
+            ESP_LOGI(
+                TAG,
+                "Scale disconnected; reason=%d",
+                event->disconnect.reason);
+            break;
+
+        case BLE_GAP_EVENT_ENC_CHANGE:
+            context->security_status =
+                event->enc_change.status;
+
+            if (context->security_done != NULL) {
+                xSemaphoreGive(
+                    context->security_done);
             }
             break;
+
+        case BLE_GAP_EVENT_PASSKEY_ACTION: {
+            if (event->passkey.params.action !=
+                BLE_SM_IOACT_DISP ||
+                context->pairing_passkey < 100000 ||
+                context->pairing_passkey > 999999) {
+                ESP_LOGE(
+                    TAG,
+                    "Display-generated passkey unavailable for pairing");
+                break;
+            }
+
+            struct ble_sm_io io = {
+                .action = BLE_SM_IOACT_DISP,
+                .passkey =
+                    context->pairing_passkey,
+            };
+
+            int rc =
+                ble_sm_inject_io(
+                    event->passkey.conn_handle,
+                    &io);
+
+            ESP_LOGI(
+                TAG,
+                "Displayed pairing passkey supplied to NimBLE; rc=%d",
+                rc);
+            break;
+        }
+
+        case BLE_GAP_EVENT_REPEAT_PAIRING: {
+            struct ble_gap_conn_desc desc;
+            int rc =
+                ble_gap_conn_find(
+                    event->repeat_pairing.conn_handle,
+                    &desc);
+
+            if (rc != 0) {
+                return rc;
+            }
+
+            ble_store_util_delete_peer(
+                &desc.peer_id_addr);
+            return BLE_GAP_REPEAT_PAIRING_RETRY;
+        }
 
         default:
             break;
@@ -345,6 +506,21 @@ static int characteristic_disc_cb(
                        &characteristic->uuid.u,
                        &s_display_config_uuid.u) == 0) {
             context->display_config_handle =
+                characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_update_uuid.u) == 0) {
+            context->display_update_handle =
+                characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_update_bundle_uuid.u) == 0) {
+            context->update_bundle_handle =
+                characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_control_uuid.u) == 0) {
+            context->display_control_handle =
                 characteristic->val_handle;
         }
 
@@ -615,6 +791,19 @@ esp_err_t ble_client_init(void)
 
     ble_hs_cfg.reset_cb = host_reset;
     ble_hs_cfg.sync_cb = host_sync;
+    ble_hs_cfg.sm_io_cap =
+        BLE_HS_IO_DISPLAY_ONLY;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 1;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_our_key_dist =
+        BLE_SM_PAIR_KEY_DIST_ENC |
+        BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist =
+        BLE_SM_PAIR_KEY_DIST_ENC |
+        BLE_SM_PAIR_KEY_DIST_ID;
+
+    ble_store_config_init();
 
     nimble_port_freertos_init(host_task);
 
@@ -730,7 +919,8 @@ esp_err_t ble_client_scan(
 static esp_err_t connect_peer(
     const ble_client_peer_t *peer,
     uint16_t *conn_handle,
-    connect_context_t *connect_context)
+    connect_context_t *connect_context,
+    uint32_t pairing_passkey)
 {
     SemaphoreHandle_t done =
         xSemaphoreCreateBinary();
@@ -743,7 +933,10 @@ static esp_err_t connect_peer(
         .done = done,
         .status = BLE_HS_EAPP,
         .conn_handle = BLE_HS_CONN_HANDLE_NONE,
+        .pairing_passkey = pairing_passkey,
     };
+
+    s_active_connection = connect_context;
 
     ble_addr_t address = {
         .type = peer->address_type,
@@ -761,6 +954,7 @@ static esp_err_t connect_peer(
             connect_context);
 
     if (rc != 0) {
+        s_active_connection = NULL;
         vSemaphoreDelete(done);
         return ESP_FAIL;
     }
@@ -770,12 +964,14 @@ static esp_err_t connect_peer(
     connect_context->done = NULL;
 
     if (err != ESP_OK) {
+        s_active_connection = NULL;
         return err;
     }
 
     if (connect_context->status != 0 ||
         connect_context->conn_handle ==
             BLE_HS_CONN_HANDLE_NONE) {
+        s_active_connection = NULL;
         return ESP_FAIL;
     }
 
@@ -783,12 +979,135 @@ static esp_err_t connect_peer(
     return ESP_OK;
 }
 
+static void disconnect_peer(uint16_t conn_handle)
+{
+    if (conn_handle ==
+        BLE_HS_CONN_HANDLE_NONE) {
+        s_active_connection = NULL;
+        return;
+    }
+
+    int rc =
+        ble_gap_terminate(
+            conn_handle,
+            BLE_ERR_REM_USER_CONN_TERM);
+
+    if (rc != 0 &&
+        rc != BLE_HS_ENOTCONN) {
+        ESP_LOGW(
+            TAG,
+            "Could not request BLE disconnect; rc=%d",
+            rc);
+    }
+
+    const TickType_t deadline =
+        xTaskGetTickCount() +
+        pdMS_TO_TICKS(
+            DISCONNECT_TIMEOUT_MS);
+
+    struct ble_gap_conn_desc desc;
+
+    while (ble_gap_conn_find(
+               conn_handle,
+               &desc) == 0) {
+        if ((int32_t)(
+                xTaskGetTickCount() -
+                deadline) >= 0) {
+            ESP_LOGW(
+                TAG,
+                "Timed out waiting for BLE disconnect; handle=%u",
+                conn_handle);
+            break;
+        }
+
+        vTaskDelay(
+            pdMS_TO_TICKS(
+                DISCONNECT_POLL_MS));
+    }
+
+    s_active_connection = NULL;
+}
+
+static esp_err_t secure_connection(
+    uint16_t conn_handle,
+    connect_context_t *context)
+{
+    struct ble_gap_conn_desc desc;
+    int rc =
+        ble_gap_conn_find(
+            conn_handle,
+            &desc);
+
+    if (rc == 0 &&
+        desc.sec_state.encrypted &&
+        desc.sec_state.authenticated) {
+        return ESP_OK;
+    }
+
+    context->security_done =
+        xSemaphoreCreateBinary();
+
+    if (context->security_done == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    context->security_status = BLE_HS_EAPP;
+
+    rc =
+        ble_gap_security_initiate(
+            conn_handle);
+
+    if (rc != 0) {
+        vSemaphoreDelete(
+            context->security_done);
+        context->security_done = NULL;
+        return ESP_FAIL;
+    }
+
+    TickType_t security_timeout =
+        pdMS_TO_TICKS(
+            context->pairing_passkey >= 100000 &&
+            context->pairing_passkey <= 999999 ?
+                PAIRING_SECURITY_TIMEOUT_MS :
+                GATT_TIMEOUT_MS);
+
+    esp_err_t err =
+        xSemaphoreTake(
+            context->security_done,
+            security_timeout) == pdTRUE ?
+                ESP_OK :
+                ESP_ERR_TIMEOUT;
+
+    vSemaphoreDelete(
+        context->security_done);
+    context->security_done = NULL;
+
+    if (err != ESP_OK ||
+        context->security_status != 0) {
+        return err != ESP_OK ? err : ESP_FAIL;
+    }
+
+    rc =
+        ble_gap_conn_find(
+            conn_handle,
+            &desc);
+
+    return rc == 0 &&
+           desc.sec_state.encrypted &&
+           desc.sec_state.authenticated ?
+        ESP_OK :
+        ESP_ERR_INVALID_STATE;
+}
+
 static esp_err_t discover_handles(
     uint16_t conn_handle,
     uint16_t *snapshot_handle,
     uint16_t *keg_name_handle,
     uint16_t *device_info_handle,
-    uint16_t *display_config_handle)
+    uint16_t *display_config_handle,
+    uint16_t *display_update_handle,
+    uint16_t *update_bundle_handle,
+    uint16_t *display_control_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -861,8 +1180,52 @@ static esp_err_t discover_handles(
     *device_info_handle = chr_context.device_info_handle;
     *display_config_handle =
         chr_context.display_config_handle;
+    *display_update_handle =
+        chr_context.display_update_handle;
+    *update_bundle_handle =
+        chr_context.update_bundle_handle;
+    *display_control_handle =
+        chr_context.display_control_handle;
 
     return ESP_OK;
+}
+
+esp_err_t ble_client_pair(
+    const ble_client_peer_t *peer,
+    uint32_t display_passkey)
+{
+    if (!s_initialized ||
+        peer == NULL ||
+        !peer->pairing_mode ||
+        display_passkey < 100000 ||
+        display_passkey > 999999) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint16_t conn_handle =
+        BLE_HS_CONN_HANDLE_NONE;
+    connect_context_t connection = {0};
+
+    esp_err_t err =
+        connect_peer(
+            peer,
+            &conn_handle,
+            &connection,
+            display_passkey);
+
+    if (err == ESP_OK) {
+        err =
+            secure_connection(
+                conn_handle,
+                &connection);
+    }
+
+    if (conn_handle !=
+        BLE_HS_CONN_HANDLE_NONE) {
+        disconnect_peer(conn_handle);
+    }
+
+    return err;
 }
 
 esp_err_t ble_client_fetch(
@@ -888,7 +1251,8 @@ esp_err_t ble_client_fetch(
         connect_peer(
             peer,
             &conn_handle,
-            &connection);
+            &connection,
+            0);
 
     if (err != ESP_OK) {
         ESP_LOGW(
@@ -902,6 +1266,9 @@ esp_err_t ble_client_fetch(
     uint16_t keg_name_handle = 0;
     uint16_t device_info_handle = 0;
     uint16_t display_config_handle = 0;
+    uint16_t display_update_handle = 0;
+    uint16_t update_bundle_handle = 0;
+    uint16_t display_control_handle = 0;
 
     err =
         discover_handles(
@@ -909,7 +1276,10 @@ esp_err_t ble_client_fetch(
             &snapshot_handle,
             &keg_name_handle,
             &device_info_handle,
-            &display_config_handle);
+            &display_config_handle,
+            &display_update_handle,
+            &update_bundle_handle,
+            &display_control_handle);
 
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
@@ -990,9 +1360,92 @@ esp_err_t ble_client_fetch(
         }
     }
 
-    ble_gap_terminate(
-        conn_handle,
-        BLE_ERR_REM_USER_CONN_TERM);
+    if (err == ESP_OK &&
+        display_update_handle != 0) {
+        wire_display_update_t update = {0};
+        size_t update_len = 0;
+
+        esp_err_t update_err =
+            read_long_value(
+                conn_handle,
+                display_update_handle,
+                (uint8_t *)&update,
+                sizeof(update),
+                &update_len);
+
+        if (update_err == ESP_OK &&
+            update_len == sizeof(update) &&
+            update.protocol_version ==
+                BLE_CLIENT_UPDATE_PROTOCOL_VERSION) {
+            update.hardware[
+                sizeof(update.hardware) - 1] = '\0';
+            update.version[
+                sizeof(update.version) - 1] = '\0';
+            update.sha256[
+                sizeof(update.sha256) - 1] = '\0';
+
+            state->update.valid =
+                (update.flags &
+                 UPDATE_FLAG_VALID) != 0;
+            state->update.scale_wifi_connected =
+                (update.flags &
+                 UPDATE_FLAG_WIFI_CONNECTED) != 0;
+            state->update.size_bytes =
+                update.size_bytes;
+
+            strlcpy(
+                state->update.hardware,
+                update.hardware,
+                sizeof(state->update.hardware));
+            strlcpy(
+                state->update.version,
+                update.version,
+                sizeof(state->update.version));
+            strlcpy(
+                state->update.sha256,
+                update.sha256,
+                sizeof(state->update.sha256));
+        }
+    }
+
+    if (err == ESP_OK &&
+        display_control_handle != 0) {
+        esp_err_t control_err =
+            secure_connection(
+                conn_handle,
+                &connection);
+
+        if (control_err == ESP_OK) {
+            wire_display_control_t control = {0};
+            size_t control_len = 0;
+
+            control_err =
+                read_value(
+                    conn_handle,
+                    display_control_handle,
+                    (uint8_t *)&control,
+                    sizeof(control),
+                    &control_len);
+
+            if (control_err == ESP_OK &&
+                control_len == sizeof(control) &&
+                control.protocol_version ==
+                    BLE_CLIENT_UPDATE_PROTOCOL_VERSION) {
+                state->unpair_requested =
+                    (control.flags &
+                     DISPLAY_CONTROL_UNPAIR) != 0;
+            }
+        }
+
+        if (control_err != ESP_OK) {
+            ESP_LOGW(
+                TAG,
+                "Authenticated display control unavailable: %s",
+                esp_err_to_name(control_err));
+        }
+    }
+
+    disconnect_peer(conn_handle);
 
     if (err != ESP_OK) {
         return err;
@@ -1053,6 +1506,147 @@ esp_err_t ble_client_fetch(
         (unsigned)state->display_config_revision);
 
     return ESP_OK;
+}
+
+esp_err_t ble_client_fetch_update_bundle(
+    const ble_client_peer_t *peer,
+    ble_client_update_bundle_t *bundle)
+{
+    if (!s_initialized ||
+        peer == NULL ||
+        bundle == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(bundle, 0, sizeof(*bundle));
+
+    uint16_t conn_handle =
+        BLE_HS_CONN_HANDLE_NONE;
+    connect_context_t connection = {0};
+
+    esp_err_t err =
+        connect_peer(
+            peer,
+            &conn_handle,
+            &connection,
+            0);
+
+    if (err == ESP_OK) {
+        err =
+            secure_connection(
+                conn_handle,
+                &connection);
+    }
+
+    uint16_t snapshot_handle = 0;
+    uint16_t keg_name_handle = 0;
+    uint16_t device_info_handle = 0;
+    uint16_t display_config_handle = 0;
+    uint16_t display_update_handle = 0;
+    uint16_t update_bundle_handle = 0;
+    uint16_t display_control_handle = 0;
+
+    if (err == ESP_OK) {
+        err =
+            discover_handles(
+                conn_handle,
+                &snapshot_handle,
+                &keg_name_handle,
+                &device_info_handle,
+                &display_config_handle,
+                &display_update_handle,
+                &update_bundle_handle,
+                &display_control_handle);
+    }
+
+    wire_update_bundle_t wire = {0};
+    size_t wire_len = 0;
+
+    if (err == ESP_OK &&
+        update_bundle_handle == 0) {
+        err = ESP_ERR_NOT_FOUND;
+    }
+
+    if (err == ESP_OK) {
+        err =
+            read_long_value(
+                conn_handle,
+                update_bundle_handle,
+                (uint8_t *)&wire,
+                sizeof(wire),
+                &wire_len);
+    }
+
+    if (conn_handle !=
+        BLE_HS_CONN_HANDLE_NONE) {
+        disconnect_peer(conn_handle);
+    }
+
+    if (err != ESP_OK ||
+        wire_len != sizeof(wire) ||
+        wire.protocol_version !=
+            BLE_CLIENT_UPDATE_PROTOCOL_VERSION ||
+        (wire.flags & UPDATE_FLAG_VALID) == 0) {
+        secure_zero(&wire, sizeof(wire));
+        return err != ESP_OK ?
+            err :
+            ESP_ERR_INVALID_RESPONSE;
+    }
+
+    wire.ssid[sizeof(wire.ssid) - 1] = '\0';
+    wire.password[sizeof(wire.password) - 1] = '\0';
+    wire.hardware[sizeof(wire.hardware) - 1] = '\0';
+    wire.version[sizeof(wire.version) - 1] = '\0';
+    wire.url[sizeof(wire.url) - 1] = '\0';
+    wire.sha256[sizeof(wire.sha256) - 1] = '\0';
+
+    bundle->size_bytes = wire.size_bytes;
+    strlcpy(bundle->ssid, wire.ssid, sizeof(bundle->ssid));
+    strlcpy(
+        bundle->password,
+        wire.password,
+        sizeof(bundle->password));
+    strlcpy(
+        bundle->hardware,
+        wire.hardware,
+        sizeof(bundle->hardware));
+    strlcpy(
+        bundle->version,
+        wire.version,
+        sizeof(bundle->version));
+    strlcpy(bundle->url, wire.url, sizeof(bundle->url));
+    strlcpy(
+        bundle->sha256,
+        wire.sha256,
+        sizeof(bundle->sha256));
+
+    secure_zero(&wire, sizeof(wire));
+    return ESP_OK;
+}
+
+esp_err_t ble_client_forget_peer(
+    const ble_client_peer_t *peer)
+{
+    if (peer == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ble_addr_t address = {
+        .type = peer->address_type,
+    };
+
+    memcpy(
+        address.val,
+        peer->address,
+        sizeof(address.val));
+
+    int rc =
+        ble_store_util_delete_peer(
+            &address);
+
+    return rc == 0 ?
+        ESP_OK :
+        ESP_FAIL;
 }
 
 bool ble_client_state_is_compatible(

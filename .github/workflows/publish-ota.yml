@@ -1,0 +1,137 @@
+name: Publish Display OTA Firmware
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+      - dev
+    paths:
+      - "main/**"
+      - "components/**"
+      - "CMakeLists.txt"
+      - "partitions.csv"
+      - "sdkconfig.defaults"
+      - ".github/workflows/publish-ota.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: display-ota-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout display source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+
+      - name: Build display firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32
+          path: source
+
+      - name: Prepare display manifest
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          case "${GITHUB_REF_NAME}" in
+            main) channel="production" ;;
+            beta) channel="beta" ;;
+            dev) channel="dev" ;;
+            *)
+              echo "Unsupported OTA publishing branch: ${GITHUB_REF_NAME}"
+              exit 1
+              ;;
+          esac
+
+          firmware_version="$(git describe --tags --always --dirty)"
+          base_url="https://raw.githubusercontent.com/khrisperry/KegScaleFirmware/main/display"
+          source_bin="${GITHUB_WORKSPACE}/source/build/keg_scale_display.bin"
+          output="${RUNNER_TEMP}/display-ota/display/${channel}/esp32"
+
+          test -f "${source_bin}"
+          mkdir -p "${output}"
+          cp "${source_bin}" "${output}/keg_scale_display.bin"
+
+          size_bytes="$(stat -c%s "${source_bin}")"
+          sha256="$(sha256sum "${source_bin}" | awk '{print $1}')"
+          binary_url="${base_url}/${channel}/esp32/keg_scale_display.bin"
+
+          cat > "${output}/manifest.json" <<EOF
+          {
+            "version": "${firmware_version}",
+            "commit": "${GITHUB_SHA}",
+            "branch": "${GITHUB_REF_NAME}",
+            "channel": "${channel}",
+            "target": "esp32",
+            "hardware": "lilygo_t5_v2_3_1",
+            "url": "${binary_url}",
+            "size": ${size_bytes},
+            "sha256": "${sha256}",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+      - name: Checkout public firmware repository
+        uses: actions/checkout@v4
+        with:
+          repository: khrisperry/KegScaleFirmware
+          ref: main
+          token: ${{ secrets.FIRMWARE_REPO_TOKEN }}
+          path: firmware-repo
+          fetch-depth: 0
+
+      - name: Publish display firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${GITHUB_REF_NAME}" in
+            main) channel="production" ;;
+            beta) channel="beta" ;;
+            dev) channel="dev" ;;
+          esac
+
+          source_dir="${RUNNER_TEMP}/display-ota/display/${channel}"
+          repo_dir="${GITHUB_WORKSPACE}/firmware-repo"
+
+          rm -rf "${repo_dir}/display/${channel}"
+          mkdir -p "${repo_dir}/display"
+          cp -R "${source_dir}" "${repo_dir}/display/${channel}"
+
+          cd "${repo_dir}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "display/${channel}"
+
+          if git diff --cached --quiet; then
+            echo "Display firmware feed is already current."
+            exit 0
+          fi
+
+          git commit -m "Publish ${channel} display firmware ${GITHUB_SHA:0:7}"
+
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            git fetch origin main
+            git rebase origin/main
+            sleep $((attempt * 2))
+          done
+
+          echo "Unable to publish display firmware after retries."
+          exit 1
