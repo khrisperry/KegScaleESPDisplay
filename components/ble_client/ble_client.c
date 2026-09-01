@@ -373,6 +373,54 @@ static int read_cb(
     return 0;
 }
 
+static int read_long_cb(
+    uint16_t conn_handle,
+    const struct ble_gatt_error *error,
+    struct ble_gatt_attr *attr,
+    void *arg)
+{
+    (void)conn_handle;
+    read_context_t *context = arg;
+
+    if (error->status == 0 &&
+        attr != NULL &&
+        attr->om != NULL) {
+        size_t packet_len =
+            OS_MBUF_PKTLEN(attr->om);
+
+        if (context->length + packet_len >
+            context->capacity) {
+            context->status = BLE_HS_EMSGSIZE;
+            xSemaphoreGive(context->done);
+            return BLE_HS_EMSGSIZE;
+        }
+
+        if (os_mbuf_copydata(
+                attr->om,
+                0,
+                packet_len,
+                context->buffer +
+                    context->length) != 0) {
+            context->status = BLE_HS_EAPP;
+            xSemaphoreGive(context->done);
+            return BLE_HS_EAPP;
+        }
+
+        context->length += packet_len;
+        return 0;
+    }
+
+    if (error->status == BLE_HS_EDONE) {
+        context->status = 0;
+        xSemaphoreGive(context->done);
+        return 0;
+    }
+
+    context->status = error->status;
+    xSemaphoreGive(context->done);
+    return 0;
+}
+
 static esp_err_t wait_sem(SemaphoreHandle_t sem)
 {
     return xSemaphoreTake(
@@ -408,6 +456,55 @@ static esp_err_t read_value(
             conn_handle,
             value_handle,
             read_cb,
+            &context);
+
+    if (rc != 0) {
+        vSemaphoreDelete(done);
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = wait_sem(done);
+    vSemaphoreDelete(done);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (context.status != 0) {
+        return ESP_FAIL;
+    }
+
+    *length = context.length;
+    return ESP_OK;
+}
+
+static esp_err_t read_long_value(
+    uint16_t conn_handle,
+    uint16_t value_handle,
+    uint8_t *buffer,
+    size_t capacity,
+    size_t *length)
+{
+    SemaphoreHandle_t done =
+        xSemaphoreCreateBinary();
+
+    if (done == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    read_context_t context = {
+        .done = done,
+        .status = BLE_HS_EAPP,
+        .buffer = buffer,
+        .capacity = capacity,
+    };
+
+    int rc =
+        ble_gattc_read_long(
+            conn_handle,
+            value_handle,
+            0,
+            read_long_cb,
             &context);
 
     if (rc != 0) {
@@ -797,7 +894,7 @@ esp_err_t ble_client_fetch(
 
     if (err == ESP_OK) {
         err =
-            read_value(
+            read_long_value(
                 conn_handle,
                 keg_name_handle,
                 (uint8_t *)state->keg_name,
@@ -811,7 +908,7 @@ esp_err_t ble_client_fetch(
 
     if (err == ESP_OK) {
         err =
-            read_value(
+            read_long_value(
                 conn_handle,
                 device_info_handle,
                 (uint8_t *)state->device_info,
@@ -870,6 +967,11 @@ esp_err_t ble_client_fetch(
         (unsigned)state->remaining_servings,
         (double)state->remaining_percent,
         (double)state->total_weight_lbs);
+
+    ESP_LOGI(
+        TAG,
+        "Scale identity: %s",
+        state->device_info);
 
     return ESP_OK;
 }
