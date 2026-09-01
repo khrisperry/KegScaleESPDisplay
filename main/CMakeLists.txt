@@ -4,6 +4,7 @@ idf_component_register(
     REQUIRES
         ble_client
         display_ui
+        display_ota
         pairing
         touch_wake
         nvs_flash

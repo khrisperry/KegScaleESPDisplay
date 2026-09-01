@@ -4,9 +4,11 @@
 #include <string.h>
 
 #include "ble_client.h"
+#include "display_ota.h"
 #include "display_ui.h"
 #include "driver/gpio.h"
 #include "esp_attr.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -247,7 +249,8 @@ static esp_err_t scan_scales(
 
 static esp_err_t validate_and_save_peer(
     const ble_client_peer_t *peer,
-    ble_client_scale_state_t *state)
+    ble_client_scale_state_t *state,
+    uint32_t pairing_passkey)
 {
     esp_err_t err =
         ble_client_fetch(
@@ -268,7 +271,9 @@ static esp_err_t validate_and_save_peer(
         return ESP_ERR_INVALID_VERSION;
     }
 
-    return pairing_save(peer);
+    return pairing_save(
+        peer,
+        pairing_passkey);
 }
 
 static esp_err_t find_peer_by_id(
@@ -389,7 +394,9 @@ static esp_err_t fetch_paired_state(
     }
 
     ESP_RETURN_ON_ERROR(
-        pairing_save(&recovered),
+        pairing_save(
+            &recovered,
+            pairing->pairing_passkey),
         TAG,
         "Could not repair saved BLE address");
 
@@ -425,6 +432,90 @@ static void render_if_needed(
             "Display refresh failed: %s",
             esp_err_to_name(err));
     }
+}
+
+static bool display_update_needed(
+    const ble_client_scale_state_t *state)
+{
+    if (state == NULL ||
+        !state->update.valid ||
+        state->update.size_bytes == 0 ||
+        strcmp(
+            state->update.hardware,
+            DISPLAY_OTA_HARDWARE_ID) != 0) {
+        return false;
+    }
+
+    const esp_app_desc_t *app =
+        esp_app_get_description();
+
+    return app != NULL &&
+        strcmp(
+            state->update.version,
+            app->version) != 0;
+}
+
+static void install_display_update_if_needed(
+    const pairing_config_t *pairing,
+    const ble_client_scale_state_t *state)
+{
+    if (!display_update_needed(state)) {
+        return;
+    }
+
+    if (pairing->pairing_passkey < 100000 ||
+        pairing->pairing_passkey > 999999) {
+        ESP_LOGW(
+            TAG,
+            "Display update %s is available, but no pairing PIN is saved; re-pair with 'pair %s PIN'",
+            state->update.version,
+            pairing->peer.scale_id);
+        return;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Display update %s is available; requesting encrypted Wi-Fi/OTA bundle",
+        state->update.version);
+
+    ble_client_update_bundle_t bundle = {0};
+    esp_err_t err =
+        ble_client_fetch_update_bundle(
+            &pairing->peer,
+            pairing->pairing_passkey,
+            &bundle);
+
+    if (err == ESP_OK &&
+        (strcmp(
+             bundle.version,
+             state->update.version) != 0 ||
+         strcmp(
+             bundle.sha256,
+             state->update.sha256) != 0 ||
+         bundle.size_bytes !=
+             state->update.size_bytes)) {
+        err = ESP_ERR_INVALID_RESPONSE;
+    }
+
+    if (err == ESP_OK) {
+        err = display_ota_install(&bundle);
+    }
+
+    memset(&bundle, 0, sizeof(bundle));
+
+    if (err == ESP_OK) {
+        ESP_LOGI(
+            TAG,
+            "Display OTA staged successfully; rebooting into %s",
+            state->update.version);
+        vTaskDelay(pdMS_TO_TICKS(250));
+        esp_restart();
+    }
+
+    ESP_LOGW(
+        TAG,
+        "Display OTA failed: %s; Wi-Fi is off and the current firmware remains active",
+        esp_err_to_name(err));
 }
 
 static esp_err_t wait_for_touch_pour_result(
@@ -527,7 +618,7 @@ static void print_help(void)
         "\nSetup commands:\n"
         "  help                   Show commands\n"
         "  scan                   List compatible Keg Scales\n"
-        "  pair KegScale-XXXX     Pair exact scale identity\n"
+        "  pair KegScale-XXXX PIN Pair scale and save its six-digit update PIN\n"
         "  unpair                 Clear saved scale\n"
         "  status                 Show saved pairing\n"
         "  sleep                  Sleep with timer + touch wake armed\n\n");
@@ -632,8 +723,25 @@ static void setup_console(void)
             }
         } else if (
             strncmp(line, "pair ", 5) == 0) {
-            const char *scale_id =
-                line + 5;
+            char scale_id[
+                BLE_CLIENT_SCALE_ID_MAX + 1] = {0};
+            unsigned long pairing_pin = 0;
+
+            int parsed =
+                sscanf(
+                    line + 5,
+                    "%20s %lu",
+                    scale_id,
+                    &pairing_pin);
+
+            if (parsed < 1 ||
+                (parsed == 2 &&
+                 (pairing_pin < 100000 ||
+                  pairing_pin > 999999))) {
+                printf(
+                    "Use: pair KegScale-XXXX 123456\n");
+                continue;
+            }
 
             ble_client_peer_t peer = {0};
 
@@ -654,7 +762,10 @@ static void setup_console(void)
             err =
                 validate_and_save_peer(
                     &peer,
-                    &state);
+                    &state,
+                    parsed == 2 ?
+                        (uint32_t)pairing_pin :
+                        0);
 
             if (err != ESP_OK) {
                 printf(
@@ -703,9 +814,12 @@ static void setup_console(void)
                     sizeof(address));
 
                 printf(
-                    "Paired: %s at %s\n",
+                    "Paired: %s at %s; update PIN %s\n",
                     pairing.peer.scale_id,
-                    address);
+                    address,
+                    pairing.pairing_passkey >= 100000 ?
+                        "saved" :
+                        "not set");
             } else {
                 printf("No scale paired.\n");
             }
@@ -738,6 +852,16 @@ void app_main(void)
 
     ESP_ERROR_CHECK(
         ble_client_init());
+
+    esp_err_t confirm_err =
+        display_ota_confirm_running_image();
+
+    if (confirm_err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not confirm running OTA image: %s",
+            esp_err_to_name(confirm_err));
+    }
 
     if (err == ESP_OK &&
         pairing.paired) {
@@ -778,6 +902,10 @@ void app_main(void)
             render_if_needed(
                 &pairing.peer,
                 &state);
+
+            install_display_update_if_needed(
+                &pairing,
+                &state);
         } else {
             ESP_LOGW(
                 TAG,
@@ -812,10 +940,11 @@ void app_main(void)
         count == 1) {
         ble_client_scale_state_t state;
 
-        err =
-            validate_and_save_peer(
-                &candidates[0],
-                &state);
+            err =
+                validate_and_save_peer(
+                    &candidates[0],
+                    &state,
+                    0);
 
         if (err == ESP_OK) {
             ESP_LOGI(

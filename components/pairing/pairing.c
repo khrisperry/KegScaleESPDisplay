@@ -12,6 +12,7 @@ static const char *TAG = "pairing";
 #define KEY_SCALE_ID "scale_id"
 #define KEY_ADDR "addr"
 #define KEY_ADDR_TYPE "addr_type"
+#define KEY_PASSKEY "passkey"
 
 esp_err_t pairing_load(pairing_config_t *config)
 {
@@ -81,6 +82,20 @@ esp_err_t pairing_load(pairing_config_t *config)
                 &config->peer.address_type);
     }
 
+    if (err == ESP_OK) {
+        esp_err_t passkey_err =
+            nvs_get_u32(
+                nvs,
+                KEY_PASSKEY,
+                &config->pairing_passkey);
+
+        if (passkey_err == ESP_ERR_NVS_NOT_FOUND) {
+            config->pairing_passkey = 0;
+        } else if (passkey_err != ESP_OK) {
+            err = passkey_err;
+        }
+    }
+
     nvs_close(nvs);
 
     if (err != ESP_OK) {
@@ -96,7 +111,9 @@ esp_err_t pairing_load(pairing_config_t *config)
     return ESP_OK;
 }
 
-esp_err_t pairing_save(const ble_client_peer_t *peer)
+esp_err_t pairing_save(
+    const ble_client_peer_t *peer,
+    uint32_t pairing_passkey)
 {
     if (peer == NULL ||
         peer->scale_id[0] == '\0') {
@@ -119,6 +136,14 @@ esp_err_t pairing_save(const ble_client_peer_t *peer)
             nvs,
             KEY_SCALE_ID,
             peer->scale_id);
+
+    if (err == ESP_OK) {
+        err =
+            nvs_set_u32(
+                nvs,
+                KEY_PASSKEY,
+                pairing_passkey);
+    }
 
     if (err == ESP_OK) {
         err =
