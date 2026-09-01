@@ -21,6 +21,7 @@ static const char *TAG = "ble_client";
 
 #define HOST_SYNC_BIT BIT0
 #define GATT_TIMEOUT_MS 10000
+#define CONNECT_TIMEOUT_MS 4000
 
 static const ble_uuid128_t s_service_uuid =
     BLE_UUID128_INIT(
@@ -754,7 +755,7 @@ static esp_err_t connect_peer(
         ble_gap_connect(
             s_own_addr_type,
             &address,
-            GATT_TIMEOUT_MS,
+            CONNECT_TIMEOUT_MS,
             NULL,
             connect_gap_event,
             connect_context);
