@@ -784,9 +784,60 @@ void app_main(void)
             esp_err_to_name(confirm_err));
     }
 
+    const uint32_t wake_causes =
+        esp_sleep_get_wakeup_causes();
+
+    if (wake_causes == 0) {
+        uint8_t power_cycles = 0;
+        bool recovery_requested = false;
+
+        esp_err_t recovery_err =
+            pairing_note_power_cycle(
+                &power_cycles,
+                &recovery_requested);
+
+        if (recovery_err == ESP_OK) {
+            ESP_LOGI(
+                TAG,
+                "Power-cycle recovery count=%u",
+                (unsigned)power_cycles);
+        }
+
+        if (recovery_err == ESP_OK &&
+            recovery_requested) {
+            ESP_LOGW(
+                TAG,
+                "Three deliberate power cycles detected; entering recovery pairing mode");
+
+            if (pairing.paired) {
+                ble_client_forget_peer(
+                    &pairing.peer);
+            }
+
+            pairing_clear();
+            memset(
+                &pairing,
+                0,
+                sizeof(pairing));
+            memset(
+                &s_retained,
+                0,
+                sizeof(s_retained));
+
+            display_ui_show_message(
+                "KEG DISPLAY",
+                "RECOVERY MODE",
+                "READY TO PAIR");
+
+            vTaskDelay(pdMS_TO_TICKS(750));
+        }
+    } else {
+        pairing_reset_power_cycle_count();
+    }
+
     if (err == ESP_OK &&
         pairing.paired) {
-        ble_client_scale_state_t state;
+        ble_client_scale_state_t state = {0};
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
         if (touch_wake) {
@@ -797,6 +848,12 @@ void app_main(void)
                     &pairing,
                     &state,
                     &meaningful_change);
+
+            if (err == ESP_OK) {
+                handle_unpair_request(
+                    &pairing,
+                    &state);
+            }
 
             if (err == ESP_OK &&
                 meaningful_change) {
@@ -820,6 +877,10 @@ void app_main(void)
                 &state);
 
         if (err == ESP_OK) {
+            handle_unpair_request(
+                &pairing,
+                &state);
+
             render_if_needed(
                 &pairing.peer,
                 &state);
@@ -846,62 +907,5 @@ void app_main(void)
         go_to_sleep();
     }
 
-    ble_client_peer_t candidates[
-        BLE_CLIENT_MAX_CANDIDATES];
-
-    size_t count = 0;
-
-    err =
-        scan_scales(
-            candidates,
-            &count);
-
-#if CONFIG_KEG_DISPLAY_AUTO_PAIR_SINGLE
-    if (err == ESP_OK &&
-        count == 1) {
-        ble_client_scale_state_t state;
-
-            err =
-                validate_and_save_peer(
-                    &candidates[0],
-                    &state,
-                    0);
-
-        if (err == ESP_OK) {
-            ESP_LOGI(
-                TAG,
-                "Exactly one compatible scale found; paired automatically to %s",
-                candidates[0].scale_id);
-
-            render_if_needed(
-                &candidates[0],
-                &state);
-
-            go_to_sleep();
-        }
-
-        ESP_LOGW(
-            TAG,
-            "Single scale candidate did not validate: %s",
-            esp_err_to_name(err));
-    }
-#endif
-
-    if (count > 1) {
-        display_ui_show_candidates(
-            candidates,
-            count);
-    } else if (count == 0) {
-        display_ui_show_message(
-            "KEG DISPLAY",
-            "NO SCALE FOUND",
-            "CONNECT USB FOR SETUP");
-    } else {
-        display_ui_show_message(
-            "KEG DISPLAY",
-            "PAIRING NEEDED",
-            candidates[0].scale_id);
-    }
-
-    setup_console();
+    enter_pairing_mode();
 }
