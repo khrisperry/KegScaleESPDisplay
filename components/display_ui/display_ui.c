@@ -590,13 +590,13 @@ esp_err_t display_ui_show_scale(
          BLE_SCALE_FLAG_STABLE) != 0) {
         draw_text_centered_at(
             62,
-            107,
+            111,
             gallons,
             2);
 
         draw_text_centered_at(
             188,
-            107,
+            111,
             percent,
             2);
     } else {
@@ -607,7 +607,7 @@ esp_err_t display_ui_show_scale(
          */
         draw_text_centered_at(
             EPAPER_WIDTH / 2,
-            107,
+            111,
             "SETTLING...",
             1);
     }
