@@ -436,9 +436,14 @@ static void setup_console(void)
 
     char line[96];
 
+    bool prompt_shown = false;
+
     while (true) {
-        printf("display-setup> ");
-        fflush(stdout);
+        if (!prompt_shown) {
+            printf("display-setup> ");
+            fflush(stdout);
+            prompt_shown = true;
+        }
 
         if (fgets(
                 line,
@@ -449,6 +454,7 @@ static void setup_console(void)
             continue;
         }
 
+        prompt_shown = false;
         trim_line(line);
 
         if (strcmp(line, "help") == 0) {
