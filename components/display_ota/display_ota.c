@@ -21,8 +21,10 @@ static const char *TAG = "display_ota";
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAILED_BIT BIT1
 #define WIFI_CONNECT_TIMEOUT_MS 60000
-#define HTTP_TIMEOUT_MS 20000
+#define HTTP_TIMEOUT_MS 60000
 #define DOWNLOAD_BUFFER_SIZE 4096
+#define HTTP_CONNECT_ATTEMPTS 3
+#define HTTP_RETRY_DELAY_MS 1500
 #define WIFI_MAX_RETRIES 10
 
 typedef struct {
@@ -351,16 +353,52 @@ static esp_err_t download_and_stage(
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err =
-        esp_http_client_open(client, 0);
+    esp_err_t err = ESP_FAIL;
+    int64_t content_length = -1;
 
-    if (err != ESP_OK) {
-        esp_http_client_cleanup(client);
-        return err;
+    for (unsigned attempt = 1;
+         attempt <= HTTP_CONNECT_ATTEMPTS;
+         ++attempt) {
+        err =
+            esp_http_client_open(
+                client,
+                0);
+
+        if (err == ESP_OK) {
+            content_length =
+                esp_http_client_fetch_headers(
+                    client);
+
+            if (content_length >= 0) {
+                break;
+            }
+
+            err = ESP_FAIL;
+            esp_http_client_close(client);
+        }
+
+        ESP_LOGW(
+            TAG,
+            "OTA HTTPS connection attempt %u/%u failed: %s",
+            attempt,
+            HTTP_CONNECT_ATTEMPTS,
+            esp_err_to_name(err));
+
+        if (attempt <
+            HTTP_CONNECT_ATTEMPTS) {
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    HTTP_RETRY_DELAY_MS));
+        }
     }
 
-    int64_t content_length =
-        esp_http_client_fetch_headers(client);
+    if (err != ESP_OK ||
+        content_length < 0) {
+        esp_http_client_cleanup(client);
+        return err != ESP_OK ?
+            err :
+            ESP_FAIL;
+    }
 
     if (esp_http_client_get_status_code(client) !=
         200 ||
