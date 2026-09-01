@@ -35,6 +35,10 @@ typedef struct {
     float beverage_weight_lbs;
     int8_t wifi_rssi_dbm;
     uint8_t profile_revision;
+    float serving_size_oz;
+    uint8_t layout_id;
+    uint8_t display_config_revision;
+    uint8_t display_flags;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
 } ble_client_scale_state_t;
