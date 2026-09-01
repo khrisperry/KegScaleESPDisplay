@@ -284,17 +284,17 @@ static int characteristic_disc_cb(
     if (error->status == 0 &&
         characteristic != NULL) {
         if (ble_uuid_cmp(
-                characteristic->uuid,
+                &characteristic->uuid.u,
                 &s_snapshot_uuid.u) == 0) {
             context->snapshot_handle =
                 characteristic->val_handle;
         } else if (ble_uuid_cmp(
-                       characteristic->uuid,
+                       &characteristic->uuid.u,
                        &s_keg_name_uuid.u) == 0) {
             context->keg_name_handle =
                 characteristic->val_handle;
         } else if (ble_uuid_cmp(
-                       characteristic->uuid,
+                       &characteristic->uuid.u,
                        &s_device_info_uuid.u) == 0) {
             context->device_info_handle =
                 characteristic->val_handle;
