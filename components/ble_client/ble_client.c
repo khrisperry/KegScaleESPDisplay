@@ -793,11 +793,9 @@ esp_err_t ble_client_fetch(
         state->device_info[text_len] = '\0';
     }
 
-    if (ble_gap_conn_find(conn_handle, NULL) == 0) {
-        ble_gap_terminate(
-            conn_handle,
-            BLE_ERR_REM_USER_CONN_TERM);
-    }
+    ble_gap_terminate(
+        conn_handle,
+        BLE_ERR_REM_USER_CONN_TERM);
 
     if (err != ESP_OK) {
         return err;
