@@ -17,11 +17,11 @@
 #include "nvs_flash.h"
 #include "pairing.h"
 #include "sdkconfig.h"
+#include "touch_wake.h"
 
 static const char *TAG = "display";
 
 #define RETAINED_MAGIC 0x4B534450U
-#define BUTTON_WAKE_GPIO GPIO_NUM_39
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
 
 typedef struct {
@@ -50,16 +50,24 @@ static void init_nvs(void)
 
 static const char *wake_reason(void)
 {
-    switch (esp_sleep_get_wakeup_cause()) {
-        case ESP_SLEEP_WAKEUP_TIMER:
-            return "timer";
-        case ESP_SLEEP_WAKEUP_EXT0:
-            return "button/touch";
-        case ESP_SLEEP_WAKEUP_UNDEFINED:
-            return "power/reset";
-        default:
-            return "other";
+    const uint32_t causes =
+        esp_sleep_get_wakeup_causes();
+
+    if (causes &
+        BIT(ESP_SLEEP_WAKEUP_TOUCHPAD)) {
+        return "touch";
     }
+
+    if (causes &
+        BIT(ESP_SLEEP_WAKEUP_TIMER)) {
+        return "timer";
+    }
+
+    if (causes == 0) {
+        return "power/reset";
+    }
+
+    return "other";
 }
 
 static bool retained_matches_peer(
@@ -141,31 +149,9 @@ static void configure_wake_sources(void)
             (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *
             1000000ULL));
 
-#if CONFIG_KEG_DISPLAY_BUTTON_WAKE
-    gpio_config_t button = {
-        .pin_bit_mask =
-            1ULL << BUTTON_WAKE_GPIO,
-        .mode = GPIO_MODE_INPUT,
-    };
-
+#if CONFIG_KEG_DISPLAY_TOUCH_WAKE
     ESP_ERROR_CHECK(
-        gpio_config(&button));
-
-    /*
-     * GPIO39 is input-only and the T5 board provides the button biasing.
-     * Wait for release so a held button cannot create an immediate wake loop.
-     */
-    for (int i = 0;
-         i < 100 &&
-         gpio_get_level(BUTTON_WAKE_GPIO) == 0;
-         ++i) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    ESP_ERROR_CHECK(
-        esp_sleep_enable_ext0_wakeup(
-            BUTTON_WAKE_GPIO,
-            0));
+        touch_wake_prepare());
 #endif
 }
 
@@ -173,10 +159,17 @@ static void go_to_sleep(void)
 {
     configure_wake_sources();
 
+#if CONFIG_KEG_DISPLAY_TOUCH_WAKE
     ESP_LOGI(
         TAG,
-        "Sleeping for %d seconds; Button 1 also wakes the display",
+        "Sleeping for %d seconds; GPIO12 capacitive touch also wakes the display",
         CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
+#else
+    ESP_LOGI(
+        TAG,
+        "Sleeping for %d seconds",
+        CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
+#endif
 
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -402,7 +395,7 @@ static void print_help(void)
         "  pair KegScale-XXXX     Pair exact scale identity\n"
         "  unpair                 Clear saved scale\n"
         "  status                 Show saved pairing\n"
-        "  sleep                  Sleep for normal timer interval\n\n");
+        "  sleep                  Sleep with timer + touch wake armed\n\n");
 }
 
 static void trim_line(char *line)
