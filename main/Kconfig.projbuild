@@ -19,8 +19,22 @@ config KEG_DISPLAY_AUTO_PAIR_SINGLE
     help
         If more than one compatible scale is visible, firmware never guesses.
 
-config KEG_DISPLAY_BUTTON_WAKE
-    bool "Use T5 Button 1 (GPIO39) as temporary manual wake source"
+config KEG_DISPLAY_TOUCH_WAKE
+    bool "Use native capacitive touch on GPIO12 as a deep-sleep wake source"
     default y
+    help
+        GPIO12 is touch channel 5 on the classic ESP32 used by the T5 V2.3.1.
+        Touch wake replaces the temporary GPIO39 EXT0 button wake because ESP32
+        does not allow touch wake and EXT0 wake at the same time.
+
+config KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT
+    int "Touch sensitivity threshold below baseline (percent)"
+    depends on KEG_DISPLAY_TOUCH_WAKE
+    range 1 50
+    default 8
+    help
+        ESP32 touch values decrease when touched. The wake threshold is calibrated
+        before each deep sleep as this percentage below the untouched benchmark.
+        Lower values are more sensitive; higher values require a stronger touch.
 
 endmenu
