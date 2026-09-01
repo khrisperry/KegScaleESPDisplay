@@ -3,4 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES
         bt
+        esp_app_format
 )
