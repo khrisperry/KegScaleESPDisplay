@@ -51,10 +51,12 @@ config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
     int "Touch wake maximum observation window (seconds)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 5 60
-    default 20
+    default 30
     help
         Maximum total time after a touch wake to wait for a meaningful stable
-        scale change before returning to deep sleep.
+        scale change before returning to deep sleep. Normal successful reads
+        still refresh as soon as the settled change is available; the extra
+        headroom is only used for slow settling or transient BLE retries.
 
 config KEG_DISPLAY_TOUCH_RETRY_SECONDS
     int "Touch wake retry interval (seconds)"
