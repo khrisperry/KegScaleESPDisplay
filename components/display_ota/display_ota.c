@@ -14,7 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 
 static const char *TAG = "display_ota";
 
@@ -319,12 +319,22 @@ static esp_err_t download_and_stage(
                 &ota_handle);
     }
 
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
+    psa_hash_operation_t sha =
+        PSA_HASH_OPERATION_INIT;
 
-    if (err == ESP_OK &&
-        mbedtls_sha256_starts(&sha, 0) != 0) {
-        err = ESP_FAIL;
+    if (err == ESP_OK) {
+        psa_status_t status = psa_crypto_init();
+
+        if (status == PSA_SUCCESS) {
+            status =
+                psa_hash_setup(
+                    &sha,
+                    PSA_ALG_SHA_256);
+        }
+
+        if (status != PSA_SUCCESS) {
+            err = ESP_FAIL;
+        }
     }
 
     uint8_t buffer[DOWNLOAD_BUFFER_SIZE];
@@ -354,10 +364,10 @@ static esp_err_t download_and_stage(
 
         total += (uint32_t)read;
 
-        if (mbedtls_sha256_update(
+        if (psa_hash_update(
                 &sha,
                 buffer,
-                (size_t)read) != 0) {
+                (size_t)read) != PSA_SUCCESS) {
             err = ESP_FAIL;
             break;
         }
@@ -372,19 +382,26 @@ static esp_err_t download_and_stage(
     }
 
     uint8_t digest[32] = {0};
+    size_t digest_length = 0;
 
     if (err == ESP_OK &&
-        mbedtls_sha256_finish(
+        psa_hash_finish(
             &sha,
-            digest) != 0) {
+            digest,
+            sizeof(digest),
+            &digest_length) != PSA_SUCCESS) {
         err = ESP_FAIL;
     }
 
-    mbedtls_sha256_free(&sha);
+    if (err != ESP_OK) {
+        psa_hash_abort(&sha);
+    }
+
     secure_zero(buffer, sizeof(buffer));
 
     if (err == ESP_OK &&
-        (total != bundle->size_bytes ||
+        (digest_length != sizeof(digest) ||
+         total != bundle->size_bytes ||
          !sha256_matches(
              digest,
              bundle->sha256))) {

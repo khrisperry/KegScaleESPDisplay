@@ -11,13 +11,13 @@
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
+#include "host/ble_store.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
 #include "store/config/ble_store_config.h"
-#include "store/util/ble_store_util.h"
 
 static const char *TAG = "ble_client";
 
