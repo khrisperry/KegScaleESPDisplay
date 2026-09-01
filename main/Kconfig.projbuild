@@ -37,4 +37,32 @@ config KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT
         before each deep sleep as this percentage below the untouched benchmark.
         Lower values are more sensitive; higher values require a stronger touch.
 
+config KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS
+    int "Touch wake initial pour wait (seconds)"
+    depends on KEG_DISPLAY_TOUCH_WAKE
+    range 1 30
+    default 10
+    help
+        After a capacitive-touch wake, keep the existing e-paper image visible
+        and wait this long before the first BLE read. This gives the user time
+        to begin and mostly complete a pour.
+
+config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
+    int "Touch wake maximum observation window (seconds)"
+    depends on KEG_DISPLAY_TOUCH_WAKE
+    range 5 60
+    default 20
+    help
+        Maximum total time after a touch wake to wait for a meaningful stable
+        scale change before returning to deep sleep.
+
+config KEG_DISPLAY_TOUCH_RETRY_SECONDS
+    int "Touch wake retry interval (seconds)"
+    depends on KEG_DISPLAY_TOUCH_WAKE
+    range 1 10
+    default 2
+    help
+        If the first post-touch read is unchanged or settling, wait this long
+        before checking the scale again.
+
 endmenu
