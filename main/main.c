@@ -259,6 +259,26 @@ static esp_err_t validate_and_save_peer(
             state);
 
     if (err != ESP_OK) {
+        /*
+         * Pairing security has just completed and ble_client_pair() requests
+         * a disconnect before returning. That disconnect is asynchronous, so
+         * an immediate validation reconnect can briefly collide with the
+         * controller teardown. Give it one deliberate retry before treating
+         * the newly-created bond as failed.
+         */
+        ESP_LOGW(
+            TAG,
+            "Initial post-pair validation connection failed; retrying once");
+
+        vTaskDelay(pdMS_TO_TICKS(750));
+
+        err =
+            ble_client_fetch(
+                peer,
+                state);
+    }
+
+    if (err != ESP_OK) {
         return err;
     }
 
