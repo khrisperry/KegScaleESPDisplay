@@ -617,10 +617,12 @@ static int read_long_cb(
     if (error->status == 0 &&
         attr != NULL &&
         attr->om != NULL) {
-        size_t packet_len =
+        const size_t packet_len =
             OS_MBUF_PKTLEN(attr->om);
+        const size_t offset =
+            attr->offset;
 
-        if (context->length + packet_len >
+        if (offset + packet_len >
             context->capacity) {
             context->status = BLE_HS_EMSGSIZE;
             xSemaphoreGive(context->done);
@@ -632,13 +634,19 @@ static int read_long_cb(
                 0,
                 packet_len,
                 context->buffer +
-                    context->length) != 0) {
+                    offset) != 0) {
             context->status = BLE_HS_EAPP;
             xSemaphoreGive(context->done);
             return BLE_HS_EAPP;
         }
 
-        context->length += packet_len;
+        const size_t end =
+            offset + packet_len;
+
+        if (end > context->length) {
+            context->length = end;
+        }
+
         return 0;
     }
 
