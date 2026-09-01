@@ -188,6 +188,10 @@ static int scan_gap_event(struct ble_gap_event *event, void *arg)
 
             candidate->rssi = event->disc.rssi;
 
+            if (has_service) {
+                candidate->service_seen = true;
+            }
+
             if (has_scale_name) {
                 size_t name_len = fields.name_len;
 
@@ -553,7 +557,8 @@ esp_err_t ble_client_scan(
     size_t out = 0;
 
     for (size_t i = 0; i < context.count; ++i) {
-        if (context.items[i].scale_id[0] == '\0') {
+        if (context.items[i].scale_id[0] == '\0' ||
+            !context.items[i].service_seen) {
             continue;
         }
 
