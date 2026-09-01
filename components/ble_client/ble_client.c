@@ -50,6 +50,13 @@ static const ble_uuid128_t s_device_info_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x04, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_config_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x05, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -64,6 +71,18 @@ typedef struct __attribute__((packed)) {
 } wire_snapshot_t;
 
 _Static_assert(sizeof(wire_snapshot_t) == 20, "Scale BLE snapshot layout changed");
+
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t layout_id;
+    uint8_t config_revision;
+    uint8_t flags;
+    uint16_t serving_size_oz_x100;
+} wire_display_config_t;
+
+_Static_assert(
+    sizeof(wire_display_config_t) == 6,
+    "Scale BLE display config layout changed");
 
 typedef struct {
     ble_client_peer_t *items;
@@ -91,6 +110,7 @@ typedef struct {
     uint16_t snapshot_handle;
     uint16_t keg_name_handle;
     uint16_t device_info_handle;
+    uint16_t display_config_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -318,6 +338,12 @@ static int characteristic_disc_cb(
                        &characteristic->uuid.u,
                        &s_device_info_uuid.u) == 0) {
             context->device_info_handle =
+                characteristic->val_handle;
+        }
+        else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_config_uuid.u) == 0) {
+            context->display_config_handle =
                 characteristic->val_handle;
         }
 
@@ -760,7 +786,8 @@ static esp_err_t discover_handles(
     uint16_t conn_handle,
     uint16_t *snapshot_handle,
     uint16_t *keg_name_handle,
-    uint16_t *device_info_handle)
+    uint16_t *device_info_handle,
+    uint16_t *display_config_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -831,6 +858,8 @@ static esp_err_t discover_handles(
     *snapshot_handle = chr_context.snapshot_handle;
     *keg_name_handle = chr_context.keg_name_handle;
     *device_info_handle = chr_context.device_info_handle;
+    *display_config_handle =
+        chr_context.display_config_handle;
 
     return ESP_OK;
 }
@@ -846,6 +875,8 @@ esp_err_t ble_client_fetch(
     }
 
     memset(state, 0, sizeof(*state));
+    state->serving_size_oz = 16.0f;
+    state->layout_id = 1;
 
     uint16_t conn_handle =
         BLE_HS_CONN_HANDLE_NONE;
@@ -869,13 +900,15 @@ esp_err_t ble_client_fetch(
     uint16_t snapshot_handle = 0;
     uint16_t keg_name_handle = 0;
     uint16_t device_info_handle = 0;
+    uint16_t display_config_handle = 0;
 
     err =
         discover_handles(
             conn_handle,
             &snapshot_handle,
             &keg_name_handle,
-            &device_info_handle);
+            &device_info_handle,
+            &display_config_handle);
 
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
@@ -916,6 +949,44 @@ esp_err_t ble_client_fetch(
                 &text_len);
 
         state->device_info[text_len] = '\0';
+    }
+
+    if (err == ESP_OK &&
+        display_config_handle != 0) {
+        wire_display_config_t display_config = {0};
+        size_t config_len = 0;
+
+        esp_err_t config_err =
+            read_value(
+                conn_handle,
+                display_config_handle,
+                (uint8_t *)&display_config,
+                sizeof(display_config),
+                &config_len);
+
+        if (config_err == ESP_OK &&
+            config_len == sizeof(display_config) &&
+            display_config.protocol_version ==
+                BLE_CLIENT_PROTOCOL_VERSION) {
+            state->layout_id =
+                display_config.layout_id;
+            state->display_config_revision =
+                display_config.config_revision;
+            state->display_flags =
+                display_config.flags;
+
+            if (display_config.serving_size_oz_x100 >
+                0) {
+                state->serving_size_oz =
+                    (float)display_config.serving_size_oz_x100 /
+                    100.0f;
+            }
+        } else {
+            ESP_LOGW(
+                TAG,
+                "Display configuration unavailable; using %.0f oz serving fallback",
+                (double)state->serving_size_oz);
+        }
     }
 
     ble_gap_terminate(
@@ -972,6 +1043,13 @@ esp_err_t ble_client_fetch(
         TAG,
         "Scale identity: %s",
         state->device_info);
+
+    ESP_LOGI(
+        TAG,
+        "Display data: serving=%.2f oz layout=%u revision=%u",
+        (double)state->serving_size_oz,
+        (unsigned)state->layout_id,
+        (unsigned)state->display_config_revision);
 
     return ESP_OK;
 }
