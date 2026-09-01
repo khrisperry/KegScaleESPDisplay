@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -27,6 +28,8 @@ static const char *TAG = "ble_client";
 #define HOST_SYNC_BIT BIT0
 #define GATT_TIMEOUT_MS 10000
 #define CONNECT_TIMEOUT_MS 4000
+#define DISCONNECT_TIMEOUT_MS 3000
+#define DISCONNECT_POLL_MS 25
 #define PAIRING_SECURITY_TIMEOUT_MS 120000
 #define UPDATE_FLAG_VALID (1U << 0)
 #define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
@@ -978,11 +981,48 @@ static esp_err_t connect_peer(
 
 static void disconnect_peer(uint16_t conn_handle)
 {
-    if (conn_handle !=
+    if (conn_handle ==
         BLE_HS_CONN_HANDLE_NONE) {
+        s_active_connection = NULL;
+        return;
+    }
+
+    int rc =
         ble_gap_terminate(
             conn_handle,
             BLE_ERR_REM_USER_CONN_TERM);
+
+    if (rc != 0 &&
+        rc != BLE_HS_ENOTCONN) {
+        ESP_LOGW(
+            TAG,
+            "Could not request BLE disconnect; rc=%d",
+            rc);
+    }
+
+    const TickType_t deadline =
+        xTaskGetTickCount() +
+        pdMS_TO_TICKS(
+            DISCONNECT_TIMEOUT_MS);
+
+    struct ble_gap_conn_desc desc;
+
+    while (ble_gap_conn_find(
+               conn_handle,
+               &desc) == 0) {
+        if ((int32_t)(
+                xTaskGetTickCount() -
+                deadline) >= 0) {
+            ESP_LOGW(
+                TAG,
+                "Timed out waiting for BLE disconnect; handle=%u",
+                conn_handle);
+            break;
+        }
+
+        vTaskDelay(
+            pdMS_TO_TICKS(
+                DISCONNECT_POLL_MS));
     }
 
     s_active_connection = NULL;
