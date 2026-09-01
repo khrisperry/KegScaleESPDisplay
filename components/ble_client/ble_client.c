@@ -1696,7 +1696,8 @@ esp_err_t ble_client_fetch_update_bundle(
                 &display_config_handle,
                 &display_update_handle,
                 &update_bundle_handle,
-                &display_control_handle);
+                &display_control_handle,
+                &display_info_handle);
     }
 
     wire_update_bundle_t wire = {0};
