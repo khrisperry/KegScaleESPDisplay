@@ -19,6 +19,9 @@
 #include "os/os_mbuf.h"
 #include "store/config/ble_store_config.h"
 
+/* ESP-IDF's NimBLE examples declare this library entry point explicitly. */
+void ble_store_config_init(void);
+
 static const char *TAG = "ble_client";
 
 #define HOST_SYNC_BIT BIT0
