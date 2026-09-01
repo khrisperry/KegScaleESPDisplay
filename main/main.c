@@ -419,10 +419,17 @@ static esp_err_t wait_for_touch_pour_result(
     const TickType_t started =
         xTaskGetTickCount();
 
+    int observation_seconds =
+        CONFIG_KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS -
+        CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS;
+
+    if (observation_seconds < 0) {
+        observation_seconds = 0;
+    }
+
     const TickType_t remaining_window =
         pdMS_TO_TICKS(
-            (CONFIG_KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS -
-             CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS) *
+            observation_seconds *
             1000);
 
     while (true) {
