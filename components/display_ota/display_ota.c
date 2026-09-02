@@ -460,7 +460,24 @@ static esp_err_t download_and_stage_once(
         }
     }
 
-    uint8_t buffer[DOWNLOAD_BUFFER_SIZE];
+    uint8_t *buffer =
+        malloc(DOWNLOAD_BUFFER_SIZE);
+
+    if (buffer == NULL) {
+        if (err == ESP_OK) {
+            psa_hash_abort(&sha);
+        }
+
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+
+        if (ota_handle != 0) {
+            esp_ota_abort(ota_handle);
+        }
+
+        return ESP_ERR_NO_MEM;
+    }
+
     uint32_t total = 0;
 
     while (err == ESP_OK) {
@@ -468,7 +485,7 @@ static esp_err_t download_and_stage_once(
             esp_http_client_read(
                 client,
                 (char *)buffer,
-                sizeof(buffer));
+                DOWNLOAD_BUFFER_SIZE);
 
         if (read < 0) {
             err = ESP_FAIL;
@@ -520,7 +537,11 @@ static esp_err_t download_and_stage_once(
         psa_hash_abort(&sha);
     }
 
-    secure_zero(buffer, sizeof(buffer));
+    secure_zero(
+        buffer,
+        DOWNLOAD_BUFFER_SIZE);
+    free(buffer);
+    buffer = NULL;
 
     if (err == ESP_OK &&
         (digest_length != sizeof(digest) ||
