@@ -509,6 +509,115 @@ int epaper_text_width(
         (size_t)scale);
 }
 
+static const epaper_glyph_t *font_glyph(
+    const epaper_font_t *font,
+    char value)
+{
+    uint8_t codepoint = (uint8_t)value;
+
+    if (codepoint >= (uint8_t)'a' &&
+        codepoint <= (uint8_t)'z') {
+        codepoint =
+            (uint8_t)toupper(codepoint);
+    }
+
+    if (codepoint < font->first ||
+        codepoint > font->last) {
+        codepoint = (uint8_t)'?';
+    }
+
+    if (codepoint < font->first ||
+        codepoint > font->last) {
+        return NULL;
+    }
+
+    const epaper_glyph_t *glyph =
+        &font->glyphs[codepoint - font->first];
+
+    if (glyph->x_advance == 0 &&
+        glyph->width == 0) {
+        return NULL;
+    }
+
+    return glyph;
+}
+
+void epaper_draw_text_font(
+    int x,
+    int y,
+    const char *text,
+    const epaper_font_t *font,
+    bool black)
+{
+    if (text == NULL || font == NULL) {
+        return;
+    }
+
+    int cursor = x;
+
+    for (const char *p = text;
+         *p != '\0';
+         ++p) {
+        const epaper_glyph_t *glyph =
+            font_glyph(font, *p);
+
+        if (glyph == NULL) {
+            continue;
+        }
+
+        const uint8_t *bitmap =
+            font->bitmap + glyph->bitmap_offset;
+
+        for (int row = 0;
+             row < glyph->height;
+             ++row) {
+            for (int col = 0;
+                 col < glyph->width;
+                 ++col) {
+                const unsigned bit_index =
+                    (unsigned)row * glyph->width +
+                    (unsigned)col;
+
+                if ((bitmap[bit_index / 8U] &
+                     (0x80U >> (bit_index & 7U))) == 0) {
+                    continue;
+                }
+
+                epaper_set_pixel(
+                    cursor + glyph->x_offset + col,
+                    y + glyph->y_offset + row,
+                    black);
+            }
+        }
+
+        cursor += glyph->x_advance;
+    }
+}
+
+int epaper_font_text_width(
+    const char *text,
+    const epaper_font_t *font)
+{
+    if (text == NULL || font == NULL) {
+        return 0;
+    }
+
+    int width = 0;
+
+    for (const char *p = text;
+         *p != '\0';
+         ++p) {
+        const epaper_glyph_t *glyph =
+            font_glyph(font, *p);
+
+        if (glyph != NULL) {
+            width += glyph->x_advance;
+        }
+    }
+
+    return width;
+}
+
 esp_err_t epaper_refresh(void)
 {
     if (!s_initialized) {
