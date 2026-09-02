@@ -68,7 +68,7 @@ jobs:
 
           size_bytes="$(stat -c%s "${source_bin}")"
           sha256="$(sha256sum "${source_bin}" | awk '{print $1}')"
-          binary_url="${base_url}/${channel}/esp32/keg_scale_display.bin"
+          binary_url="${base_url}/${channel}/esp32/keg_scale_display.bin?v=${GITHUB_SHA}"
 
           cat > "${output}/manifest.json" <<EOF
           {
