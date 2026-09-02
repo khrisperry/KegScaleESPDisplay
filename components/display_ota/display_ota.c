@@ -385,6 +385,8 @@ static esp_err_t download_and_stage_once(
         .timeout_ms = HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .keep_alive_enable = false,
+        .disable_auto_redirect = false,
+        .max_redirection_count = 5,
     };
 
     esp_http_client_handle_t client =
@@ -417,15 +419,43 @@ static esp_err_t download_and_stage_once(
         return err;
     }
 
-    if (esp_http_client_get_status_code(client) !=
-        200 ||
-        (content_length > 0 &&
-         bundle->size_bytes > 0 &&
-         (uint64_t)content_length !=
-             bundle->size_bytes)) {
+    const int status_code =
+        esp_http_client_get_status_code(client);
+
+    ESP_LOGI(
+        TAG,
+        "OTA HTTP response: status=%d content_length=%lld expected=%lu",
+        status_code,
+        (long long)content_length,
+        (unsigned long)bundle->size_bytes);
+
+    if (status_code != 200) {
+        ESP_LOGW(
+            TAG,
+            "OTA HTTP rejected response status %d from %s",
+            status_code,
+            bundle->url);
+
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /*
+     * Do not reject solely on Content-Length. CDNs/proxies may omit or
+     * transform that header even when the response body is correct. The OTA
+     * is still accepted only when the final byte count and SHA-256 exactly
+     * match the authenticated manifest.
+     */
+    if (content_length > 0 &&
+        bundle->size_bytes > 0 &&
+        (uint64_t)content_length !=
+            bundle->size_bytes) {
+        ESP_LOGW(
+            TAG,
+            "OTA HTTP Content-Length mismatch: header=%lld expected=%lu; continuing with final size/SHA validation",
+            (long long)content_length,
+            (unsigned long)bundle->size_bytes);
     }
 
     const esp_partition_t *partition =
