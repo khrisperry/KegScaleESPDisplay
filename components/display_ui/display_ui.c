@@ -262,7 +262,7 @@ static void draw_hero_number(
         center_x,
         y,
         text,
-        &EPAPER_FONT_HERO_SANS_54);
+        &EPAPER_FONT_HERO);
 }
 
 static void draw_hero_percent(
@@ -281,7 +281,7 @@ static void draw_hero_percent(
         center_x,
         y,
         text,
-        &EPAPER_FONT_HERO_SANS_54);
+        &EPAPER_FONT_HERO);
 }
 
 static bool serving_size_near(
@@ -374,21 +374,21 @@ static const epaper_font_t *fitting_text_font(
     const epaper_font_t *preferred,
     int max_width)
 {
-    if (preferred == &EPAPER_FONT_MONO_16 &&
+    if (preferred == &EPAPER_FONT_BODY_LARGE &&
         epaper_font_text_width(
             text,
-            &EPAPER_FONT_MONO_16) <= max_width) {
-        return &EPAPER_FONT_MONO_16;
+            &EPAPER_FONT_BODY_LARGE) <= max_width) {
+        return &EPAPER_FONT_BODY_LARGE;
     }
 
-    if (preferred != &EPAPER_FONT_MONO_10 &&
+    if (preferred != &EPAPER_FONT_BODY_SMALL &&
         epaper_font_text_width(
             text,
-            &EPAPER_FONT_MONO_13) <= max_width) {
-        return &EPAPER_FONT_MONO_13;
+            &EPAPER_FONT_BODY_MEDIUM) <= max_width) {
+        return &EPAPER_FONT_BODY_MEDIUM;
     }
 
-    return &EPAPER_FONT_MONO_10;
+    return &EPAPER_FONT_BODY_SMALL;
 }
 
 static float clamped_percent(
@@ -562,7 +562,7 @@ static void draw_servings_layout(
             peer,
             state,
             12,
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char hero[8];
@@ -587,7 +587,7 @@ static void draw_servings_layout(
         hero_label,
         fitting_text_font(
             hero_label,
-            &EPAPER_FONT_MONO_16,
+            &EPAPER_FONT_BODY_LARGE,
             DISPLAY_SAFE_WIDTH));
 
     if (show_name &&
@@ -596,7 +596,7 @@ static void draw_servings_layout(
             peer,
             state,
             78,
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char metrics[64] = {0};
@@ -643,7 +643,7 @@ static void draw_servings_layout(
     draw_inline_metrics(
         show_name ? 99 : 94,
         metrics,
-        &EPAPER_FONT_MONO_13);
+        &EPAPER_FONT_BODY_MEDIUM);
 }
 
 static void draw_percent_layout(
@@ -669,7 +669,7 @@ static void draw_percent_layout(
             peer,
             state,
             12,
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char percent[8];
@@ -690,7 +690,7 @@ static void draw_percent_layout(
             peer,
             state,
             72,
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char metrics[64] = {0};
@@ -734,7 +734,7 @@ static void draw_percent_layout(
     draw_inline_metrics(
         95,
         metrics,
-        &EPAPER_FONT_MONO_16);
+        &EPAPER_FONT_BODY_LARGE);
 }
 
 static void draw_diagnostic_metric(
@@ -750,13 +750,13 @@ static void draw_diagnostic_metric(
         value,
         fitting_text_font(
             value,
-            &EPAPER_FONT_MONO_16,
+            &EPAPER_FONT_BODY_LARGE,
             max_width));
     draw_font_centered_at(
         center_x,
         value_y + 15,
         label,
-        &EPAPER_FONT_MONO_10);
+        &EPAPER_FONT_BODY_SMALL);
 }
 
 static void draw_diagnostics_layout(
@@ -770,13 +770,13 @@ static void draw_diagnostics_layout(
             peer,
             state,
             11,
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     } else {
         draw_font_centered_at(
             EPAPER_WIDTH / 2,
             11,
             "DIAGNOSTICS",
-            &EPAPER_FONT_MONO_16);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char percent[12];
@@ -912,7 +912,7 @@ static void draw_diagnostics_layout(
         status,
         fitting_text_font(
             status,
-            &EPAPER_FONT_MONO_10,
+            &EPAPER_FONT_BODY_SMALL,
             DISPLAY_SAFE_WIDTH));
 }
 

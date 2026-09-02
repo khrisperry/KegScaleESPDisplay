@@ -1,46 +1,28 @@
-DejaVu Fonts License
+Keg Display Sans bitmap font
 
-Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
-Bitstream Vera is a trademark of Bitstream, Inc.
-DejaVu changes are in public domain.
+The embedded Keg Display Sans bitmap glyphs were generated from TeX Gyre
+Heros Bold, version 2.004. The derived bitmap face has been renamed in
+accordance with the GUST Font License request.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of the fonts accompanying this license ("Fonts") and associated
-documentation files (the "Font Software"), to reproduce and distribute the
-Font Software, including without limitation the rights to use, copy, merge,
-publish, distribute, and/or sell copies of the Font Software, and to permit
-persons to whom the Font Software is furnished to do so, subject to the
-following conditions:
+Upstream source:
+https://www.gust.org.pl/projects/e-foundry/tex-gyre/heros/qhv2.004otf.zip
 
-The above copyright and trademark notices and this permission notice shall
-be included in all copies of one or more of the Font Software typefaces.
+Copyright 2006, 2009 for TeX Gyre extensions by B. Jackowski and
+J.M. Nowacki (on behalf of TeX users groups).
 
-The Font Software may be modified, altered, or added to, and in particular
-the designs of glyphs or characters in the Fonts may be modified and
-additional glyphs or characters may be added to the Fonts, only if the fonts
-are renamed to names not containing either the words "Bitstream" or the word
-"Vera".
+GUST Font License, version 1.0, 22 June 2009
 
-This License becomes null and void to the extent applicable to Fonts or Font
-Software that has been modified and is distributed under the "Bitstream
-Vera" names.
+This work may be distributed and/or modified under the conditions of the
+LaTeX Project Public License, either version 1.3c of this license or (at your
+option) any later version.
 
-The Font Software may be sold as part of a larger software package but no
-copy of one or more of the Font Software typefaces may be sold by itself.
+Please also observe the following clause:
 
-THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
-TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME
-FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
-ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
-WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
-THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE
-FONT SOFTWARE.
+It is requested, but not legally required, that derived works be distributed
+only after changing the names of the fonts comprising this work and given in
+an accompanying "manifest", and that the files comprising the Work, as
+listed in the manifest, also be given new names. Any exceptions to this
+request are also given in the manifest.
 
-Except as contained in this notice, the names of Gnome, the Gnome
-Foundation, and Bitstream Inc., shall not be used in advertising or
-otherwise to promote the sale, use or other dealings in this Font Software
-without prior written authorization from the Gnome Foundation or Bitstream
-Inc., respectively. For further information, contact: fonts at gnome dot
-org.
+The latest version of the LaTeX Project Public License is available at:
+https://www.latex-project.org/lppl/lppl-1-3c/

@@ -23,10 +23,10 @@ typedef struct {
     uint8_t line_height;
 } epaper_font_t;
 
-extern const epaper_font_t EPAPER_FONT_HERO_SANS_54;
-extern const epaper_font_t EPAPER_FONT_MONO_16;
-extern const epaper_font_t EPAPER_FONT_MONO_13;
-extern const epaper_font_t EPAPER_FONT_MONO_10;
+extern const epaper_font_t EPAPER_FONT_HERO;
+extern const epaper_font_t EPAPER_FONT_BODY_LARGE;
+extern const epaper_font_t EPAPER_FONT_BODY_MEDIUM;
+extern const epaper_font_t EPAPER_FONT_BODY_SMALL;
 
 #ifdef __cplusplus
 }
