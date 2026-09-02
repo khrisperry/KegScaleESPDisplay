@@ -35,7 +35,7 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # can overflow the esp_timer task as TLS starts. Give both the timer service
 # and app_main enough headroom for OTA.
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=8192
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 
 # Keep console logs available during bring-up.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
