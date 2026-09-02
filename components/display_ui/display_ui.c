@@ -223,271 +223,17 @@ esp_err_t display_ui_show_candidates(
     return present();
 }
 
-/*
- * Clean geometric seven-segment-style numerals for the hero serving count.
- * The supporting text intentionally stays small so the serving count owns
- * the visual hierarchy on the 250x122 panel.
- */
-enum {
-    SEG_A = 1U << 0,
-    SEG_B = 1U << 1,
-    SEG_C = 1U << 2,
-    SEG_D = 1U << 3,
-    SEG_E = 1U << 4,
-    SEG_F = 1U << 5,
-    SEG_G = 1U << 6,
-};
 
-static uint8_t hero_digit_segments(char digit)
-{
-    switch (digit) {
-        case '0': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F;
-        case '1': return SEG_B | SEG_C;
-        case '2': return SEG_A | SEG_B | SEG_G | SEG_E | SEG_D;
-        case '3': return SEG_A | SEG_B | SEG_G | SEG_C | SEG_D;
-        case '4': return SEG_F | SEG_G | SEG_B | SEG_C;
-        case '5': return SEG_A | SEG_F | SEG_G | SEG_C | SEG_D;
-        case '6': return SEG_A | SEG_F | SEG_G | SEG_E | SEG_C | SEG_D;
-        case '7': return SEG_A | SEG_B | SEG_C;
-        case '8': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G;
-        case '9': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_F | SEG_G;
-        default: return 0;
-    }
-}
-
-static void draw_horizontal_segment(
-    int x,
-    int y,
-    int width,
-    int thickness)
-{
-    /*
-     * Slightly inset the first/last row to soften the square corners and make
-     * the large numerals look less like scaled bitmap text.
-     */
-    epaper_fill_rect(
-        x + 1,
-        y,
-        width - 2,
-        thickness,
-        true);
-
-    if (thickness >= 3) {
-        epaper_fill_rect(
-            x,
-            y + 1,
-            width,
-            thickness - 2,
-            true);
-    }
-}
-
-static void draw_vertical_segment(
-    int x,
-    int y,
-    int height,
-    int thickness)
-{
-    epaper_fill_rect(
-        x,
-        y + 1,
-        thickness,
-        height - 2,
-        true);
-
-    if (thickness >= 3) {
-        epaper_fill_rect(
-            x + 1,
-            y,
-            thickness - 2,
-            height,
-            true);
-    }
-}
-
-static void draw_hero_digit(
-    int x,
-    int y,
-    char digit)
-{
-    const int width = 26;
-    const int height = 43;
-    const int thickness = 4;
-    const int half = height / 2;
-
-    const uint8_t segments =
-        hero_digit_segments(digit);
-
-    if (segments & SEG_A) {
-        draw_horizontal_segment(
-            x + thickness,
-            y,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_G) {
-        draw_horizontal_segment(
-            x + thickness,
-            y + half - thickness / 2,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_D) {
-        draw_horizontal_segment(
-            x + thickness,
-            y + height - thickness,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_F) {
-        draw_vertical_segment(
-            x,
-            y + thickness,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_B) {
-        draw_vertical_segment(
-            x + width - thickness,
-            y + thickness,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_E) {
-        draw_vertical_segment(
-            x,
-            y + half,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_C) {
-        draw_vertical_segment(
-            x + width - thickness,
-            y + half,
-            half - thickness,
-            thickness);
-    }
-}
-
-static int hero_number_width(const char *text)
-{
-    if (text == NULL ||
-        text[0] == '\0') {
-        return 0;
-    }
-
-    const int digit_width = 26;
-    const int spacing = 5;
-    const size_t count = strlen(text);
-
-    return
-        (int)count * digit_width +
-        ((int)count - 1) * spacing;
-}
-
-static void draw_hero_number(
-    int center_x,
-    int y,
-    const char *text)
-{
-    const int digit_width = 26;
-    const int spacing = 5;
-
-    int x =
-        center_x -
-        hero_number_width(text) / 2;
-
-    for (const char *p = text;
-         *p != '\0';
-         ++p) {
-        draw_hero_digit(
-            x,
-            y,
-            *p);
-
-        x += digit_width + spacing;
-    }
-}
-
-static void draw_hero_percent_symbol(
-    int x,
-    int y)
-{
-    const int width = 21;
-    const int height = 43;
-
-    epaper_fill_rect(
-        x + 1,
-        y + 4,
-        7,
-        7,
-        true);
-    epaper_fill_rect(
-        x + width - 8,
-        y + height - 11,
-        7,
-        7,
-        true);
-
-    /* Pixel-stepped diagonal keeps the symbol consistent with the digits. */
-    for (int row = 0;
-         row < height - 8;
-         ++row) {
-        const int diagonal_x =
-            x + width - 5 -
-            (row * (width - 9)) /
-                (height - 9);
-
-        epaper_fill_rect(
-            diagonal_x,
-            y + 4 + row,
-            2,
-            2,
-            true);
-    }
-}
-
-static void draw_hero_percent(
-    int center_x,
-    int y,
-    const char *digits)
-{
-    const int spacing = 6;
-    const int symbol_width = 21;
-    const int digits_width =
-        hero_number_width(digits);
-    const int total_width =
-        digits_width + spacing + symbol_width;
-    const int digits_center =
-        center_x - total_width / 2 +
-        digits_width / 2;
-
-    draw_hero_number(
-        digits_center,
-        y,
-        digits);
-    draw_hero_percent_symbol(
-        center_x - total_width / 2 +
-            digits_width + spacing,
-        y);
-}
-
-static void draw_text_centered_at(
+static void draw_font_centered_at(
     int center_x,
     int y,
     const char *text,
-    int scale)
+    const epaper_font_t *font)
 {
     const int width =
-        epaper_text_width(
+        epaper_font_text_width(
             text,
-            scale);
+            font);
 
     int x = center_x - width / 2;
 
@@ -495,12 +241,47 @@ static void draw_text_centered_at(
         x = DISPLAY_SAFE_LEFT;
     }
 
-    epaper_draw_text(
+    if (x + width > DISPLAY_SAFE_RIGHT) {
+        x = DISPLAY_SAFE_RIGHT - width;
+    }
+
+    epaper_draw_text_font(
         x,
         y,
         text,
-        scale,
+        font,
         true);
+}
+
+static void draw_hero_number(
+    int center_x,
+    int y,
+    const char *text)
+{
+    draw_font_centered_at(
+        center_x,
+        y,
+        text,
+        &EPAPER_FONT_HERO_SANS_54);
+}
+
+static void draw_hero_percent(
+    int center_x,
+    int y,
+    const char *digits)
+{
+    char text[12];
+    snprintf(
+        text,
+        sizeof(text),
+        "%s%%",
+        digits);
+
+    draw_font_centered_at(
+        center_x,
+        y,
+        text,
+        &EPAPER_FONT_HERO_SANS_54);
 }
 
 static bool serving_size_near(
@@ -588,20 +369,26 @@ static uint8_t effective_display_flags(
     return state->display_flags;
 }
 
-static int fitting_text_scale(
+static const epaper_font_t *fitting_text_font(
     const char *text,
-    int preferred,
+    const epaper_font_t *preferred,
     int max_width)
 {
-    int scale = preferred;
-
-    while (scale > 1 &&
-           epaper_text_width(text, scale) >
-               max_width) {
-        --scale;
+    if (preferred == &EPAPER_FONT_MONO_16 &&
+        epaper_font_text_width(
+            text,
+            &EPAPER_FONT_MONO_16) <= max_width) {
+        return &EPAPER_FONT_MONO_16;
     }
 
-    return scale;
+    if (preferred != &EPAPER_FONT_MONO_10 &&
+        epaper_font_text_width(
+            text,
+            &EPAPER_FONT_MONO_13) <= max_width) {
+        return &EPAPER_FONT_MONO_13;
+    }
+
+    return &EPAPER_FONT_MONO_10;
 }
 
 static float clamped_percent(
@@ -671,7 +458,7 @@ static void draw_keg_name(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
     int y,
-    int preferred_scale)
+    const epaper_font_t *preferred_font)
 {
     char keg_name[
         BLE_CLIENT_KEG_NAME_MAX + 1];
@@ -682,15 +469,15 @@ static void draw_keg_name(
         keg_name,
         sizeof(keg_name));
 
-    const int keg_scale =
-        fitting_text_scale(
+    const epaper_font_t *keg_font =
+        fitting_text_font(
             keg_name,
-            preferred_scale,
+            preferred_font,
             DISPLAY_SAFE_WIDTH);
 
-    while (epaper_text_width(
+    while (epaper_font_text_width(
                keg_name,
-               keg_scale) >
+               keg_font) >
            DISPLAY_SAFE_WIDTH) {
         const size_t length =
             strlen(keg_name);
@@ -702,11 +489,11 @@ static void draw_keg_name(
         keg_name[length - 1] = '\0';
     }
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
         y,
         keg_name,
-        keg_scale);
+        keg_font);
 }
 
 static void append_metric(
@@ -735,20 +522,20 @@ static void append_metric(
 static void draw_inline_metrics(
     int y,
     const char *line,
-    int preferred_scale)
+    const epaper_font_t *preferred_font)
 {
     if (line == NULL ||
         line[0] == '\0') {
         return;
     }
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
         y,
         line,
-        fitting_text_scale(
+        fitting_text_font(
             line,
-            preferred_scale,
+            preferred_font,
             DISPLAY_SAFE_WIDTH));
 }
 
@@ -775,7 +562,7 @@ static void draw_servings_layout(
             peer,
             state,
             12,
-            2);
+            &EPAPER_FONT_MONO_16);
     }
 
     char hero[8];
@@ -794,13 +581,13 @@ static void draw_servings_layout(
         serving_count_label(
             state->serving_size_oz);
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
         hero_y + 46,
         hero_label,
-        fitting_text_scale(
+        fitting_text_font(
             hero_label,
-            2,
+            &EPAPER_FONT_MONO_16,
             DISPLAY_SAFE_WIDTH));
 
     if (show_name &&
@@ -809,7 +596,7 @@ static void draw_servings_layout(
             peer,
             state,
             78,
-            2);
+            &EPAPER_FONT_MONO_16);
     }
 
     char metrics[64] = {0};
@@ -854,9 +641,9 @@ static void draw_servings_layout(
     }
 
     draw_inline_metrics(
-        show_name ? 102 : 94,
+        show_name ? 99 : 94,
         metrics,
-        1);
+        &EPAPER_FONT_MONO_13);
 }
 
 static void draw_percent_layout(
@@ -882,7 +669,7 @@ static void draw_percent_layout(
             peer,
             state,
             12,
-            2);
+            &EPAPER_FONT_MONO_16);
     }
 
     char percent[8];
@@ -903,7 +690,7 @@ static void draw_percent_layout(
             peer,
             state,
             72,
-            2);
+            &EPAPER_FONT_MONO_16);
     }
 
     char metrics[64] = {0};
@@ -947,7 +734,7 @@ static void draw_percent_layout(
     draw_inline_metrics(
         95,
         metrics,
-        2);
+        &EPAPER_FONT_MONO_16);
 }
 
 static void draw_diagnostic_metric(
@@ -957,19 +744,19 @@ static void draw_diagnostic_metric(
     const char *label,
     int max_width)
 {
-    draw_text_centered_at(
+    draw_font_centered_at(
         center_x,
         value_y,
         value,
-        fitting_text_scale(
+        fitting_text_font(
             value,
-            2,
+            &EPAPER_FONT_MONO_16,
             max_width));
-    draw_text_centered_at(
+    draw_font_centered_at(
         center_x,
         value_y + 15,
         label,
-        1);
+        &EPAPER_FONT_MONO_10);
 }
 
 static void draw_diagnostics_layout(
@@ -983,13 +770,13 @@ static void draw_diagnostics_layout(
             peer,
             state,
             11,
-            2);
+            &EPAPER_FONT_MONO_16);
     } else {
-        draw_text_centered_at(
+        draw_font_centered_at(
             EPAPER_WIDTH / 2,
             11,
             "DIAGNOSTICS",
-            2);
+            &EPAPER_FONT_MONO_16);
     }
 
     char percent[12];
@@ -1119,13 +906,13 @@ static void draw_diagnostics_layout(
             sizeof(status));
     }
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        105,
+        104,
         status,
-        fitting_text_scale(
+        fitting_text_font(
             status,
-            1,
+            &EPAPER_FONT_MONO_10,
             DISPLAY_SAFE_WIDTH));
 }
 
