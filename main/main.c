@@ -33,6 +33,7 @@ typedef struct {
     char scale_id[BLE_CLIENT_SCALE_ID_MAX + 1];
     uint16_t sequence;
     uint8_t profile_revision;
+    uint8_t display_config_revision;
     uint16_t remaining_servings;
     float total_weight_lbs;
 } retained_state_t;
@@ -112,6 +113,8 @@ static bool should_refresh(
             s_retained.sequence ||
         state->profile_revision !=
             s_retained.profile_revision ||
+        state->display_config_revision !=
+            s_retained.display_config_revision ||
         state->remaining_servings !=
             s_retained.remaining_servings) {
         return true;
@@ -145,6 +148,9 @@ static void remember_displayed_state(
 
     s_retained.profile_revision =
         state->profile_revision;
+
+    s_retained.display_config_revision =
+        state->display_config_revision;
 
     s_retained.remaining_servings =
         state->remaining_servings;

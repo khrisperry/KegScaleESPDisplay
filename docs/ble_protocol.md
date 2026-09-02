@@ -52,6 +52,30 @@ The display still compares actual fields defensively and never replaces a stable
 
 ## Display configuration
 
+The display consumes the scale-owned appearance configuration:
+
+- layout 1: servings/pints focused
+- layout 2: percent-full focused
+- layout 3: diagnostics
+- flag bit 0: show beer name
+- flag bit 1: show gallons remaining
+- flag bit 2: show percent full
+- flag bit 3: show serving size
+- flag bit 4: show total keg weight
+- flag bit 5: place the beer name at the top in layouts 1 and 2
+- flag bit 7: configuration is explicitly present
+
+If bit 7 is absent, the display treats the payload as a legacy configuration
+and enables the original full metric set. A changed configuration revision
+forces an e-paper refresh even if the keg reading is otherwise unchanged.
+
+## Firmware compatibility
+
+The display OTA manifest declares its protocol version and supported scale
+protocol range. The scale only exposes the authenticated OTA offer after the
+manifest is compatible and the exact version has been approved (or display
+auto-update is enabled).
+
 Optional characteristic:
 
 `8f7a0005-3f7b-4c61-a2b8-6d2f5b71c001`

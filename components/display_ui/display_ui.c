@@ -9,6 +9,22 @@
 
 static const char *TAG = "display_ui";
 
+/*
+ * The controller exposes 250x122 pixels, but the V2.3.1 board's physical
+ * window masks a few pixels on every edge. Keep all meaningful content
+ * inside this shared safe area so no layout can regress into the bezel.
+ */
+enum {
+    DISPLAY_SAFE_LEFT = 10,
+    DISPLAY_SAFE_TOP = 10,
+    DISPLAY_SAFE_RIGHT = 240,
+    DISPLAY_SAFE_BOTTOM = 112,
+    DISPLAY_SAFE_WIDTH =
+        DISPLAY_SAFE_RIGHT - DISPLAY_SAFE_LEFT,
+    DISPLAY_SAFE_HEIGHT =
+        DISPLAY_SAFE_BOTTOM - DISPLAY_SAFE_TOP,
+};
+
 static void draw_centered(
     int y,
     const char *text,
@@ -21,8 +37,8 @@ static void draw_centered(
     int x =
         (EPAPER_WIDTH - width) / 2;
 
-    if (x < 0) {
-        x = 0;
+    if (x < DISPLAY_SAFE_LEFT) {
+        x = DISPLAY_SAFE_LEFT;
     }
 
     epaper_draw_text(
@@ -56,10 +72,10 @@ esp_err_t display_ui_show_message(
 
     epaper_clear(false);
     epaper_draw_rect(
-        0,
-        0,
-        EPAPER_WIDTH,
-        EPAPER_HEIGHT,
+        DISPLAY_SAFE_LEFT,
+        DISPLAY_SAFE_TOP,
+        DISPLAY_SAFE_WIDTH,
+        DISPLAY_SAFE_HEIGHT,
         true);
 
     if (title != NULL) {
@@ -88,7 +104,6 @@ esp_err_t display_ui_show_message(
 
     return present();
 }
-
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey)
@@ -100,14 +115,14 @@ esp_err_t display_ui_show_pairing_code(
 
     epaper_clear(false);
     epaper_draw_rect(
-        0,
-        0,
-        EPAPER_WIDTH,
-        EPAPER_HEIGHT,
+        DISPLAY_SAFE_LEFT,
+        DISPLAY_SAFE_TOP,
+        DISPLAY_SAFE_WIDTH,
+        DISPLAY_SAFE_HEIGHT,
         true);
 
     draw_centered(
-        7,
+        12,
         "PAIR DISPLAY",
         2,
         true);
@@ -159,14 +174,14 @@ esp_err_t display_ui_show_candidates(
 
     epaper_clear(false);
     epaper_draw_text(
-        6,
-        7,
+        DISPLAY_SAFE_LEFT,
+        DISPLAY_SAFE_TOP,
         "SELECT SCALE",
         2,
         true);
 
     epaper_draw_text(
-        6,
+        DISPLAY_SAFE_LEFT,
         27,
         "USE SERIAL: PAIR <ID>",
         1,
@@ -189,8 +204,8 @@ esp_err_t display_ui_show_candidates(
             (int)candidates[i].rssi);
 
         epaper_draw_text(
-            6,
-            46 + (int)i * 18,
+            DISPLAY_SAFE_LEFT,
+            42 + (int)i * 15,
             line,
             1,
             true);
@@ -198,8 +213,8 @@ esp_err_t display_ui_show_candidates(
 
     if (count > shown) {
         epaper_draw_text(
-            6,
-            46 + (int)shown * 18,
+            DISPLAY_SAFE_LEFT,
+            42 + (int)shown * 15,
             "MORE ON SERIAL",
             1,
             true);
@@ -400,6 +415,69 @@ static void draw_hero_number(
     }
 }
 
+static void draw_hero_percent_symbol(
+    int x,
+    int y)
+{
+    const int width = 21;
+    const int height = 43;
+
+    epaper_fill_rect(
+        x + 1,
+        y + 4,
+        7,
+        7,
+        true);
+    epaper_fill_rect(
+        x + width - 8,
+        y + height - 11,
+        7,
+        7,
+        true);
+
+    /* Pixel-stepped diagonal keeps the symbol consistent with the digits. */
+    for (int row = 0;
+         row < height - 8;
+         ++row) {
+        const int diagonal_x =
+            x + width - 5 -
+            (row * (width - 9)) /
+                (height - 9);
+
+        epaper_fill_rect(
+            diagonal_x,
+            y + 4 + row,
+            2,
+            2,
+            true);
+    }
+}
+
+static void draw_hero_percent(
+    int center_x,
+    int y,
+    const char *digits)
+{
+    const int spacing = 6;
+    const int symbol_width = 21;
+    const int digits_width =
+        hero_number_width(digits);
+    const int total_width =
+        digits_width + spacing + symbol_width;
+    const int digits_center =
+        center_x - total_width / 2 +
+        digits_width / 2;
+
+    draw_hero_number(
+        digits_center,
+        y,
+        digits);
+    draw_hero_percent_symbol(
+        center_x - total_width / 2 +
+            digits_width + spacing,
+        y);
+}
+
 static void draw_text_centered_at(
     int center_x,
     int y,
@@ -411,8 +489,14 @@ static void draw_text_centered_at(
             text,
             scale);
 
+    int x = center_x - width / 2;
+
+    if (x < DISPLAY_SAFE_LEFT) {
+        x = DISPLAY_SAFE_LEFT;
+    }
+
     epaper_draw_text(
-        center_x - width / 2,
+        x,
         y,
         text,
         scale,
@@ -493,6 +577,558 @@ static void format_serving_size(
     }
 }
 
+static uint8_t effective_display_flags(
+    const ble_client_scale_state_t *state)
+{
+    if ((state->display_flags &
+         BLE_DISPLAY_FLAG_CONFIG_PRESENT) == 0) {
+        return BLE_DISPLAY_FLAGS_DEFAULT;
+    }
+
+    return state->display_flags;
+}
+
+static int fitting_text_scale(
+    const char *text,
+    int preferred,
+    int max_width)
+{
+    int scale = preferred;
+
+    while (scale > 1 &&
+           epaper_text_width(text, scale) >
+               max_width) {
+        --scale;
+    }
+
+    return scale;
+}
+
+static float clamped_percent(
+    const ble_client_scale_state_t *state)
+{
+    float percent = state->remaining_percent;
+
+    if (percent < 0.0f) {
+        percent = 0.0f;
+    } else if (percent > 100.0f) {
+        percent = 100.0f;
+    }
+
+    return percent;
+}
+
+static const char *serving_unit_label(
+    float serving_size_oz)
+{
+    if (serving_size_near(
+            serving_size_oz,
+            12.0f)) {
+        return "CANS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            16.0f)) {
+        return "PINTS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            32.0f)) {
+        return "CROWLERS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            64.0f)) {
+        return "GROWLERS";
+    }
+
+    return "SERVINGS";
+}
+
+static void copy_keg_name(
+    const ble_client_peer_t *peer,
+    const ble_client_scale_state_t *state,
+    char *buffer,
+    size_t buffer_size)
+{
+    if (state->keg_name[0] != '\0') {
+        strlcpy(
+            buffer,
+            state->keg_name,
+            buffer_size);
+    } else {
+        strlcpy(
+            buffer,
+            peer->scale_id,
+            buffer_size);
+    }
+}
+
+static void draw_keg_name(
+    const ble_client_peer_t *peer,
+    const ble_client_scale_state_t *state,
+    int y,
+    int preferred_scale)
+{
+    char keg_name[
+        BLE_CLIENT_KEG_NAME_MAX + 1];
+
+    copy_keg_name(
+        peer,
+        state,
+        keg_name,
+        sizeof(keg_name));
+
+    const int keg_scale =
+        fitting_text_scale(
+            keg_name,
+            preferred_scale,
+            DISPLAY_SAFE_WIDTH);
+
+    while (epaper_text_width(
+               keg_name,
+               keg_scale) >
+           DISPLAY_SAFE_WIDTH) {
+        const size_t length =
+            strlen(keg_name);
+
+        if (length == 0) {
+            break;
+        }
+
+        keg_name[length - 1] = '\0';
+    }
+
+    draw_text_centered_at(
+        EPAPER_WIDTH / 2,
+        y,
+        keg_name,
+        keg_scale);
+}
+
+static void append_metric(
+    char *line,
+    size_t line_size,
+    const char *metric)
+{
+    if (metric == NULL ||
+        metric[0] == '\0') {
+        return;
+    }
+
+    if (line[0] != '\0') {
+        strlcat(
+            line,
+            " / ",
+            line_size);
+    }
+
+    strlcat(
+        line,
+        metric,
+        line_size);
+}
+
+static void draw_inline_metrics(
+    int y,
+    const char *line,
+    int preferred_scale)
+{
+    if (line == NULL ||
+        line[0] == '\0') {
+        return;
+    }
+
+    draw_text_centered_at(
+        EPAPER_WIDTH / 2,
+        y,
+        line,
+        fitting_text_scale(
+            line,
+            preferred_scale,
+            DISPLAY_SAFE_WIDTH));
+}
+
+static void draw_servings_layout(
+    const ble_client_peer_t *peer,
+    const ble_client_scale_state_t *state,
+    uint8_t display_flags)
+{
+    const bool show_name =
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_BEER_NAME) != 0;
+    const bool name_at_top =
+        show_name &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_BEER_NAME_TOP) != 0;
+    const bool stable =
+        (state->flags &
+         BLE_SCALE_FLAG_STABLE) != 0;
+    const int hero_y =
+        name_at_top ? 31 : 14;
+
+    if (name_at_top) {
+        draw_keg_name(
+            peer,
+            state,
+            12,
+            2);
+    }
+
+    char hero[8];
+    snprintf(
+        hero,
+        sizeof(hero),
+        "%u",
+        (unsigned)state->remaining_servings);
+
+    draw_hero_number(
+        EPAPER_WIDTH / 2,
+        hero_y,
+        hero);
+
+    const char *hero_label =
+        serving_count_label(
+            state->serving_size_oz);
+
+    draw_text_centered_at(
+        EPAPER_WIDTH / 2,
+        hero_y + 46,
+        hero_label,
+        fitting_text_scale(
+            hero_label,
+            2,
+            DISPLAY_SAFE_WIDTH));
+
+    if (show_name &&
+        !name_at_top) {
+        draw_keg_name(
+            peer,
+            state,
+            78,
+            2);
+    }
+
+    char metrics[64] = {0};
+
+    if ((display_flags &
+         BLE_DISPLAY_FLAG_SHOW_SERVING_SIZE) != 0) {
+        char serving[24];
+        format_serving_size(
+            state->serving_size_oz,
+            serving,
+            sizeof(serving));
+        strlcat(
+            serving,
+            " SERVING",
+            sizeof(serving));
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            serving);
+    }
+
+    if (stable &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_GALLONS) != 0) {
+        char gallons[24];
+        snprintf(
+            gallons,
+            sizeof(gallons),
+            "%.2F GAL",
+            (double)state->remaining_gallons);
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            gallons);
+    }
+
+    if (!stable) {
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            "SETTLING...");
+    }
+
+    draw_inline_metrics(
+        show_name ? 102 : 94,
+        metrics,
+        1);
+}
+
+static void draw_percent_layout(
+    const ble_client_peer_t *peer,
+    const ble_client_scale_state_t *state,
+    uint8_t display_flags)
+{
+    const bool show_name =
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_BEER_NAME) != 0;
+    const bool name_at_top =
+        show_name &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_BEER_NAME_TOP) != 0;
+    const bool stable =
+        (state->flags &
+         BLE_SCALE_FLAG_STABLE) != 0;
+    const int hero_y =
+        name_at_top ? 31 : 14;
+
+    if (name_at_top) {
+        draw_keg_name(
+            peer,
+            state,
+            12,
+            2);
+    }
+
+    char percent[8];
+    snprintf(
+        percent,
+        sizeof(percent),
+        "%.0F",
+        (double)clamped_percent(state));
+
+    draw_hero_percent(
+        EPAPER_WIDTH / 2,
+        hero_y,
+        percent);
+
+    if (show_name &&
+        !name_at_top) {
+        draw_keg_name(
+            peer,
+            state,
+            72,
+            2);
+    }
+
+    char metrics[64] = {0};
+
+    if (stable &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_GALLONS) != 0) {
+        char gallons[24];
+        snprintf(
+            gallons,
+            sizeof(gallons),
+            "%.2F GAL",
+            (double)state->remaining_gallons);
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            gallons);
+    }
+
+    if ((display_flags &
+         BLE_DISPLAY_FLAG_SHOW_TOTAL_WEIGHT) != 0) {
+        char weight[24];
+        snprintf(
+            weight,
+            sizeof(weight),
+            "%.1F LB",
+            (double)state->total_weight_lbs);
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            weight);
+    }
+
+    if (!stable) {
+        append_metric(
+            metrics,
+            sizeof(metrics),
+            "SETTLING...");
+    }
+
+    draw_inline_metrics(
+        95,
+        metrics,
+        2);
+}
+
+static void draw_diagnostic_metric(
+    int center_x,
+    int value_y,
+    const char *value,
+    const char *label,
+    int max_width)
+{
+    draw_text_centered_at(
+        center_x,
+        value_y,
+        value,
+        fitting_text_scale(
+            value,
+            2,
+            max_width));
+    draw_text_centered_at(
+        center_x,
+        value_y + 15,
+        label,
+        1);
+}
+
+static void draw_diagnostics_layout(
+    const ble_client_peer_t *peer,
+    const ble_client_scale_state_t *state,
+    uint8_t display_flags)
+{
+    if ((display_flags &
+         BLE_DISPLAY_FLAG_SHOW_BEER_NAME) != 0) {
+        draw_keg_name(
+            peer,
+            state,
+            11,
+            2);
+    } else {
+        draw_text_centered_at(
+            EPAPER_WIDTH / 2,
+            11,
+            "DIAGNOSTICS",
+            2);
+    }
+
+    char percent[12];
+    char servings[24];
+    char serving_size[16];
+    char gallons[20];
+    char scale_weight[20];
+    char beer_weight[20];
+    char wifi_signal[16];
+
+    snprintf(
+        percent,
+        sizeof(percent),
+        "%.0F%%",
+        (double)clamped_percent(state));
+    snprintf(
+        servings,
+        sizeof(servings),
+        "%u %s",
+        (unsigned)state->remaining_servings,
+        serving_unit_label(
+            state->serving_size_oz));
+    format_serving_size(
+        state->serving_size_oz,
+        serving_size,
+        sizeof(serving_size));
+    snprintf(
+        gallons,
+        sizeof(gallons),
+        "%.2F GAL",
+        (double)state->remaining_gallons);
+    snprintf(
+        scale_weight,
+        sizeof(scale_weight),
+        "%.1F LB",
+        (double)state->total_weight_lbs);
+    snprintf(
+        beer_weight,
+        sizeof(beer_weight),
+        "%.1F LB",
+        (double)state->beverage_weight_lbs);
+
+    if ((state->flags &
+         BLE_SCALE_FLAG_WIFI_CONNECTED) != 0) {
+        snprintf(
+            wifi_signal,
+            sizeof(wifi_signal),
+            "%d DBM",
+            (int)state->wifi_rssi_dbm);
+    } else {
+        strlcpy(
+            wifi_signal,
+            "OFFLINE",
+            sizeof(wifi_signal));
+    }
+
+    draw_diagnostic_metric(
+        62,
+        28,
+        percent,
+        "LEFT",
+        104);
+    draw_diagnostic_metric(
+        188,
+        28,
+        servings,
+        "SERVINGS LEFT",
+        104);
+    draw_diagnostic_metric(
+        62,
+        53,
+        serving_size,
+        "SERVING SIZE",
+        104);
+    draw_diagnostic_metric(
+        188,
+        53,
+        gallons,
+        "REMAINING",
+        104);
+    draw_diagnostic_metric(
+        43,
+        78,
+        scale_weight,
+        "SCALE WEIGHT",
+        68);
+    draw_diagnostic_metric(
+        125,
+        78,
+        beer_weight,
+        "BEER WEIGHT",
+        68);
+    draw_diagnostic_metric(
+        207,
+        78,
+        wifi_signal,
+        "WIFI SIGNAL",
+        68);
+
+    char status[40];
+
+    if ((state->flags &
+         BLE_SCALE_FLAG_CALIBRATED) == 0) {
+        strlcpy(
+            status,
+            "NOT CALIBRATED",
+            sizeof(status));
+    } else if ((state->flags &
+                BLE_SCALE_FLAG_PROFILE_CONFIGURED) == 0) {
+        strlcpy(
+            status,
+            "NO KEG PROFILE",
+            sizeof(status));
+    } else if ((state->flags &
+                BLE_SCALE_FLAG_KEG_READY) == 0) {
+        strlcpy(
+            status,
+            "KEG NOT READY",
+            sizeof(status));
+    } else {
+        strlcpy(
+            status,
+            (state->flags &
+             BLE_SCALE_FLAG_STABLE) != 0 ?
+                "STABLE" :
+                "SETTLING",
+            sizeof(status));
+    }
+
+    draw_text_centered_at(
+        EPAPER_WIDTH / 2,
+        105,
+        status,
+        fitting_text_scale(
+            status,
+            1,
+            DISPLAY_SAFE_WIDTH));
+}
+
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state)
@@ -509,166 +1145,31 @@ esp_err_t display_ui_show_scale(
 
     epaper_clear(false);
 
-    /*
-     * Serving-focused layout:
-     *
-     *   [future temp]       30        [future battery]
-     *                   PINTS LEFT
-     *                   MILLER LITE
-     *
-     *        16 OZ                   31.2 LB
-     *       3.80 GAL                    76%
-     *
-     * The two-row metric grid uses the available lower panel area instead of
-     * compressing four values into one tiny line. Temperature is reserved at
-     * upper-left and the display's own battery reading at upper-right.
-     */
+    const uint8_t display_flags =
+        effective_display_flags(state);
 
-    char servings[8];
-
-    snprintf(
-        servings,
-        sizeof(servings),
-        "%u",
-        (unsigned)state->remaining_servings);
-
-    draw_hero_number(
-        EPAPER_WIDTH / 2,
-        9,
-        servings);
-
-    const char *count_label =
-        serving_count_label(
-            state->serving_size_oz);
-
-    int label_scale = 2;
-
-    if (epaper_text_width(
-            count_label,
-            label_scale) >
-        EPAPER_WIDTH - 12) {
-        label_scale = 1;
-    }
-
-    draw_text_centered_at(
-        EPAPER_WIDTH / 2,
-        56,
-        count_label,
-        label_scale);
-
-    char keg_name[
-        BLE_CLIENT_KEG_NAME_MAX + 1];
-
-    if (state->keg_name[0] != '\0') {
-        strlcpy(
-            keg_name,
-            state->keg_name,
-            sizeof(keg_name));
-    } else {
-        strlcpy(
-            keg_name,
-            peer->scale_id,
-            sizeof(keg_name));
-    }
-
-    /*
-     * Match the count-label size whenever the beer name fits. Longer names
-     * gracefully fall back to the compact face rather than clipping.
-     */
-    int keg_scale = label_scale;
-
-    while (epaper_text_width(
-               keg_name,
-               keg_scale) >
-           EPAPER_WIDTH - 12) {
-        if (keg_scale > 1) {
-            keg_scale = 1;
-            continue;
-        }
-
-        size_t length = strlen(keg_name);
-
-        if (length == 0) {
+    switch (state->layout_id) {
+        case 2:
+            draw_percent_layout(
+                peer,
+                state,
+                display_flags);
             break;
-        }
 
-        keg_name[length - 1] = '\0';
-    }
+        case 3:
+            draw_diagnostics_layout(
+                peer,
+                state,
+                display_flags);
+            break;
 
-    draw_text_centered_at(
-        EPAPER_WIDTH / 2,
-        75,
-        keg_name,
-        keg_scale);
-
-    char serving_size[16];
-    char weight[20];
-    char gallons[20];
-    char percent[12];
-
-    format_serving_size(
-        state->serving_size_oz,
-        serving_size,
-        sizeof(serving_size));
-
-    snprintf(
-        weight,
-        sizeof(weight),
-        "%.1F LB",
-        (double)state->total_weight_lbs);
-
-    snprintf(
-        gallons,
-        sizeof(gallons),
-        "%.2F GAL",
-        (double)state->remaining_gallons);
-
-    snprintf(
-        percent,
-        sizeof(percent),
-        "%.0F%%",
-        (double)state->remaining_percent);
-
-    /*
-     * Two-by-two supporting metric grid. Scale 2 keeps these values readable
-     * while preserving clear hierarchy below the hero serving count.
-     */
-    draw_text_centered_at(
-        62,
-        92,
-        serving_size,
-        2);
-
-    draw_text_centered_at(
-        188,
-        92,
-        weight,
-        2);
-
-    if ((state->flags &
-         BLE_SCALE_FLAG_STABLE) != 0) {
-        draw_text_centered_at(
-            62,
-            111,
-            gallons,
-            2);
-
-        draw_text_centered_at(
-            188,
-            111,
-            percent,
-            2);
-    } else {
-        /*
-         * An unsettled state is temporary and more useful than the second
-         * metric row. Normal refresh logic generally avoids rendering while
-         * settling, but this keeps initial/setup renders understandable.
-         */
-        draw_text_centered_at(
-            EPAPER_WIDTH / 2,
-            111,
-            "SETTLING...",
-            1);
+        case 1:
+        default:
+            draw_servings_layout(
+                peer,
+                state,
+                display_flags);
+            break;
     }
 
     return present();
