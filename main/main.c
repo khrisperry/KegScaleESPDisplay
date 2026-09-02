@@ -789,6 +789,10 @@ void app_main(void)
         "KegScaleESPDisplay starting; wake=%s",
         wake_reason());
 
+    ESP_LOGI(
+        TAG,
+        "Display OTA validation firmware active");
+
     init_nvs();
 
     pairing_config_t pairing = {0};
