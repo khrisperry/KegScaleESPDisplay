@@ -25,6 +25,8 @@ static const char *TAG = "display_ota";
 #define DOWNLOAD_BUFFER_SIZE 4096
 #define HTTP_CONNECT_ATTEMPTS 3
 #define HTTP_RETRY_DELAY_MS 1500
+#define WIFI_RECONNECT_WAIT_MS 15000
+#define WIFI_POST_IP_SETTLE_MS 750
 #define WIFI_MAX_RETRIES 10
 
 typedef struct {
@@ -58,6 +60,10 @@ static void wifi_event(
                    WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *event =
             (const wifi_event_sta_disconnected_t *)event_data;
+
+        xEventGroupClearBits(
+            context->events,
+            WIFI_CONNECTED_BIT);
 
         ESP_LOGW(
             TAG,
@@ -336,7 +342,42 @@ static bool sha256_matches(
     return true;
 }
 
-static esp_err_t download_and_stage(
+static esp_err_t wait_for_wifi_ready(
+    wifi_context_t *wifi)
+{
+    if (wifi == NULL ||
+        wifi->events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    EventBits_t bits =
+        xEventGroupGetBits(
+            wifi->events);
+
+    if ((bits & WIFI_CONNECTED_BIT) != 0) {
+        return ESP_OK;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Waiting for OTA Wi-Fi to reconnect before HTTPS retry");
+
+    bits =
+        xEventGroupWaitBits(
+            wifi->events,
+            WIFI_CONNECTED_BIT |
+                WIFI_FAILED_BIT,
+            pdFALSE,
+            pdFALSE,
+            pdMS_TO_TICKS(
+                WIFI_RECONNECT_WAIT_MS));
+
+    return (bits & WIFI_CONNECTED_BIT) != 0 ?
+        ESP_OK :
+        ESP_ERR_TIMEOUT;
+}
+
+static esp_err_t download_and_stage_once(
     const ble_client_update_bundle_t *bundle)
 {
     esp_http_client_config_t config = {
@@ -353,51 +394,27 @@ static esp_err_t download_and_stage(
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = ESP_FAIL;
+    esp_err_t err =
+        esp_http_client_open(
+            client,
+            0);
+
     int64_t content_length = -1;
 
-    for (unsigned attempt = 1;
-         attempt <= HTTP_CONNECT_ATTEMPTS;
-         ++attempt) {
-        err =
-            esp_http_client_open(
-                client,
-                0);
+    if (err == ESP_OK) {
+        content_length =
+            esp_http_client_fetch_headers(
+                client);
 
-        if (err == ESP_OK) {
-            content_length =
-                esp_http_client_fetch_headers(
-                    client);
-
-            if (content_length >= 0) {
-                break;
-            }
-
+        if (content_length < 0) {
             err = ESP_FAIL;
-            esp_http_client_close(client);
-        }
-
-        ESP_LOGW(
-            TAG,
-            "OTA HTTPS connection attempt %u/%u failed: %s",
-            attempt,
-            HTTP_CONNECT_ATTEMPTS,
-            esp_err_to_name(err));
-
-        if (attempt <
-            HTTP_CONNECT_ATTEMPTS) {
-            vTaskDelay(
-                pdMS_TO_TICKS(
-                    HTTP_RETRY_DELAY_MS));
         }
     }
 
-    if (err != ESP_OK ||
-        content_length < 0) {
+    if (err != ESP_OK) {
+        esp_http_client_close(client);
         esp_http_client_cleanup(client);
-        return err != ESP_OK ?
-            err :
-            ESP_FAIL;
+        return err;
     }
 
     if (esp_http_client_get_status_code(client) !=
@@ -534,6 +551,57 @@ static esp_err_t download_and_stage(
     return err;
 }
 
+static esp_err_t download_and_stage(
+    const ble_client_update_bundle_t *bundle,
+    wifi_context_t *wifi)
+{
+    esp_err_t err = ESP_FAIL;
+
+    for (unsigned attempt = 1;
+         attempt <= HTTP_CONNECT_ATTEMPTS;
+         ++attempt) {
+        err =
+            wait_for_wifi_ready(
+                wifi);
+
+        if (err == ESP_OK) {
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    WIFI_POST_IP_SETTLE_MS));
+
+            ESP_LOGI(
+                TAG,
+                "Starting OTA HTTPS attempt %u/%u",
+                attempt,
+                HTTP_CONNECT_ATTEMPTS);
+
+            err =
+                download_and_stage_once(
+                    bundle);
+        }
+
+        if (err == ESP_OK) {
+            return ESP_OK;
+        }
+
+        ESP_LOGW(
+            TAG,
+            "OTA HTTPS/download attempt %u/%u failed: %s",
+            attempt,
+            HTTP_CONNECT_ATTEMPTS,
+            esp_err_to_name(err));
+
+        if (attempt <
+            HTTP_CONNECT_ATTEMPTS) {
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    HTTP_RETRY_DELAY_MS));
+        }
+    }
+
+    return err;
+}
+
 esp_err_t display_ota_confirm_running_image(void)
 {
     const esp_partition_t *running =
@@ -598,7 +666,10 @@ esp_err_t display_ota_install(
             &ip_handler);
 
     if (err == ESP_OK) {
-        err = download_and_stage(bundle);
+        err =
+            download_and_stage(
+                bundle,
+                &wifi);
     }
 
     stop_wifi(
