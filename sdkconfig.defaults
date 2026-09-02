@@ -30,5 +30,12 @@ CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_ENCRYPTION=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
+# Wi-Fi + HTTPS OTA briefly exercises timer callbacks, TCP/IP and TLS at the
+# same time. The ESP-IDF defaults are too tight on this classic ESP32 build and
+# can overflow the esp_timer task as TLS starts. Give both the timer service
+# and app_main enough headroom for OTA.
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # Keep console logs available during bring-up.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
