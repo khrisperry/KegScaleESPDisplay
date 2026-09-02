@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ble_client.h"
@@ -486,29 +487,45 @@ static void install_display_update_if_needed(
         "Display update %s is available; requesting encrypted Wi-Fi/OTA bundle",
         state->update.version);
 
-    ble_client_update_bundle_t bundle = {0};
+    ble_client_update_bundle_t *bundle =
+        calloc(
+            1,
+            sizeof(*bundle));
+
+    if (bundle == NULL) {
+        ESP_LOGW(
+            TAG,
+            "Display OTA failed: could not allocate update bundle");
+        return;
+    }
+
     esp_err_t err =
         ble_client_fetch_update_bundle(
             &pairing->peer,
-            &bundle);
+            bundle);
 
     if (err == ESP_OK &&
         (strcmp(
-             bundle.version,
+             bundle->version,
              state->update.version) != 0 ||
          strcmp(
-             bundle.sha256,
+             bundle->sha256,
              state->update.sha256) != 0 ||
-         bundle.size_bytes !=
+         bundle->size_bytes !=
              state->update.size_bytes)) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
 
     if (err == ESP_OK) {
-        err = display_ota_install(&bundle);
+        err = display_ota_install(bundle);
     }
 
-    memset(&bundle, 0, sizeof(bundle));
+    memset(
+        bundle,
+        0,
+        sizeof(*bundle));
+    free(bundle);
+    bundle = NULL;
 
     if (err == ESP_OK) {
         ESP_LOGI(
