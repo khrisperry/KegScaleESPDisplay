@@ -12,6 +12,7 @@ on:
       - "CMakeLists.txt"
       - "partitions.csv"
       - "sdkconfig.defaults"
+      - ".github/workflows/build.yml"
       - ".github/workflows/publish-ota.yml"
   workflow_dispatch:
 
