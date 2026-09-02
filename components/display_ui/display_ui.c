@@ -88,7 +88,6 @@ esp_err_t display_ui_show_message(
 
     return present();
 }
-
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey)
@@ -493,6 +492,108 @@ static void format_serving_size(
     }
 }
 
+static uint8_t effective_display_flags(
+    const ble_client_scale_state_t *state)
+{
+    if ((state->display_flags &
+         BLE_DISPLAY_FLAG_CONFIG_PRESENT) == 0) {
+        return BLE_DISPLAY_FLAGS_DEFAULT;
+    }
+
+    return state->display_flags;
+}
+
+static int fitting_text_scale(
+    const char *text,
+    int preferred,
+    int max_width)
+{
+    int scale = preferred;
+
+    while (scale > 1 &&
+           epaper_text_width(text, scale) >
+               max_width) {
+        --scale;
+    }
+
+    return scale;
+}
+
+static void draw_metric_row(
+    char metrics[][24],
+    size_t start,
+    size_t count,
+    int y,
+    int preferred_scale)
+{
+    if (count == 0) {
+        return;
+    }
+
+    if (count == 1) {
+        draw_text_centered_at(
+            EPAPER_WIDTH / 2,
+            y,
+            metrics[start],
+            fitting_text_scale(
+                metrics[start],
+                preferred_scale,
+                EPAPER_WIDTH - 12));
+        return;
+    }
+
+    draw_text_centered_at(
+        62,
+        y,
+        metrics[start],
+        fitting_text_scale(
+            metrics[start],
+            preferred_scale,
+            116));
+
+    draw_text_centered_at(
+        188,
+        y,
+        metrics[start + 1],
+        fitting_text_scale(
+            metrics[start + 1],
+            preferred_scale,
+            116));
+}
+
+static void draw_supporting_metrics(
+    char metrics[][24],
+    size_t count)
+{
+    const size_t first_row =
+        count > 1 ? 2 : count;
+
+    draw_metric_row(
+        metrics,
+        0,
+        first_row,
+        87,
+        2);
+
+    if (count > first_row) {
+        const size_t second_row =
+            count - first_row > 2 ?
+                2 :
+                count - first_row;
+
+        /*
+         * Keep the final row above y=112. The physical panel bezel masks a
+         * few pixels at the nominal 122-pixel edge on this board revision.
+         */
+        draw_metric_row(
+            metrics,
+            first_row,
+            second_row,
+            103,
+            1);
+    }
+}
+
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state)
@@ -509,167 +610,180 @@ esp_err_t display_ui_show_scale(
 
     epaper_clear(false);
 
-    /*
-     * Serving-focused layout:
-     *
-     *   [future temp]       30        [future battery]
-     *                   PINTS LEFT
-     *                   MILLER LITE
-     *
-     *        16 OZ                   31.2 LB
-     *       3.80 GAL                    76%
-     *
-     * The two-row metric grid uses the available lower panel area instead of
-     * compressing four values into one tiny line. Temperature is reserved at
-     * upper-left and the display's own battery reading at upper-right.
-     */
+    const uint8_t display_flags =
+        effective_display_flags(state);
 
-    char servings[8];
+    char hero[8];
+    const bool percent_layout =
+        state->layout_id == 2;
 
-    snprintf(
-        servings,
-        sizeof(servings),
-        "%u",
-        (unsigned)state->remaining_servings);
+    if (percent_layout) {
+        float percent =
+            state->remaining_percent;
+
+        if (percent < 0.0f) {
+            percent = 0.0f;
+        } else if (percent > 100.0f) {
+            percent = 100.0f;
+        }
+
+        snprintf(
+            hero,
+            sizeof(hero),
+            "%.0F",
+            (double)percent);
+    } else {
+        snprintf(
+            hero,
+            sizeof(hero),
+            "%u",
+            (unsigned)state->remaining_servings);
+    }
 
     draw_hero_number(
         EPAPER_WIDTH / 2,
-        9,
-        servings);
+        6,
+        hero);
 
-    const char *count_label =
-        serving_count_label(
-            state->serving_size_oz);
-
-    int label_scale = 2;
-
-    if (epaper_text_width(
-            count_label,
-            label_scale) >
-        EPAPER_WIDTH - 12) {
-        label_scale = 1;
-    }
+    const char *hero_label =
+        percent_layout ?
+            "PERCENT FULL" :
+            serving_count_label(
+                state->serving_size_oz);
 
     draw_text_centered_at(
         EPAPER_WIDTH / 2,
-        56,
-        count_label,
-        label_scale);
+        52,
+        hero_label,
+        fitting_text_scale(
+            hero_label,
+            2,
+            EPAPER_WIDTH - 12));
 
-    char keg_name[
-        BLE_CLIENT_KEG_NAME_MAX + 1];
+    if ((display_flags &
+         BLE_DISPLAY_FLAG_SHOW_BEER_NAME) != 0) {
+        char keg_name[
+            BLE_CLIENT_KEG_NAME_MAX + 1];
 
-    if (state->keg_name[0] != '\0') {
-        strlcpy(
-            keg_name,
-            state->keg_name,
-            sizeof(keg_name));
-    } else {
-        strlcpy(
-            keg_name,
-            peer->scale_id,
-            sizeof(keg_name));
-    }
-
-    /*
-     * Match the count-label size whenever the beer name fits. Longer names
-     * gracefully fall back to the compact face rather than clipping.
-     */
-    int keg_scale = label_scale;
-
-    while (epaper_text_width(
-               keg_name,
-               keg_scale) >
-           EPAPER_WIDTH - 12) {
-        if (keg_scale > 1) {
-            keg_scale = 1;
-            continue;
+        if (state->keg_name[0] != '\0') {
+            strlcpy(
+                keg_name,
+                state->keg_name,
+                sizeof(keg_name));
+        } else {
+            strlcpy(
+                keg_name,
+                peer->scale_id,
+                sizeof(keg_name));
         }
 
-        size_t length = strlen(keg_name);
+        int keg_scale =
+            fitting_text_scale(
+                keg_name,
+                2,
+                EPAPER_WIDTH - 12);
 
-        if (length == 0) {
-            break;
+        while (epaper_text_width(
+                   keg_name,
+                   keg_scale) >
+               EPAPER_WIDTH - 12) {
+            size_t length =
+                strlen(keg_name);
+
+            if (length == 0) {
+                break;
+            }
+
+            keg_name[length - 1] = '\0';
         }
 
-        keg_name[length - 1] = '\0';
-    }
-
-    draw_text_centered_at(
-        EPAPER_WIDTH / 2,
-        75,
-        keg_name,
-        keg_scale);
-
-    char serving_size[16];
-    char weight[20];
-    char gallons[20];
-    char percent[12];
-
-    format_serving_size(
-        state->serving_size_oz,
-        serving_size,
-        sizeof(serving_size));
-
-    snprintf(
-        weight,
-        sizeof(weight),
-        "%.1F LB",
-        (double)state->total_weight_lbs);
-
-    snprintf(
-        gallons,
-        sizeof(gallons),
-        "%.2F GAL",
-        (double)state->remaining_gallons);
-
-    snprintf(
-        percent,
-        sizeof(percent),
-        "%.0F%%",
-        (double)state->remaining_percent);
-
-    /*
-     * Two-by-two supporting metric grid. Scale 2 keeps these values readable
-     * while preserving clear hierarchy below the hero serving count.
-     */
-    draw_text_centered_at(
-        62,
-        92,
-        serving_size,
-        2);
-
-    draw_text_centered_at(
-        188,
-        92,
-        weight,
-        2);
-
-    if ((state->flags &
-         BLE_SCALE_FLAG_STABLE) != 0) {
-        draw_text_centered_at(
-            62,
-            111,
-            gallons,
-            2);
-
-        draw_text_centered_at(
-            188,
-            111,
-            percent,
-            2);
-    } else {
-        /*
-         * An unsettled state is temporary and more useful than the second
-         * metric row. Normal refresh logic generally avoids rendering while
-         * settling, but this keeps initial/setup renders understandable.
-         */
         draw_text_centered_at(
             EPAPER_WIDTH / 2,
-            111,
-            "SETTLING...",
-            1);
+            70,
+            keg_name,
+            keg_scale);
     }
+
+    char metrics[4][24] = {{0}};
+    size_t metric_count = 0;
+    const bool stable =
+        (state->flags &
+         BLE_SCALE_FLAG_STABLE) != 0;
+
+    if (percent_layout) {
+        snprintf(
+            metrics[metric_count++],
+            sizeof(metrics[0]),
+            "%u %s",
+            (unsigned)state->remaining_servings,
+            serving_count_label(
+                state->serving_size_oz));
+    }
+
+    if (!percent_layout &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_SERVING_SIZE) != 0 &&
+        metric_count < 4) {
+        format_serving_size(
+            state->serving_size_oz,
+            metrics[metric_count++],
+            sizeof(metrics[0]));
+    }
+
+    if ((display_flags &
+         BLE_DISPLAY_FLAG_SHOW_TOTAL_WEIGHT) != 0 &&
+        metric_count < 4) {
+        snprintf(
+            metrics[metric_count++],
+            sizeof(metrics[0]),
+            "%.1F LB",
+            (double)state->total_weight_lbs);
+    }
+
+    if (stable &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_GALLONS) != 0 &&
+        metric_count < 4) {
+        snprintf(
+            metrics[metric_count++],
+            sizeof(metrics[0]),
+            "%.2F GAL",
+            (double)state->remaining_gallons);
+    }
+
+    if (!percent_layout &&
+        stable &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_PERCENT) != 0 &&
+        metric_count < 4) {
+        snprintf(
+            metrics[metric_count++],
+            sizeof(metrics[0]),
+            "%.0F%%",
+            (double)state->remaining_percent);
+    }
+
+    if (percent_layout &&
+        (display_flags &
+         BLE_DISPLAY_FLAG_SHOW_SERVING_SIZE) != 0 &&
+        metric_count < 4) {
+        format_serving_size(
+            state->serving_size_oz,
+            metrics[metric_count++],
+            sizeof(metrics[0]));
+    }
+
+    if (!stable &&
+        metric_count < 4) {
+        strlcpy(
+            metrics[metric_count++],
+            "SETTLING...",
+            sizeof(metrics[0]));
+    }
+
+    draw_supporting_metrics(
+        metrics,
+        metric_count);
 
     return present();
 }
