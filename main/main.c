@@ -810,6 +810,10 @@ void app_main(void)
         TAG,
         "Display OTA validation firmware active");
 
+    ESP_LOGI(
+        TAG,
+        "Display OTA end-to-end validation target");
+
     init_nvs();
 
     pairing_config_t pairing = {0};
