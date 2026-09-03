@@ -36,7 +36,7 @@ For initial setup:
 
 ## Capacitive touch wake
 
-GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses a configurable threshold percentage. The normal 180-second timer wake remains enabled in parallel.
+GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 8% with older scale firmware. The normal 180-second timer wake remains enabled in parallel.
 
 The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0 wake cannot be enabled together.
 

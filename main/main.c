@@ -25,7 +25,7 @@
 
 static const char *TAG = "display";
 
-#define RETAINED_MAGIC 0x4B534450U
+#define RETAINED_MAGIC 0x4B534451U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
 
 typedef struct {
@@ -34,11 +34,36 @@ typedef struct {
     uint16_t sequence;
     uint8_t profile_revision;
     uint8_t display_config_revision;
+    uint8_t touch_threshold_percent;
     uint16_t remaining_servings;
     float total_weight_lbs;
 } retained_state_t;
 
 RTC_DATA_ATTR static retained_state_t s_retained;
+
+static uint8_t s_touch_threshold_percent =
+    CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
+
+static bool touch_threshold_is_valid(
+    uint8_t threshold_percent)
+{
+    return
+        threshold_percent >=
+            TOUCH_WAKE_THRESHOLD_MIN_PERCENT &&
+        threshold_percent <=
+            TOUCH_WAKE_THRESHOLD_MAX_PERCENT;
+}
+
+static void apply_touch_threshold(
+    const ble_client_scale_state_t *state)
+{
+    if (state != NULL &&
+        touch_threshold_is_valid(
+            state->touch_threshold_percent)) {
+        s_touch_threshold_percent =
+            state->touch_threshold_percent;
+    }
+}
 
 static void init_nvs(void)
 {
@@ -152,6 +177,9 @@ static void remember_displayed_state(
     s_retained.display_config_revision =
         state->display_config_revision;
 
+    s_retained.touch_threshold_percent =
+        s_touch_threshold_percent;
+
     s_retained.remaining_servings =
         state->remaining_servings;
 
@@ -168,7 +196,8 @@ static void configure_wake_sources(void)
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
     ESP_ERROR_CHECK(
-        touch_wake_prepare());
+        touch_wake_prepare(
+            s_touch_threshold_percent));
 #endif
 }
 
@@ -347,6 +376,7 @@ static esp_err_t fetch_paired_state(
         ble_client_state_is_compatible(
             &pairing->peer,
             state)) {
+        apply_touch_threshold(state);
         return ESP_OK;
     }
 
@@ -371,6 +401,7 @@ static esp_err_t fetch_paired_state(
         ble_client_state_is_compatible(
             &pairing->peer,
             state)) {
+        apply_touch_threshold(state);
         ESP_LOGI(
             TAG,
             "Saved-address BLE retry succeeded");
@@ -426,6 +457,7 @@ static esp_err_t fetch_paired_state(
         "Could not repair saved BLE address");
 
     pairing->peer = recovered;
+    apply_touch_threshold(state);
     return ESP_OK;
 }
 
@@ -441,6 +473,8 @@ static void render_if_needed(
             "No meaningful display change; keeping existing e-paper image");
         return;
     }
+
+    apply_touch_threshold(state);
 
     esp_err_t err =
         display_ui_show_scale(
@@ -887,6 +921,14 @@ void app_main(void)
 
     if (err == ESP_OK &&
         pairing.paired) {
+        if (retained_matches_peer(
+                &pairing.peer) &&
+            touch_threshold_is_valid(
+                s_retained.touch_threshold_percent)) {
+            s_touch_threshold_percent =
+                s_retained.touch_threshold_percent;
+        }
+
         ble_client_scale_state_t state = {0};
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE

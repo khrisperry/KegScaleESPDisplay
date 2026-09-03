@@ -103,6 +103,13 @@ static const ble_uuid128_t s_display_info_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x09, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_touch_config_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x0a, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -129,6 +136,16 @@ typedef struct __attribute__((packed)) {
 _Static_assert(
     sizeof(wire_display_config_t) == 6,
     "Scale BLE display config layout changed");
+
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t threshold_percent;
+    uint8_t config_revision;
+} wire_touch_config_t;
+
+_Static_assert(
+    sizeof(wire_touch_config_t) == 3,
+    "Scale BLE touch config layout changed");
 
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
@@ -202,6 +219,7 @@ typedef struct {
     uint16_t update_bundle_handle;
     uint16_t display_control_handle;
     uint16_t display_info_handle;
+    uint16_t touch_config_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -550,6 +568,11 @@ static int characteristic_disc_cb(
                        &characteristic->uuid.u,
                        &s_display_info_uuid.u) == 0) {
             context->display_info_handle =
+                characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_touch_config_uuid.u) == 0) {
+            context->touch_config_handle =
                 characteristic->val_handle;
         }
 
@@ -1204,7 +1227,8 @@ static esp_err_t discover_handles(
     uint16_t *display_update_handle,
     uint16_t *update_bundle_handle,
     uint16_t *display_control_handle,
-    uint16_t *display_info_handle)
+    uint16_t *display_info_handle,
+    uint16_t *touch_config_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -1285,6 +1309,8 @@ static esp_err_t discover_handles(
         chr_context.display_control_handle;
     *display_info_handle =
         chr_context.display_info_handle;
+    *touch_config_handle =
+        chr_context.touch_config_handle;
 
     return ESP_OK;
 }
@@ -1369,6 +1395,7 @@ esp_err_t ble_client_fetch(
     uint16_t update_bundle_handle = 0;
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
+    uint16_t touch_config_handle = 0;
 
     err =
         discover_handles(
@@ -1380,7 +1407,8 @@ esp_err_t ble_client_fetch(
             &display_update_handle,
             &update_bundle_handle,
             &display_control_handle,
-            &display_info_handle);
+            &display_info_handle,
+            &touch_config_handle);
 
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
@@ -1458,6 +1486,32 @@ esp_err_t ble_client_fetch(
                 TAG,
                 "Display configuration unavailable; using %.0f oz serving fallback",
                 (double)state->serving_size_oz);
+        }
+    }
+
+    if (err == ESP_OK &&
+        touch_config_handle != 0) {
+        wire_touch_config_t touch_config = {0};
+        size_t touch_config_len = 0;
+
+        const esp_err_t touch_err =
+            read_value(
+                conn_handle,
+                touch_config_handle,
+                (uint8_t *)&touch_config,
+                sizeof(touch_config),
+                &touch_config_len);
+
+        if (touch_err == ESP_OK &&
+            touch_config_len == sizeof(touch_config) &&
+            touch_config.protocol_version ==
+                BLE_CLIENT_PROTOCOL_VERSION) {
+            state->touch_threshold_percent =
+                touch_config.threshold_percent;
+        } else {
+            ESP_LOGW(
+                TAG,
+                "Touch configuration unavailable; using firmware fallback");
         }
     }
 
@@ -1647,10 +1701,11 @@ esp_err_t ble_client_fetch(
 
     ESP_LOGI(
         TAG,
-        "Display data: serving=%.2f oz layout=%u revision=%u",
+        "Display data: serving=%.2f oz layout=%u revision=%u touch-threshold=%u%%",
         (double)state->serving_size_oz,
         (unsigned)state->layout_id,
-        (unsigned)state->display_config_revision);
+        (unsigned)state->display_config_revision,
+        (unsigned)state->touch_threshold_percent);
 
     return ESP_OK;
 }
@@ -1693,6 +1748,7 @@ esp_err_t ble_client_fetch_update_bundle(
     uint16_t update_bundle_handle = 0;
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
+    uint16_t touch_config_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -1705,7 +1761,8 @@ esp_err_t ble_client_fetch_update_bundle(
                 &display_update_handle,
                 &update_bundle_handle,
                 &display_control_handle,
-                &display_info_handle);
+                &display_info_handle,
+                &touch_config_handle);
     }
 
     wire_update_bundle_t wire = {0};

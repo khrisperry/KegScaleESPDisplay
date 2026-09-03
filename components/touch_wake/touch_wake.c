@@ -13,11 +13,20 @@ static const char *TAG = "touch_wake";
 #define TOUCH_SAMPLE_COUNT 1
 #define TOUCH_INITIAL_SCANS 3
 
-esp_err_t touch_wake_prepare(void)
+esp_err_t touch_wake_prepare(
+    uint8_t threshold_percent)
 {
 #if SOC_TOUCH_SENSOR_VERSION != 1
 #error "KegScaleESPDisplay touch wake currently targets classic ESP32 touch hardware v1"
 #endif
+
+    if (threshold_percent <
+            TOUCH_WAKE_THRESHOLD_MIN_PERCENT ||
+        threshold_percent >
+            TOUCH_WAKE_THRESHOLD_MAX_PERCENT) {
+        threshold_percent =
+            CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
+    }
 
     touch_sensor_handle_t sensor = NULL;
     touch_channel_handle_t channel = NULL;
@@ -144,7 +153,7 @@ esp_err_t touch_wake_prepare(void)
         (uint32_t)(
             ((uint64_t)benchmark[0] *
              (100U -
-              CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT)) /
+              threshold_percent)) /
             100U);
 
     channel_cfg.abs_active_thresh[0] =
@@ -190,7 +199,7 @@ esp_err_t touch_wake_prepare(void)
         TOUCH_WAKE_CHANNEL,
         benchmark[0],
         threshold,
-        CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT);
+        threshold_percent);
 
     return ESP_OK;
 }

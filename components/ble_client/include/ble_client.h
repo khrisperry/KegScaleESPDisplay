@@ -64,6 +64,7 @@ typedef struct {
     uint8_t layout_id;
     uint8_t display_config_revision;
     uint8_t display_flags;
+    uint8_t touch_threshold_percent;
     bool unpair_requested;
     bool replacement_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];

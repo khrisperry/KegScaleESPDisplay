@@ -14,6 +14,7 @@ This display consumes the read-only BLE service implemented by KegScaleESP.
 | Display update offer | `8f7a0006-3f7b-4c61-a2b8-6d2f5b71c001` | Latest compatible display firmware |
 | Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
+| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Optional runtime touch threshold |
 
 ## 20-byte snapshot
 
@@ -93,6 +94,23 @@ The display reads this 6-byte packet when available:
 Serving size lets the display show both the configured size and a friendly remaining-unit label, e.g. 12 oz -> CANS LEFT and 16 oz -> PINTS LEFT.
 
 For compatibility with older scale firmware that does not yet expose this characteristic, the display falls back to 16 oz / serving-focused layout.
+
+### Touch configuration
+
+The optional touch-configuration characteristic keeps the existing display
+configuration packet unchanged for backward compatibility:
+
+`8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001`
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 1 | threshold percentage below the untouched baseline |
+| 2 | 1 | display/config revision |
+
+Valid thresholds are 1–50%. Lower values are more sensitive. If an older scale
+does not expose this characteristic, or a value is invalid, the display uses its
+8% firmware default.
 
 ## Encrypted display OTA
 
