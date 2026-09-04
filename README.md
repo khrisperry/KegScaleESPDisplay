@@ -22,14 +22,13 @@ The display stores exactly one scale identity in NVS and NimBLE stores the authe
 
 Initial setup is driven entirely from the scale web interface:
 
-1. Open the scale web page and expand **Display**.
-2. Click **Add display**. The scale advertises an explicit five-minute pairing window.
-3. An unpaired display scans continuously for a Keg Scale in pairing mode.
+1. After Wi-Fi provisioning, leave the unpaired display powered on near the scale. It reads the scale's advertised LAN address and shows a QR code that opens the first-run setup wizard.
+2. Complete calibration and the keg profile, then start the wizard's **Display** step.
+3. Click **Start display pairing**. The scale advertises an explicit five-minute pairing window.
 4. The display generates a random six-digit code and shows the target KegScale-XXXX identity plus the code on e-paper.
-5. The scale web page shows the detected display and enables the code field.
-6. Enter the display code on the scale webpage and click **Pair Display**.
-7. NimBLE creates an authenticated LE Secure Connections bond on both devices.
-8. The display saves only the scale identity/address, renders the current keg state, and returns to its normal sleep cycle.
+5. Enter the display code in the wizard and click **Pair display**.
+6. NimBLE creates an authenticated LE Secure Connections bond on both devices.
+7. The display saves only the scale identity/address, renders the current keg state, and returns to its normal sleep cycle.
 
 On every normal wake the display reconnects only to its saved scale identity. It never chooses a scale by signal strength.
 

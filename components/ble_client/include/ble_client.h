@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define BLE_CLIENT_SCALE_ID_MAX 20
+#define BLE_CLIENT_IP_ADDRESS_MAX 15
 #define BLE_CLIENT_KEG_NAME_MAX 32
 #define BLE_CLIENT_DEVICE_INFO_MAX 96
 #define BLE_CLIENT_MAX_CANDIDATES 8
@@ -47,6 +48,8 @@ typedef struct {
     int8_t rssi;
     bool service_seen;
     bool pairing_mode;
+    bool setup_url_available;
+    char ip_address[BLE_CLIENT_IP_ADDRESS_MAX + 1];
 } ble_client_peer_t;
 
 typedef struct {

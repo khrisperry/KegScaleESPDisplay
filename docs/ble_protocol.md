@@ -2,6 +2,12 @@
 
 This display consumes the read-only BLE service implemented by KegScaleESP.
 
+## Discovery advertisement
+
+The scale advertises an eight-byte manufacturer payload alongside its 128-bit service UUID. Bytes 0-1 are `4b 53`, byte 2 is advertisement version 1, and byte 3 contains flags. Bit 0 means display pairing is active. Bit 1 means bytes 4-7 contain the scale's IPv4 address octets.
+
+While unpaired, the display continuously scans. If exactly one scale advertises a LAN address and no scale is currently pairing, the display renders `http://<address>/` as a QR code. This URL handoff is intentionally unauthenticated discovery data; all credentials, OTA bundles, and display-control data remain protected by the exact authenticated bond.
+
 ## UUIDs
 
 | Item | UUID | Use |

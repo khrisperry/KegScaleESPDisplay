@@ -4,4 +4,5 @@ idf_component_register(
     REQUIRES
         epaper
         ble_client
+        qrcode
 )

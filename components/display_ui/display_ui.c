@@ -6,6 +6,7 @@
 #include "epaper.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "qrcode.h"
 
 static const char *TAG = "display_ui";
 
@@ -58,6 +59,46 @@ static esp_err_t present(void)
     }
 
     return err;
+}
+
+static void draw_setup_qrcode(
+    esp_qrcode_handle_t qrcode)
+{
+    const int modules =
+        esp_qrcode_get_size(qrcode);
+    const int module_pixels = 3;
+    const int quiet_modules = 4;
+    const int quiet_pixels =
+        quiet_modules * module_pixels;
+    const int qr_pixels =
+        modules * module_pixels;
+    const int origin_x =
+        DISPLAY_SAFE_LEFT + quiet_pixels;
+    const int origin_y =
+        (EPAPER_HEIGHT - qr_pixels) / 2;
+
+    epaper_fill_rect(
+        DISPLAY_SAFE_LEFT,
+        origin_y - quiet_pixels,
+        qr_pixels + quiet_pixels * 2,
+        qr_pixels + quiet_pixels * 2,
+        false);
+
+    for (int y = 0; y < modules; ++y) {
+        for (int x = 0; x < modules; ++x) {
+            if (esp_qrcode_get_module(
+                    qrcode,
+                    x,
+                    y)) {
+                epaper_fill_rect(
+                    origin_x + x * module_pixels,
+                    origin_y + y * module_pixels,
+                    module_pixels,
+                    module_pixels,
+                    true);
+            }
+        }
+    }
 }
 
 esp_err_t display_ui_show_message(
@@ -159,6 +200,83 @@ esp_err_t display_ui_show_pairing_code(
         code,
         3,
         true);
+
+    return present();
+}
+
+esp_err_t display_ui_show_setup_qr(
+    const char *scale_id,
+    const char *ip_address)
+{
+    if (ip_address == NULL ||
+        ip_address[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    epaper_clear(false);
+
+    char setup_url[32];
+    snprintf(
+        setup_url,
+        sizeof(setup_url),
+        "http://%s/",
+        ip_address);
+
+    esp_qrcode_config_t config =
+        ESP_QRCODE_CONFIG_DEFAULT();
+    config.display_func =
+        draw_setup_qrcode;
+    config.max_qrcode_version = 2;
+    config.qrcode_ecc_level =
+        ESP_QRCODE_ECC_LOW;
+
+    ESP_RETURN_ON_ERROR(
+        esp_qrcode_generate(
+            &config,
+            setup_url),
+        TAG,
+        "Could not generate setup QR code");
+
+    epaper_draw_text(
+        126,
+        14,
+        "SCALE READY",
+        1,
+        true);
+    epaper_draw_text(
+        126,
+        43,
+        "SCAN TO OPEN",
+        1,
+        true);
+    epaper_draw_text(
+        126,
+        56,
+        "SETUP WIZARD",
+        1,
+        true);
+
+    epaper_draw_text(
+        126,
+        78,
+        ip_address,
+        1,
+        true);
+
+    if (scale_id != NULL &&
+        scale_id[0] != '\0') {
+        epaper_draw_text(
+            126,
+            96,
+            scale_id,
+            1,
+            true);
+    }
 
     return present();
 }

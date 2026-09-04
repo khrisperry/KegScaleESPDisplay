@@ -39,6 +39,7 @@ static const char *TAG = "ble_client";
 #define PAIRING_ADV_MAGIC_1 0x53
 #define PAIRING_ADV_VERSION 1
 #define PAIRING_ADV_FLAG_ACTIVE (1U << 0)
+#define PAIRING_ADV_FLAG_SETUP_URL (1U << 1)
 
 static const ble_uuid128_t s_service_uuid =
     BLE_UUID128_INIT(
@@ -364,6 +365,27 @@ static int scan_gap_event(struct ble_gap_event *event, void *arg)
                 candidate->pairing_mode =
                     (fields.mfg_data[3] &
                      PAIRING_ADV_FLAG_ACTIVE) != 0;
+
+                if (fields.mfg_data_len >= 8 &&
+                    (fields.mfg_data[3] &
+                     PAIRING_ADV_FLAG_SETUP_URL) != 0) {
+                    const uint8_t *ip =
+                        &fields.mfg_data[4];
+
+                    candidate->setup_url_available =
+                        ip[0] != 0;
+
+                    if (candidate->setup_url_available) {
+                        snprintf(
+                            candidate->ip_address,
+                            sizeof(candidate->ip_address),
+                            "%u.%u.%u.%u",
+                            (unsigned)ip[0],
+                            (unsigned)ip[1],
+                            (unsigned)ip[2],
+                            (unsigned)ip[3]);
+                    }
+                }
             }
 
             if (has_scale_name) {

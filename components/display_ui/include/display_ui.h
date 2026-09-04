@@ -18,6 +18,10 @@ esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey);
 
+esp_err_t display_ui_show_setup_qr(
+    const char *scale_id,
+    const char *ip_address);
+
 esp_err_t display_ui_show_candidates(
     const ble_client_peer_t *candidates,
     size_t count);

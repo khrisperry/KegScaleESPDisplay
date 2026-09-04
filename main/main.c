@@ -710,8 +710,15 @@ static void enter_pairing_mode(void)
 
         ble_client_peer_t *selected = NULL;
         size_t pairing_count = 0;
+        ble_client_peer_t *setup_scale = NULL;
+        size_t setup_count = 0;
 
         for (size_t i = 0; i < count; ++i) {
+            if (candidates[i].setup_url_available) {
+                ++setup_count;
+                setup_scale = &candidates[i];
+            }
+
             if (!candidates[i].pairing_mode) {
                 continue;
             }
@@ -721,7 +728,23 @@ static void enter_pairing_mode(void)
         }
 
         if (pairing_count == 0) {
-            if (last_screen != 0) {
+            if (setup_count == 1 &&
+                setup_scale != NULL) {
+                if (last_screen != 4) {
+                    display_ui_show_setup_qr(
+                        setup_scale->scale_id,
+                        setup_scale->ip_address);
+                    last_screen = 4;
+                }
+            } else if (setup_count > 1) {
+                if (last_screen != 1) {
+                    display_ui_show_message(
+                        "KEG DISPLAY",
+                        "MULTIPLE SCALES",
+                        "POWER ON ONE SCALE");
+                    last_screen = 1;
+                }
+            } else if (last_screen != 0) {
                 display_ui_show_message(
                     "KEG DISPLAY",
                     "READY TO PAIR",
