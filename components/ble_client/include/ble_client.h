@@ -91,6 +91,8 @@ enum {
     BLE_DISPLAY_FLAG_SHOW_SERVING_SIZE = 1U << 3,
     BLE_DISPLAY_FLAG_SHOW_TOTAL_WEIGHT = 1U << 4,
     BLE_DISPLAY_FLAG_BEER_NAME_TOP = 1U << 5,
+    /* Absence means the legacy/default 3-minute check-in remains enabled. */
+    BLE_DISPLAY_FLAG_DISABLE_PERIODIC_CHECKIN = 1U << 6,
     BLE_DISPLAY_FLAG_CONFIG_PRESENT = 1U << 7,
 };
 

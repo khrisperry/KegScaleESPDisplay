@@ -8,6 +8,7 @@
 #include "display_ota.h"
 #include "display_ui.h"
 #include "driver/gpio.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_attr.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
@@ -25,8 +26,11 @@
 
 static const char *TAG = "display";
 
-#define RETAINED_MAGIC 0x4B534451U
+#define RETAINED_MAGIC 0x4B534452U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
+#define BATTERY_ADC_SAMPLES 16
+#define BATTERY_ADC_FULL_SCALE 4095.0f
+#define BATTERY_DIVIDER_SCALE 7.46f
 
 typedef struct {
     uint32_t magic;
@@ -35,6 +39,8 @@ typedef struct {
     uint8_t profile_revision;
     uint8_t display_config_revision;
     uint8_t touch_threshold_percent;
+    uint8_t periodic_checkin_disabled;
+    uint8_t battery_percent;
     uint16_t remaining_servings;
     float total_weight_lbs;
 } retained_state_t;
@@ -43,6 +49,7 @@ RTC_DATA_ATTR static retained_state_t s_retained;
 
 static uint8_t s_touch_threshold_percent =
     CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
+static bool s_periodic_checkin_enabled = true;
 
 static bool touch_threshold_is_valid(
     uint8_t threshold_percent)
@@ -54,15 +61,164 @@ static bool touch_threshold_is_valid(
             TOUCH_WAKE_THRESHOLD_MAX_PERCENT;
 }
 
-static void apply_touch_threshold(
+static void apply_display_settings(
     const ble_client_scale_state_t *state)
 {
-    if (state != NULL &&
-        touch_threshold_is_valid(
+    if (state == NULL) {
+        return;
+    }
+
+    if (touch_threshold_is_valid(
             state->touch_threshold_percent)) {
         s_touch_threshold_percent =
             state->touch_threshold_percent;
     }
+
+    if ((state->display_flags &
+         BLE_DISPLAY_FLAG_CONFIG_PRESENT) != 0) {
+        s_periodic_checkin_enabled =
+            (state->display_flags &
+             BLE_DISPLAY_FLAG_DISABLE_PERIODIC_CHECKIN) == 0;
+    }
+}
+
+static uint8_t quantize_battery_percent(float percent)
+{
+    if (!isfinite(percent) || percent <= 10.0f) {
+        return 0;
+    }
+
+    if (percent <= 30.0f) {
+        return 20;
+    }
+
+    if (percent <= 50.0f) {
+        return 40;
+    }
+
+    if (percent <= 70.0f) {
+        return 60;
+    }
+
+    if (percent <= 90.0f) {
+        return 80;
+    }
+
+    return 100;
+}
+
+static uint8_t battery_fallback_percent(void)
+{
+    if (s_retained.magic == RETAINED_MAGIC &&
+        s_retained.battery_percent <= 100) {
+        return s_retained.battery_percent;
+    }
+
+    return 100;
+}
+
+static uint8_t read_battery_percent(void)
+{
+    adc_oneshot_unit_handle_t adc = NULL;
+    const adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT_1,
+    };
+
+    esp_err_t err =
+        adc_oneshot_new_unit(
+            &unit_config,
+            &adc);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Battery ADC init failed: %s",
+            esp_err_to_name(err));
+        return battery_fallback_percent();
+    }
+
+    const adc_oneshot_chan_cfg_t channel_config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+
+    err =
+        adc_oneshot_config_channel(
+            adc,
+            ADC_CHANNEL_7,
+            &channel_config);
+
+    int64_t raw_total = 0;
+    int samples = 0;
+
+    if (err == ESP_OK) {
+        for (int i = 0;
+             i < BATTERY_ADC_SAMPLES;
+             ++i) {
+            int raw = 0;
+            if (adc_oneshot_read(
+                    adc,
+                    ADC_CHANNEL_7,
+                    &raw) == ESP_OK) {
+                raw_total += raw;
+                ++samples;
+            }
+        }
+    }
+
+    adc_oneshot_del_unit(adc);
+
+    if (err != ESP_OK || samples == 0) {
+        ESP_LOGW(
+            TAG,
+            "Battery ADC read failed: %s",
+            esp_err_to_name(err));
+        return battery_fallback_percent();
+    }
+
+    const float raw_average =
+        (float)raw_total / (float)samples;
+    const float voltage =
+        (raw_average / BATTERY_ADC_FULL_SCALE) *
+        BATTERY_DIVIDER_SCALE;
+
+    float percent = 0.0f;
+
+    if (voltage >= 4.20f) {
+        percent = 100.0f;
+    } else if (voltage <= 3.50f) {
+        percent = 0.0f;
+    } else {
+        const float v2 = voltage * voltage;
+        const float v3 = v2 * voltage;
+        const float v4 = v3 * voltage;
+
+        percent =
+            2836.9625f * v4 -
+            43987.4889f * v3 +
+            255233.8134f * v2 -
+            656689.7123f * voltage +
+            632041.7303f;
+
+        if (percent < 0.0f) {
+            percent = 0.0f;
+        } else if (percent > 100.0f) {
+            percent = 100.0f;
+        }
+    }
+
+    const uint8_t quantized =
+        quantize_battery_percent(percent);
+
+    ESP_LOGI(
+        TAG,
+        "Battery ADC raw=%.0f voltage=%.2fV estimated=%.0f%% display=%u%%",
+        (double)raw_average,
+        (double)voltage,
+        (double)percent,
+        (unsigned)quantized);
+
+    return quantized;
 }
 
 static void init_nvs(void)
@@ -117,9 +273,23 @@ static bool retained_matches_peer(
             peer->scale_id) == 0;
 }
 
+static void remember_runtime_settings(
+    const ble_client_peer_t *peer)
+{
+    if (!retained_matches_peer(peer)) {
+        return;
+    }
+
+    s_retained.touch_threshold_percent =
+        s_touch_threshold_percent;
+    s_retained.periodic_checkin_disabled =
+        s_periodic_checkin_enabled ? 0U : 1U;
+}
+
 static bool should_refresh(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state)
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent)
 {
     if (!retained_matches_peer(peer)) {
         return true;
@@ -141,7 +311,9 @@ static bool should_refresh(
         state->display_config_revision !=
             s_retained.display_config_revision ||
         state->remaining_servings !=
-            s_retained.remaining_servings) {
+            s_retained.remaining_servings ||
+        battery_percent !=
+            s_retained.battery_percent) {
         return true;
     }
 
@@ -153,7 +325,8 @@ static bool should_refresh(
 
 static void remember_displayed_state(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state)
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent)
 {
     memset(
         &s_retained,
@@ -180,6 +353,12 @@ static void remember_displayed_state(
     s_retained.touch_threshold_percent =
         s_touch_threshold_percent;
 
+    s_retained.periodic_checkin_disabled =
+        s_periodic_checkin_enabled ? 0U : 1U;
+
+    s_retained.battery_percent =
+        battery_percent;
+
     s_retained.remaining_servings =
         state->remaining_servings;
 
@@ -189,10 +368,16 @@ static void remember_displayed_state(
 
 static void configure_wake_sources(void)
 {
-    ESP_ERROR_CHECK(
-        esp_sleep_enable_timer_wakeup(
-            (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *
-            1000000ULL));
+    if (s_periodic_checkin_enabled) {
+        ESP_ERROR_CHECK(
+            esp_sleep_enable_timer_wakeup(
+                (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *
+                1000000ULL));
+    } else {
+        ESP_ERROR_CHECK(
+            esp_sleep_disable_wakeup_source(
+                ESP_SLEEP_WAKEUP_TIMER));
+    }
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
     ESP_ERROR_CHECK(
@@ -207,10 +392,16 @@ static void go_to_sleep(void)
     configure_wake_sources();
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
-    ESP_LOGI(
-        TAG,
-        "Sleeping for %d seconds; GPIO12 capacitive touch also wakes the display",
-        CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
+    if (s_periodic_checkin_enabled) {
+        ESP_LOGI(
+            TAG,
+            "Sleeping for %d seconds; GPIO12 capacitive touch also wakes the display",
+            CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
+    } else {
+        ESP_LOGI(
+            TAG,
+            "Periodic check-in disabled; sleeping until GPIO12 capacitive touch");
+    }
 #else
     ESP_LOGI(
         TAG,
@@ -295,13 +486,6 @@ static esp_err_t validate_and_save_peer(
             state);
 
     if (err != ESP_OK) {
-        /*
-         * Pairing security has just completed and ble_client_pair() requests
-         * a disconnect before returning. That disconnect is asynchronous, so
-         * an immediate validation reconnect can briefly collide with the
-         * controller teardown. Give it one deliberate retry before treating
-         * the newly-created bond as failed.
-         */
         ESP_LOGW(
             TAG,
             "Initial post-pair validation connection failed; retrying once");
@@ -328,6 +512,7 @@ static esp_err_t validate_and_save_peer(
         return ESP_ERR_INVALID_VERSION;
     }
 
+    apply_display_settings(state);
     return pairing_save(peer);
 }
 
@@ -376,15 +561,11 @@ static esp_err_t fetch_paired_state(
         ble_client_state_is_compatible(
             &pairing->peer,
             state)) {
-        apply_touch_threshold(state);
+        apply_display_settings(state);
+        remember_runtime_settings(&pairing->peer);
         return ESP_OK;
     }
 
-    /*
-     * A visible scale can occasionally miss a connection establishment even
-     * though its saved address is still correct. Retry the known address once
-     * before spending several seconds scanning for identity recovery.
-     */
     ESP_LOGW(
         TAG,
         "Direct connection to %s failed; retrying saved address once",
@@ -401,18 +582,14 @@ static esp_err_t fetch_paired_state(
         ble_client_state_is_compatible(
             &pairing->peer,
             state)) {
-        apply_touch_threshold(state);
+        apply_display_settings(state);
+        remember_runtime_settings(&pairing->peer);
         ESP_LOGI(
             TAG,
             "Saved-address BLE retry succeeded");
         return ESP_OK;
     }
 
-    /*
-     * The logical KegScale-XXXX identity is stable. Only after two direct
-     * failures do an exact-ID scan to repair a genuinely changed BLE address.
-     * Never fall back to strongest RSSI or a different scale.
-     */
     ESP_LOGW(
         TAG,
         "Saved-address retry failed; looking for exact ID %s",
@@ -429,11 +606,6 @@ static esp_err_t fetch_paired_state(
         return err;
     }
 
-    /*
-     * Give the controller a short handoff interval after active scanning.
-     * This avoids immediately starting a connection on the same radio state
-     * transition that completed the discovery procedure.
-     */
     vTaskDelay(pdMS_TO_TICKS(250));
 
     err =
@@ -457,34 +629,39 @@ static esp_err_t fetch_paired_state(
         "Could not repair saved BLE address");
 
     pairing->peer = recovered;
-    apply_touch_threshold(state);
+    apply_display_settings(state);
+    remember_runtime_settings(&pairing->peer);
     return ESP_OK;
 }
 
 static void render_if_needed(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state)
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent)
 {
     if (!should_refresh(
             peer,
-            state)) {
+            state,
+            battery_percent)) {
         ESP_LOGI(
             TAG,
             "No meaningful display change; keeping existing e-paper image");
         return;
     }
 
-    apply_touch_threshold(state);
+    apply_display_settings(state);
 
     esp_err_t err =
         display_ui_show_scale(
             peer,
-            state);
+            state,
+            battery_percent);
 
     if (err == ESP_OK) {
         remember_displayed_state(
             peer,
-            state);
+            state,
+            battery_percent);
     } else {
         ESP_LOGW(
             TAG,
@@ -585,6 +762,7 @@ static void install_display_update_if_needed(
 static esp_err_t wait_for_touch_pour_result(
     pairing_config_t *pairing,
     ble_client_scale_state_t *state,
+    uint8_t battery_percent,
     bool *meaningful_change)
 {
     if (pairing == NULL ||
@@ -637,15 +815,17 @@ static esp_err_t wait_for_touch_pour_result(
 
             if (should_refresh(
                     &pairing->peer,
-                    state)) {
+                    state,
+                    battery_percent)) {
                 *meaningful_change = true;
 
                 ESP_LOGI(
                     TAG,
-                    "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb",
+                    "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb battery=%u%%",
                     (unsigned)state->sequence,
                     (unsigned)state->remaining_servings,
-                    (double)state->total_weight_lbs);
+                    (double)state->total_weight_lbs,
+                    (unsigned)battery_percent);
 
                 return ESP_OK;
             }
@@ -803,9 +983,13 @@ static void enter_pairing_mode(void)
 
                 vTaskDelay(pdMS_TO_TICKS(1000));
 
+                const uint8_t battery_percent =
+                    read_battery_percent();
+
                 render_if_needed(
                     selected,
-                    &state);
+                    &state,
+                    battery_percent);
 
                 go_to_sleep();
             }
@@ -945,12 +1129,19 @@ void app_main(void)
     if (err == ESP_OK &&
         pairing.paired) {
         if (retained_matches_peer(
-                &pairing.peer) &&
-            touch_threshold_is_valid(
-                s_retained.touch_threshold_percent)) {
-            s_touch_threshold_percent =
-                s_retained.touch_threshold_percent;
+                &pairing.peer)) {
+            if (touch_threshold_is_valid(
+                    s_retained.touch_threshold_percent)) {
+                s_touch_threshold_percent =
+                    s_retained.touch_threshold_percent;
+            }
+
+            s_periodic_checkin_enabled =
+                s_retained.periodic_checkin_disabled == 0;
         }
+
+        const uint8_t battery_percent =
+            read_battery_percent();
 
         ble_client_scale_state_t state = {0};
 
@@ -962,6 +1153,7 @@ void app_main(void)
                 wait_for_touch_pour_result(
                     &pairing,
                     &state,
+                    battery_percent,
                     &meaningful_change);
 
             if (err == ESP_OK) {
@@ -974,7 +1166,8 @@ void app_main(void)
                 meaningful_change) {
                 render_if_needed(
                     &pairing.peer,
-                    &state);
+                    &state,
+                    battery_percent);
             } else if (err != ESP_OK) {
                 ESP_LOGW(
                     TAG,
@@ -982,12 +1175,6 @@ void app_main(void)
                     esp_err_to_name(err));
             }
 
-            /*
-             * Touch wake already has a fresh authenticated scale state.
-             * Process a pending display OTA here too so a user can wake the
-             * display to install an update instead of waiting for the next
-             * timer wake.
-             */
             if (err == ESP_OK) {
                 install_display_update_if_needed(
                     &pairing,
@@ -1010,7 +1197,8 @@ void app_main(void)
 
             render_if_needed(
                 &pairing.peer,
-                &state);
+                &state,
+                battery_percent);
 
             install_display_update_if_needed(
                 &pairing,

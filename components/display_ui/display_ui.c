@@ -24,6 +24,10 @@ enum {
         DISPLAY_SAFE_RIGHT - DISPLAY_SAFE_LEFT,
     DISPLAY_SAFE_HEIGHT =
         DISPLAY_SAFE_BOTTOM - DISPLAY_SAFE_TOP,
+    BATTERY_BODY_WIDTH = 20,
+    BATTERY_BODY_HEIGHT = 10,
+    BATTERY_TERMINAL_WIDTH = 3,
+    BATTERY_RESERVED_WIDTH = 30,
 };
 
 static void draw_font_centered_at(
@@ -53,6 +57,54 @@ static void draw_font_centered_at(
         text,
         font,
         true);
+}
+
+static void draw_battery_indicator(uint8_t battery_percent)
+{
+    if (battery_percent > 100) {
+        battery_percent = 100;
+    }
+
+    const int x =
+        DISPLAY_SAFE_RIGHT -
+        BATTERY_BODY_WIDTH -
+        BATTERY_TERMINAL_WIDTH;
+    const int y = DISPLAY_SAFE_TOP + 1;
+
+    /* Clear the reserved corner before drawing the icon over any layout. */
+    epaper_fill_rect(
+        DISPLAY_SAFE_RIGHT - BATTERY_RESERVED_WIDTH,
+        DISPLAY_SAFE_TOP,
+        BATTERY_RESERVED_WIDTH,
+        BATTERY_BODY_HEIGHT + 3,
+        false);
+
+    epaper_draw_rect(
+        x,
+        y,
+        BATTERY_BODY_WIDTH,
+        BATTERY_BODY_HEIGHT,
+        true);
+    epaper_fill_rect(
+        x + BATTERY_BODY_WIDTH,
+        y + 3,
+        BATTERY_TERMINAL_WIDTH,
+        4,
+        true);
+
+    const unsigned bars =
+        (unsigned)(battery_percent / 20U);
+
+    for (unsigned i = 0;
+         i < bars && i < 5U;
+         ++i) {
+        epaper_fill_rect(
+            x + 2 + (int)i * 3,
+            y + 2,
+            2,
+            BATTERY_BODY_HEIGHT - 4,
+            true);
+    }
 }
 
 static esp_err_t present(void)
@@ -150,6 +202,7 @@ esp_err_t display_ui_show_message(
 
     return present();
 }
+
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey)
@@ -345,7 +398,6 @@ esp_err_t display_ui_show_candidates(
 
     return present();
 }
-
 
 static void draw_hero_number(
     int center_x,
@@ -563,16 +615,27 @@ static void draw_keg_name(
         keg_name,
         sizeof(keg_name));
 
+    const bool reserve_battery =
+        y <= 12;
+    const int max_width =
+        reserve_battery ?
+            DISPLAY_SAFE_WIDTH - BATTERY_RESERVED_WIDTH :
+            DISPLAY_SAFE_WIDTH;
+    const int center_x =
+        reserve_battery ?
+            DISPLAY_SAFE_LEFT + max_width / 2 :
+            EPAPER_WIDTH / 2;
+
     const epaper_font_t *keg_font =
         fitting_text_font(
             keg_name,
             preferred_font,
-            DISPLAY_SAFE_WIDTH);
+            max_width);
 
     while (epaper_font_text_width(
                keg_name,
                keg_font) >
-           DISPLAY_SAFE_WIDTH) {
+           max_width) {
         const size_t length =
             strlen(keg_name);
 
@@ -584,7 +647,7 @@ static void draw_keg_name(
     }
 
     draw_font_centered_at(
-        EPAPER_WIDTH / 2,
+        center_x,
         y,
         keg_name,
         keg_font);
@@ -1012,7 +1075,8 @@ static void draw_diagnostics_layout(
 
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state)
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent)
 {
     if (peer == NULL ||
         state == NULL) {
@@ -1053,5 +1117,6 @@ esp_err_t display_ui_show_scale(
             break;
     }
 
+    draw_battery_indicator(battery_percent);
     return present();
 }

@@ -8,6 +8,7 @@ idf_component_register(
         pairing
         touch_wake
         nvs_flash
+        esp_adc
         esp_driver_gpio
         esp_hw_support
 )

@@ -5,8 +5,10 @@ config KEG_DISPLAY_SLEEP_SECONDS
     range 30 3600
     default 180
     help
-        Normal deep-sleep timer wake interval. The display wakes, reads its paired
-        scale once, refreshes e-paper only if useful data changed, then sleeps again.
+        Normal deep-sleep timer wake interval. The scale-owned display setting can
+        disable this periodic wake so capacitive touch becomes the only normal wake
+        source. When enabled, the display wakes, reads its paired scale once,
+        refreshes e-paper only if useful data changed, then sleeps again.
 
 config KEG_DISPLAY_SCAN_SECONDS
     int "Initial pairing scan duration (seconds)"
@@ -31,7 +33,7 @@ config KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT
     int "Touch sensitivity threshold below baseline (percent)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 1 50
-    default 8
+    default 3
     help
         ESP32 touch values decrease when touched. The wake threshold is calibrated
         before each deep sleep as this percentage below the untouched benchmark.
