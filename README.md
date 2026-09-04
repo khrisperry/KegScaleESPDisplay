@@ -86,6 +86,8 @@ The initial firmware is already structured around the final low-power workflow:
 
 The display keeps the last image visible while sleeping.
 
+All setup, pairing, connection-status, QR, keg, and diagnostics screens use the bundled Keg Display Sans font. Full e-paper refreshes initialize both SSD1680 RAM planes and the display-update control register, preventing random controller RAM from appearing as a dotted line along the panel edge after a cold boot.
+
 ### First pairing
 
 No serial interaction is required for normal pairing. Start **Add display** from the scale web page and enter the one-time six-digit code shown on the e-paper display.

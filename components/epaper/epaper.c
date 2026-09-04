@@ -168,6 +168,26 @@ static esp_err_t configure_controller(void)
         TAG,
         "Border config failed");
 
+    /*
+     * Match the SSD1680 full-refresh initialization for this 122x250 panel.
+     * The second byte keeps unused source outputs from leaking uninitialized
+     * RAM data into the visible edge row.
+     */
+    const uint8_t display_update_control[] = {
+        0x00, 0x80
+    };
+
+    ESP_RETURN_ON_ERROR(
+        send_command(0x21),
+        TAG,
+        "Display update control command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(
+            display_update_control,
+            sizeof(display_update_control)),
+        TAG,
+        "Display update control failed");
+
     const uint8_t temperature_sensor = 0x80;
     ESP_RETURN_ON_ERROR(
         send_command(0x18),
@@ -634,17 +654,39 @@ esp_err_t epaper_refresh(void)
         TAG,
         "Could not set RAM pointer");
 
+    /*
+     * A full SSD1680 refresh consumes both the previous (0x26) and current
+     * (0x24) RAM planes. Initialize both so a cold boot cannot expose random
+     * controller RAM as dots along the panel edge.
+     */
     ESP_RETURN_ON_ERROR(
-        send_command(0x24),
+        send_command(0x26),
         TAG,
-        "Write RAM command failed");
+        "Write previous RAM command failed");
 
     ESP_RETURN_ON_ERROR(
         send_data(
             s_framebuffer,
             sizeof(s_framebuffer)),
         TAG,
-        "Framebuffer transfer failed");
+        "Previous framebuffer transfer failed");
+
+    ESP_RETURN_ON_ERROR(
+        set_ram_pointer(),
+        TAG,
+        "Could not reset RAM pointer");
+
+    ESP_RETURN_ON_ERROR(
+        send_command(0x24),
+        TAG,
+        "Write current RAM command failed");
+
+    ESP_RETURN_ON_ERROR(
+        send_data(
+            s_framebuffer,
+            sizeof(s_framebuffer)),
+        TAG,
+        "Current framebuffer transfer failed");
 
     const uint8_t update = 0xF7;
 

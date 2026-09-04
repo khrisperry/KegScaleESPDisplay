@@ -26,28 +26,33 @@ enum {
         DISPLAY_SAFE_BOTTOM - DISPLAY_SAFE_TOP,
 };
 
-static void draw_centered(
+static void draw_font_centered_at(
+    int center_x,
     int y,
     const char *text,
-    int scale,
-    bool black)
+    const epaper_font_t *font)
 {
-    int width =
-        epaper_text_width(text, scale);
+    const int width =
+        epaper_font_text_width(
+            text,
+            font);
 
-    int x =
-        (EPAPER_WIDTH - width) / 2;
+    int x = center_x - width / 2;
 
     if (x < DISPLAY_SAFE_LEFT) {
         x = DISPLAY_SAFE_LEFT;
     }
 
-    epaper_draw_text(
+    if (x + width > DISPLAY_SAFE_RIGHT) {
+        x = DISPLAY_SAFE_RIGHT - width;
+    }
+
+    epaper_draw_text_font(
         x,
         y,
         text,
-        scale,
-        black);
+        font,
+        true);
 }
 
 static esp_err_t present(void)
@@ -120,27 +125,27 @@ esp_err_t display_ui_show_message(
         true);
 
     if (title != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             12,
             title,
-            2,
-            true);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     if (line1 != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             55,
             line1,
-            2,
-            true);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     if (line2 != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             88,
             line2,
-            1,
-            true);
+            &EPAPER_FONT_BODY_MEDIUM);
     }
 
     return present();
@@ -162,30 +167,30 @@ esp_err_t display_ui_show_pairing_code(
         DISPLAY_SAFE_HEIGHT,
         true);
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         12,
         "PAIR DISPLAY",
-        2,
-        true);
+        &EPAPER_FONT_BODY_LARGE);
 
     if (scale_id != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             29,
             scale_id,
-            1,
-            true);
+            &EPAPER_FONT_BODY_SMALL);
     }
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         48,
         "ENTER THIS CODE ON",
-        1,
-        true);
-    draw_centered(
+        &EPAPER_FONT_BODY_MEDIUM);
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         60,
         "THE SCALE WEBPAGE",
-        1,
-        true);
+        &EPAPER_FONT_BODY_MEDIUM);
 
     char code[16];
     snprintf(
@@ -195,11 +200,11 @@ esp_err_t display_ui_show_pairing_code(
         (unsigned long)(passkey / 1000U),
         (unsigned long)(passkey % 1000U));
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         82,
         code,
-        3,
-        true);
+        &EPAPER_FONT_BODY_LARGE);
 
     return present();
 }
@@ -242,39 +247,39 @@ esp_err_t display_ui_show_setup_qr(
         TAG,
         "Could not generate setup QR code");
 
-    epaper_draw_text(
+    epaper_draw_text_font(
         126,
         14,
         "SCALE READY",
-        1,
+        &EPAPER_FONT_BODY_LARGE,
         true);
-    epaper_draw_text(
+    epaper_draw_text_font(
         126,
         43,
         "SCAN TO OPEN",
-        1,
+        &EPAPER_FONT_BODY_SMALL,
         true);
-    epaper_draw_text(
+    epaper_draw_text_font(
         126,
         56,
         "SETUP WIZARD",
-        1,
+        &EPAPER_FONT_BODY_SMALL,
         true);
 
-    epaper_draw_text(
+    epaper_draw_text_font(
         126,
         78,
         ip_address,
-        1,
+        &EPAPER_FONT_BODY_SMALL,
         true);
 
     if (scale_id != NULL &&
         scale_id[0] != '\0') {
-        epaper_draw_text(
+        epaper_draw_text_font(
             126,
             96,
             scale_id,
-            1,
+            &EPAPER_FONT_BODY_SMALL,
             true);
     }
 
@@ -291,18 +296,18 @@ esp_err_t display_ui_show_candidates(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_text(
+    epaper_draw_text_font(
         DISPLAY_SAFE_LEFT,
         DISPLAY_SAFE_TOP,
         "SELECT SCALE",
-        2,
+        &EPAPER_FONT_BODY_LARGE,
         true);
 
-    epaper_draw_text(
+    epaper_draw_text_font(
         DISPLAY_SAFE_LEFT,
         27,
         "USE SERIAL: PAIR <ID>",
-        1,
+        &EPAPER_FONT_BODY_SMALL,
         true);
 
     size_t shown =
@@ -321,55 +326,26 @@ esp_err_t display_ui_show_candidates(
             candidates[i].scale_id,
             (int)candidates[i].rssi);
 
-        epaper_draw_text(
+        epaper_draw_text_font(
             DISPLAY_SAFE_LEFT,
             42 + (int)i * 15,
             line,
-            1,
+            &EPAPER_FONT_BODY_MEDIUM,
             true);
     }
 
     if (count > shown) {
-        epaper_draw_text(
+        epaper_draw_text_font(
             DISPLAY_SAFE_LEFT,
             42 + (int)shown * 15,
             "MORE ON SERIAL",
-            1,
+            &EPAPER_FONT_BODY_SMALL,
             true);
     }
 
     return present();
 }
 
-
-static void draw_font_centered_at(
-    int center_x,
-    int y,
-    const char *text,
-    const epaper_font_t *font)
-{
-    const int width =
-        epaper_font_text_width(
-            text,
-            font);
-
-    int x = center_x - width / 2;
-
-    if (x < DISPLAY_SAFE_LEFT) {
-        x = DISPLAY_SAFE_LEFT;
-    }
-
-    if (x + width > DISPLAY_SAFE_RIGHT) {
-        x = DISPLAY_SAFE_RIGHT - width;
-    }
-
-    epaper_draw_text_font(
-        x,
-        y,
-        text,
-        font,
-        true);
-}
 
 static void draw_hero_number(
     int center_x,
