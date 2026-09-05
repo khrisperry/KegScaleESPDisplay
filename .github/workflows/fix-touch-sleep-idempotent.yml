@@ -1,0 +1,51 @@
+name: Apply touch sleep wake-source fix
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - ".github/workflows/fix-touch-sleep-idempotent.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Apply focused wake-source fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("main/main.c")
+          text = path.read_text()
+
+          old = '''static void configure_wake_sources(void)\n{\n    if (s_periodic_checkin_enabled) {\n        ESP_ERROR_CHECK(\n            esp_sleep_enable_timer_wakeup(\n                (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *\n                1000000ULL));\n    } else {\n        ESP_ERROR_CHECK(\n            esp_sleep_disable_wakeup_source(\n                ESP_SLEEP_WAKEUP_TIMER));\n    }\n\n#if CONFIG_KEG_DISPLAY_TOUCH_WAKE\n    ESP_ERROR_CHECK(\n        touch_wake_prepare(\n            s_touch_threshold_percent));\n#endif\n}\n'''
+
+          new = '''static void disable_wake_source_if_enabled(\n    esp_sleep_source_t source)\n{\n    const esp_err_t err =\n        esp_sleep_disable_wakeup_source(source);\n\n    if (err != ESP_OK &&\n        err != ESP_ERR_INVALID_STATE) {\n        ESP_ERROR_CHECK(err);\n    }\n}\n\nstatic void configure_wake_sources(void)\n{\n    /*\n     * Wake-source configuration survives a sleep cycle. Always clear the timer\n     * first, but treat "already disabled" as success. In touch-only mode this\n     * guarantees that no stale timer can remain armed and, importantly, avoids\n     * abort/restart loops when the timer was already inactive.\n     */\n    disable_wake_source_if_enabled(\n        ESP_SLEEP_WAKEUP_TIMER);\n\n    if (s_periodic_checkin_enabled) {\n        ESP_ERROR_CHECK(\n            esp_sleep_enable_timer_wakeup(\n                (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *\n                1000000ULL));\n    }\n\n#if CONFIG_KEG_DISPLAY_TOUCH_WAKE\n    ESP_ERROR_CHECK(\n        touch_wake_prepare(\n            s_touch_threshold_percent));\n#endif\n}\n'''
+
+          if old not in text:
+              raise SystemExit("Expected configure_wake_sources block not found")
+
+          path.write_text(text.replace(old, new, 1))
+
+          version = Path("version.txt")
+          if version.read_text().strip() != "V0.0.7":
+              raise SystemExit("Expected V0.0.7 before bump")
+          version.write_text("V0.0.8\n")
+
+      - name: Commit correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main/main.c version.txt
+          git commit -m "Make touch-only deep sleep idempotent"
+          git push origin HEAD:dev
