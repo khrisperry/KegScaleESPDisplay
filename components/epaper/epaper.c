@@ -66,6 +66,14 @@ static esp_err_t send_data(
 
 static bool wait_busy(uint32_t timeout_ms)
 {
+    /*
+     * SSD1680 asserts BUSY shortly after master activation, not necessarily
+     * before the SPI transaction returns. Give it one scheduler tick to
+     * assert; polling immediately can mistake an update that has not started
+     * for one that has already completed and then power the panel off.
+     */
+    vTaskDelay(1);
+
     const TickType_t start =
         xTaskGetTickCount();
 
@@ -102,7 +110,9 @@ static esp_err_t configure_controller(void)
         TAG,
         "Software reset failed");
 
-    wait_busy(3000);
+    if (!wait_busy(3000)) {
+        return ESP_ERR_TIMEOUT;
+    }
 
     const uint8_t driver_output[] = {
         0xF9, 0x00, 0x00
@@ -804,7 +814,9 @@ esp_err_t epaper_refresh(void)
         TAG,
         "Master activation failed");
 
-    wait_busy(8000);
+    if (!wait_busy(8000)) {
+        return ESP_ERR_TIMEOUT;
+    }
 
     ESP_LOGI(TAG, "E-paper refresh complete");
     return ESP_OK;
