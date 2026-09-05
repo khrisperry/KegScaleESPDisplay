@@ -88,6 +88,8 @@ The display keeps the last image visible while sleeping.
 
 When GPIO12 wakes the display, a small check-mark badge appears in the top-left corner using the panel's fast partial-refresh path before the pour wait or BLE check begins. A normal full refresh clears it; if the scale data does not require a full refresh, the firmware removes the badge with a second partial update before returning to sleep.
 
+The partial-refresh driver detects whether the V2.3.1 board carries the GDEM0213B74 panel or LILYGO's default DEPG0213BN panel and uses the matching waveform and activation sequence.
+
 All setup, pairing, connection-status, QR, keg, and diagnostics screens use the bundled Keg Display Sans font. Full e-paper refreshes initialize both SSD1680 RAM planes and the display-update control register, preventing random controller RAM from appearing as a dotted line along the panel edge after a cold boot.
 
 ### First pairing
