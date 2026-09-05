@@ -381,13 +381,13 @@ static void disable_wake_source_if_enabled(
 static void configure_wake_sources(void)
 {
     /*
-     * Wake-source configuration survives a sleep cycle. Always clear the timer
-     * first, but treat "already disabled" as success. In touch-only mode this
-     * guarantees that no stale timer can remain armed and, importantly, avoids
-     * abort/restart loops when the timer was already inactive.
+     * Wake-source configuration survives a sleep cycle. Clear every previous
+     * source first, then arm only the sources selected below. In touch-only
+     * mode this guarantees that neither a stale timer nor an older GPIO wake
+     * configuration can remain active.
      */
     disable_wake_source_if_enabled(
-        ESP_SLEEP_WAKEUP_TIMER);
+        ESP_SLEEP_WAKEUP_ALL);
 
     if (s_periodic_checkin_enabled) {
         ESP_ERROR_CHECK(
