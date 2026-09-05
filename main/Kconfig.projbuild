@@ -7,8 +7,8 @@ config KEG_DISPLAY_SLEEP_SECONDS
     help
         Normal deep-sleep timer wake interval. The scale-owned display setting can
         disable this periodic wake so capacitive touch becomes the only normal wake
-        source. When enabled, the display wakes, reads its paired scale once,
-        refreshes e-paper only if useful data changed, then sleeps again.
+        source. When disabled, stale timer wake configuration is cleared before
+        every deep sleep; when enabled, the timer is armed for this interval.
 
 config KEG_DISPLAY_SCAN_SECONDS
     int "Initial pairing scan duration (seconds)"
