@@ -46,8 +46,9 @@ config KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS
     default 10
     help
         After a capacitive-touch wake, keep the existing e-paper image visible
-        and wait this long before the first BLE read. This gives the user time
-        to begin and mostly complete a pour.
+        and wait this long before the first BLE read. In touch-only mode this is
+        the full intentional awake delay: one BLE read follows, then the display
+        returns to deep sleep with only capacitive touch armed.
 
 config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
     int "Touch wake maximum observation window (seconds)"

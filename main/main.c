@@ -548,6 +548,34 @@ static esp_err_t find_peer_by_id(
     return ESP_ERR_NOT_FOUND;
 }
 
+static esp_err_t fetch_paired_state_once(
+    pairing_config_t *pairing,
+    ble_client_scale_state_t *state)
+{
+    if (pairing == NULL || state == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err =
+        ble_client_fetch(
+            &pairing->peer,
+            state);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (!ble_client_state_is_compatible(
+            &pairing->peer,
+            state)) {
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    apply_display_settings(state);
+    remember_runtime_settings(&pairing->peer);
+    return ESP_OK;
+}
+
 static esp_err_t fetch_paired_state(
     pairing_config_t *pairing,
     ble_client_scale_state_t *state)
@@ -1146,6 +1174,46 @@ void app_main(void)
         ble_client_scale_state_t state = {0};
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
+        if (touch_wake &&
+            !s_periodic_checkin_enabled) {
+            ESP_LOGI(
+                TAG,
+                "Touch-only mode: awake for %d seconds, then one scale check before sleeping again",
+                CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
+
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS *
+                    1000));
+
+            err =
+                fetch_paired_state_once(
+                    &pairing,
+                    &state);
+
+            if (err == ESP_OK) {
+                handle_unpair_request(
+                    &pairing,
+                    &state);
+
+                render_if_needed(
+                    &pairing.peer,
+                    &state,
+                    battery_percent);
+
+                install_display_update_if_needed(
+                    &pairing,
+                    &state);
+            } else {
+                ESP_LOGW(
+                    TAG,
+                    "Touch-only scale check failed: %s; returning to deep sleep without retries",
+                    esp_err_to_name(err));
+            }
+
+            go_to_sleep();
+        }
+
         if (touch_wake) {
             bool meaningful_change = false;
 
