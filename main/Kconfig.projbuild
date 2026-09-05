@@ -57,9 +57,9 @@ config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
     default 30
     help
         Maximum total time after a touch wake to wait for a meaningful stable
-        scale change before returning to deep sleep. Normal successful reads
-        still refresh as soon as the settled change is available; the extra
-        headroom is only used for slow settling or transient BLE retries.
+        scale change before returning to deep sleep. This longer observation loop
+        is used only while periodic check-in mode remains enabled; touch-only mode
+        performs one scale read after the 10-second delay and returns to sleep.
 
 config KEG_DISPLAY_TOUCH_RETRY_SECONDS
     int "Touch wake retry interval (seconds)"
@@ -68,6 +68,6 @@ config KEG_DISPLAY_TOUCH_RETRY_SECONDS
     default 2
     help
         If the first post-touch read is unchanged or settling, wait this long
-        before checking the scale again.
+        before checking the scale again while periodic check-in mode is enabled.
 
 endmenu
