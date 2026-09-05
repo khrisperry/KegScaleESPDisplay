@@ -30,6 +30,15 @@ int epaper_font_text_width(
     const char *text,
     const epaper_font_t *font);
 esp_err_t epaper_refresh(void);
+/*
+ * Fast differential refresh for a small logical landscape rectangle.
+ * The y coordinate and height must be aligned to eight pixels.
+ */
+esp_err_t epaper_refresh_partial(
+    int x,
+    int y,
+    int width,
+    int height);
 esp_err_t epaper_sleep(void);
 
 #ifdef __cplusplus

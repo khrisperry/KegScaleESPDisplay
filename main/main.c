@@ -26,7 +26,8 @@
 
 static const char *TAG = "display";
 
-#define RETAINED_MAGIC 0x4B534452U
+/* Bumped when the reserved touch-acknowledgement area was introduced. */
+#define RETAINED_MAGIC 0x4B534453U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
 #define BATTERY_ADC_SAMPLES 16
 #define BATTERY_ADC_FULL_SCALE 4095.0f
@@ -679,7 +680,7 @@ static esp_err_t fetch_paired_state(
     return ESP_OK;
 }
 
-static void render_if_needed(
+static bool render_if_needed(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
     uint8_t battery_percent)
@@ -691,7 +692,7 @@ static void render_if_needed(
         ESP_LOGI(
             TAG,
             "No meaningful display change; keeping existing e-paper image");
-        return;
+        return false;
     }
 
     apply_display_settings(state);
@@ -707,10 +708,33 @@ static void render_if_needed(
             peer,
             state,
             battery_percent);
+        return true;
     } else {
         ESP_LOGW(
             TAG,
             "Display refresh failed: %s",
+            esp_err_to_name(err));
+    }
+
+    return false;
+}
+
+static void clear_touch_acknowledgement_if_needed(
+    bool touch_ack_visible,
+    bool screen_refreshed)
+{
+    if (!touch_ack_visible ||
+        screen_refreshed) {
+        return;
+    }
+
+    esp_err_t err =
+        display_ui_clear_touch_acknowledged();
+
+    if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not clear the touch acknowledgement: %s",
             esp_err_to_name(err));
     }
 }
@@ -1106,6 +1130,21 @@ void app_main(void)
 
     const bool touch_wake =
         is_touch_wake();
+    bool touch_ack_visible = false;
+
+    if (touch_wake &&
+        err == ESP_OK &&
+        pairing.paired) {
+        touch_ack_visible =
+            display_ui_show_touch_acknowledged() ==
+            ESP_OK;
+
+        if (!touch_ack_visible) {
+            ESP_LOGW(
+                TAG,
+                "Could not draw the touch acknowledgement");
+        }
+    }
 
     ESP_ERROR_CHECK(
         ble_client_init());
@@ -1193,6 +1232,8 @@ void app_main(void)
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
         if (touch_wake &&
             !s_periodic_checkin_enabled) {
+            bool screen_refreshed = false;
+
             ESP_LOGI(
                 TAG,
                 "Touch-only mode: awake for %d seconds, then one scale check before sleeping again",
@@ -1213,10 +1254,15 @@ void app_main(void)
                     &pairing,
                     &state);
 
-                render_if_needed(
-                    &pairing.peer,
-                    &state,
-                    battery_percent);
+                screen_refreshed =
+                    render_if_needed(
+                        &pairing.peer,
+                        &state,
+                        battery_percent);
+
+                clear_touch_acknowledgement_if_needed(
+                    touch_ack_visible,
+                    screen_refreshed);
 
                 install_display_update_if_needed(
                     &pairing,
@@ -1226,6 +1272,10 @@ void app_main(void)
                     TAG,
                     "Touch-only scale check failed: %s; returning to deep sleep without retries",
                     esp_err_to_name(err));
+
+                clear_touch_acknowledgement_if_needed(
+                    touch_ack_visible,
+                    false);
             }
 
             go_to_sleep();
@@ -1233,6 +1283,7 @@ void app_main(void)
 
         if (touch_wake) {
             bool meaningful_change = false;
+            bool screen_refreshed = false;
 
             err =
                 wait_for_touch_pour_result(
@@ -1249,16 +1300,21 @@ void app_main(void)
 
             if (err == ESP_OK &&
                 meaningful_change) {
-                render_if_needed(
-                    &pairing.peer,
-                    &state,
-                    battery_percent);
+                screen_refreshed =
+                    render_if_needed(
+                        &pairing.peer,
+                        &state,
+                        battery_percent);
             } else if (err != ESP_OK) {
                 ESP_LOGW(
                     TAG,
                     "Touch wake ended without a successful final scale read: %s",
                     esp_err_to_name(err));
             }
+
+            clear_touch_acknowledgement_if_needed(
+                touch_ack_visible,
+                screen_refreshed);
 
             if (err == ESP_OK) {
                 install_display_update_if_needed(

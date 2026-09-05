@@ -28,6 +28,10 @@ enum {
     BATTERY_BODY_HEIGHT = 10,
     BATTERY_TERMINAL_WIDTH = 3,
     BATTERY_RESERVED_WIDTH = 30,
+    TOUCH_ACK_X = 13,
+    TOUCH_ACK_Y = 16,
+    TOUCH_ACK_WIDTH = 18,
+    TOUCH_ACK_HEIGHT = 16,
 };
 
 static void draw_font_centered_at(
@@ -57,6 +61,47 @@ static void draw_font_centered_at(
         text,
         font,
         true);
+}
+
+static void clear_touch_ack_area(void)
+{
+    epaper_fill_rect(
+        TOUCH_ACK_X,
+        TOUCH_ACK_Y,
+        TOUCH_ACK_WIDTH,
+        TOUCH_ACK_HEIGHT,
+        false);
+}
+
+static void draw_touch_acknowledged(void)
+{
+    clear_touch_ack_area();
+
+    epaper_draw_rect(
+        TOUCH_ACK_X,
+        TOUCH_ACK_Y,
+        TOUCH_ACK_WIDTH,
+        TOUCH_ACK_HEIGHT,
+        true);
+
+    /* Compact check mark: immediately recognizable without another font. */
+    for (int i = 0; i < 4; ++i) {
+        epaper_fill_rect(
+            TOUCH_ACK_X + 3 + i,
+            TOUCH_ACK_Y + 7 + i,
+            2,
+            2,
+            true);
+    }
+
+    for (int i = 0; i < 7; ++i) {
+        epaper_fill_rect(
+            TOUCH_ACK_X + 6 + i,
+            TOUCH_ACK_Y + 10 - i,
+            2,
+            2,
+            true);
+    }
 }
 
 static void draw_battery_indicator(uint8_t battery_percent)
@@ -109,6 +154,9 @@ static void draw_battery_indicator(uint8_t battery_percent)
 
 static esp_err_t present(void)
 {
+    /* Every full screen restores the transient touch area's blank baseline. */
+    clear_touch_ack_area();
+
     esp_err_t err = epaper_refresh();
 
     if (err == ESP_OK) {
@@ -156,6 +204,43 @@ static void draw_setup_qrcode(
             }
         }
     }
+}
+
+esp_err_t display_ui_show_touch_acknowledged(void)
+{
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    draw_touch_acknowledged();
+
+    return epaper_refresh_partial(
+        TOUCH_ACK_X,
+        TOUCH_ACK_Y,
+        TOUCH_ACK_WIDTH,
+        TOUCH_ACK_HEIGHT);
+}
+
+esp_err_t display_ui_clear_touch_acknowledged(void)
+{
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    clear_touch_ack_area();
+
+    ESP_RETURN_ON_ERROR(
+        epaper_refresh_partial(
+            TOUCH_ACK_X,
+            TOUCH_ACK_Y,
+            TOUCH_ACK_WIDTH,
+            TOUCH_ACK_HEIGHT),
+        TAG,
+        "Could not clear touch acknowledgement");
+
+    return epaper_sleep();
 }
 
 esp_err_t display_ui_show_message(
@@ -615,15 +700,25 @@ static void draw_keg_name(
         keg_name,
         sizeof(keg_name));
 
-    const bool reserve_battery =
+    const bool reserve_corners =
         y <= 12;
+    const int left_reserve =
+        reserve_corners ?
+            TOUCH_ACK_WIDTH + 6 :
+            0;
+    const int right_reserve =
+        reserve_corners ?
+            BATTERY_RESERVED_WIDTH :
+            0;
     const int max_width =
-        reserve_battery ?
-            DISPLAY_SAFE_WIDTH - BATTERY_RESERVED_WIDTH :
-            DISPLAY_SAFE_WIDTH;
+        DISPLAY_SAFE_WIDTH -
+        left_reserve -
+        right_reserve;
     const int center_x =
-        reserve_battery ?
-            DISPLAY_SAFE_LEFT + max_width / 2 :
+        reserve_corners ?
+            DISPLAY_SAFE_LEFT +
+                left_reserve +
+                max_width / 2 :
             EPAPER_WIDTH / 2;
 
     const epaper_font_t *keg_font =

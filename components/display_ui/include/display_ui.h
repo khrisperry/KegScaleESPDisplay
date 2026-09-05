@@ -15,6 +15,9 @@ esp_err_t display_ui_show_message(
     const char *line1,
     const char *line2);
 
+esp_err_t display_ui_show_touch_acknowledged(void);
+esp_err_t display_ui_clear_touch_acknowledged(void);
+
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey);

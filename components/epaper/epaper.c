@@ -227,6 +227,105 @@ static esp_err_t set_ram_pointer(void)
     return ESP_OK;
 }
 
+static esp_err_t set_partial_ram_area(
+    uint8_t x_start,
+    uint8_t x_end,
+    uint16_t y_start,
+    uint16_t y_end)
+{
+    const uint8_t x_range[] = {
+        x_start,
+        x_end,
+    };
+    const uint8_t y_range[] = {
+        (uint8_t)(y_start & 0xFFU),
+        (uint8_t)(y_start >> 8),
+        (uint8_t)(y_end & 0xFFU),
+        (uint8_t)(y_end >> 8),
+    };
+    const uint8_t y_pointer[] = {
+        (uint8_t)(y_start & 0xFFU),
+        (uint8_t)(y_start >> 8),
+    };
+
+    ESP_RETURN_ON_ERROR(
+        send_command(0x44),
+        TAG,
+        "Partial X range command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(x_range, sizeof(x_range)),
+        TAG,
+        "Partial X range failed");
+    ESP_RETURN_ON_ERROR(
+        send_command(0x45),
+        TAG,
+        "Partial Y range command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(y_range, sizeof(y_range)),
+        TAG,
+        "Partial Y range failed");
+    ESP_RETURN_ON_ERROR(
+        send_command(0x4E),
+        TAG,
+        "Partial X pointer command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(&x_start, 1),
+        TAG,
+        "Partial X pointer failed");
+    ESP_RETURN_ON_ERROR(
+        send_command(0x4F),
+        TAG,
+        "Partial Y pointer command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(y_pointer, sizeof(y_pointer)),
+        TAG,
+        "Partial Y pointer failed");
+
+    return ESP_OK;
+}
+
+static esp_err_t write_partial_plane(
+    uint8_t command,
+    uint8_t x_start,
+    uint8_t x_end,
+    uint16_t y_start,
+    uint16_t y_end)
+{
+    ESP_RETURN_ON_ERROR(
+        set_partial_ram_area(
+            x_start,
+            x_end,
+            y_start,
+            y_end),
+        TAG,
+        "Could not set partial RAM area");
+
+    ESP_RETURN_ON_ERROR(
+        send_command(command),
+        TAG,
+        "Partial RAM write command failed");
+
+    const size_t row_bytes =
+        (size_t)(x_end - x_start + 1U);
+
+    for (uint16_t native_y = y_start;
+         native_y <= y_end;
+         ++native_y) {
+        const uint8_t *row =
+            &s_framebuffer[
+                (size_t)native_y *
+                    NATIVE_STRIDE +
+                x_start];
+
+        ESP_RETURN_ON_ERROR(
+            send_data(row, row_bytes),
+            TAG,
+            "Partial RAM row transfer failed");
+    }
+
+    return ESP_OK;
+}
+
 static bool glyph_rows(
     char value,
     uint8_t rows[7])
@@ -708,6 +807,119 @@ esp_err_t epaper_refresh(void)
     wait_busy(8000);
 
     ESP_LOGI(TAG, "E-paper refresh complete");
+    return ESP_OK;
+}
+
+esp_err_t epaper_refresh_partial(
+    int x,
+    int y,
+    int width,
+    int height)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (x < 0 ||
+        y < 0 ||
+        width <= 0 ||
+        height <= 0 ||
+        x + width > EPAPER_WIDTH ||
+        y + height > EPAPER_HEIGHT ||
+        (y & 7) != 0 ||
+        (height & 7) != 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /*
+     * Landscape Y maps to the native byte-aligned X axis. Landscape X maps
+     * in reverse order onto native Y.
+     */
+    const uint8_t native_x_start =
+        (uint8_t)(y / 8);
+    const uint8_t native_x_end =
+        (uint8_t)((y + height - 1) / 8);
+    const uint16_t native_y_start =
+        (uint16_t)(
+            NATIVE_HEIGHT -
+            (x + width));
+    const uint16_t native_y_end =
+        (uint16_t)(
+            NATIVE_HEIGHT -
+            1 -
+            x);
+
+    ESP_RETURN_ON_ERROR(
+        write_partial_plane(
+            0x24,
+            native_x_start,
+            native_x_end,
+            native_y_start,
+            native_y_end),
+        TAG,
+        "Current partial framebuffer transfer failed");
+
+    const uint8_t update = 0xFC;
+
+    ESP_RETURN_ON_ERROR(
+        send_command(0x22),
+        TAG,
+        "Partial update command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(&update, 1),
+        TAG,
+        "Partial update config failed");
+    ESP_RETURN_ON_ERROR(
+        send_command(0x20),
+        TAG,
+        "Partial master activation failed");
+
+    if (!wait_busy(2000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /*
+     * Differential refresh compares current RAM (0x24) with previous RAM
+     * (0x26). Synchronize the completed region so the acknowledgement can be
+     * cleanly removed by the next partial update.
+     */
+    ESP_RETURN_ON_ERROR(
+        write_partial_plane(
+            0x26,
+            native_x_start,
+            native_x_end,
+            native_y_start,
+            native_y_end),
+        TAG,
+        "Previous partial framebuffer transfer failed");
+
+    const uint8_t power_off = 0x83;
+
+    ESP_RETURN_ON_ERROR(
+        send_command(0x22),
+        TAG,
+        "Partial power-off command failed");
+    ESP_RETURN_ON_ERROR(
+        send_data(&power_off, 1),
+        TAG,
+        "Partial power-off config failed");
+    ESP_RETURN_ON_ERROR(
+        send_command(0x20),
+        TAG,
+        "Partial power-off activation failed");
+
+    if (!wait_busy(2000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Partial refresh complete: x=%d y=%d w=%d h=%d",
+        x,
+        y,
+        width,
+        height);
+
     return ESP_OK;
 }
 
