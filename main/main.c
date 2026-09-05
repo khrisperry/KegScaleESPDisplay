@@ -366,17 +366,34 @@ static void remember_displayed_state(
         state->total_weight_lbs;
 }
 
+static void disable_wake_source_if_enabled(
+    esp_sleep_source_t source)
+{
+    const esp_err_t err =
+        esp_sleep_disable_wakeup_source(source);
+
+    if (err != ESP_OK &&
+        err != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(err);
+    }
+}
+
 static void configure_wake_sources(void)
 {
+    /*
+     * Wake-source configuration survives a sleep cycle. Always clear the timer
+     * first, but treat "already disabled" as success. In touch-only mode this
+     * guarantees that no stale timer can remain armed and, importantly, avoids
+     * abort/restart loops when the timer was already inactive.
+     */
+    disable_wake_source_if_enabled(
+        ESP_SLEEP_WAKEUP_TIMER);
+
     if (s_periodic_checkin_enabled) {
         ESP_ERROR_CHECK(
             esp_sleep_enable_timer_wakeup(
                 (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *
                 1000000ULL));
-    } else {
-        ESP_ERROR_CHECK(
-            esp_sleep_disable_wakeup_source(
-                ESP_SLEEP_WAKEUP_TIMER));
     }
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
