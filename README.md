@@ -90,6 +90,13 @@ When GPIO12 wakes the display, a small check-mark badge appears in the top-left 
 
 The partial-refresh path uses LILYGO's default DEPG0213BN waveform and minimum settling intervals so an unreliable BUSY transition cannot cut the update short.
 
+Normal keg screens retain the last 4 KB framebuffer in RTC memory across deep
+sleep. When the next rendered screen changes, firmware compares the two frames
+and partially refreshes the smallest byte-aligned rectangle containing the
+changed pixels. Setup, pairing, and status screens continue to use full
+refreshes. To control e-paper ghosting, every 50th changed keg-screen update is
+also forced to a full refresh.
+
 All setup, pairing, connection-status, QR, keg, and diagnostics screens use the bundled Keg Display Sans font. Full e-paper refreshes initialize both SSD1680 RAM planes and the display-update control register, preventing random controller RAM from appearing as a dotted line along the panel edge after a cold boot.
 
 ### First pairing

@@ -4,11 +4,17 @@
 #include <string.h>
 
 #include "epaper.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "qrcode.h"
 
 static const char *TAG = "display_ui";
+
+#define SCALE_SCREEN_MAGIC 0x4B535343U
+#define SCALE_FULL_REFRESH_INTERVAL 50U
+
+RTC_DATA_ATTR static uint32_t s_scale_screen_magic;
 
 /*
  * The controller exposes 250x122 pixels, but the V2.3.1 board's physical
@@ -157,9 +163,34 @@ static esp_err_t present(void)
     /* Every full screen restores the transient touch area's blank baseline. */
     clear_touch_ack_area();
 
+    /* Setup/status screens must not be used as a scale-screen diff baseline. */
+    s_scale_screen_magic = 0;
+
     esp_err_t err = epaper_refresh();
 
     if (err == ESP_OK) {
+        err = epaper_sleep();
+    }
+
+    return err;
+}
+
+static esp_err_t present_scale(void)
+{
+    clear_touch_ack_area();
+
+    esp_err_t err;
+
+    if (s_scale_screen_magic ==
+        SCALE_SCREEN_MAGIC) {
+        err = epaper_refresh_changed(
+            SCALE_FULL_REFRESH_INTERVAL);
+    } else {
+        err = epaper_refresh();
+    }
+
+    if (err == ESP_OK) {
+        s_scale_screen_magic = SCALE_SCREEN_MAGIC;
         err = epaper_sleep();
     }
 
@@ -1213,5 +1244,5 @@ esp_err_t display_ui_show_scale(
     }
 
     draw_battery_indicator(battery_percent);
-    return present();
+    return present_scale();
 }

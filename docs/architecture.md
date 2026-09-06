@@ -44,6 +44,15 @@ The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0
 
 RTC memory remembers the last image-driving state across deep sleep without writing flash every three minutes.
 
+The e-paper component also retains the last 4 KB rendered framebuffer in RTC
+memory. A normal keg-screen update compares the new frame with that retained
+copy and sends only the smallest byte-aligned rectangle containing changed
+pixels. The retained copy is updated only after a successful panel refresh.
+Setup, pairing, and status screens always receive a full refresh and invalidate
+the keg-screen differential baseline. Every 50th changed keg-screen update is
+forced to a full refresh to clear accumulated ghosting and reset the partial
+update counter.
+
 Firmware update offers are checked during the same timer-wake BLE read. When a compatible new version is offered, the display uses its saved pairing PIN to authenticate the BLE link, retrieves the home Wi-Fi and OTA metadata in RAM, downloads by HTTPS into the inactive OTA slot, validates the manifest size and SHA-256 digest, turns Wi-Fi off, and reboots. Normal wake cycles never start Wi-Fi.
 
 The display refreshes when:
