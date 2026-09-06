@@ -4,7 +4,7 @@
 
 The display is designed around e-paper retention and deep sleep rather than a persistent BLE connection.
 
-1. ESP32 wakes from the 180-second timer or native capacitive touch on GPIO12.
+1. ESP32 wakes from the optional 180-second timer or native capacitive touch on GPIO12.
 2. Load the one paired scale identity from NVS.
 3. Connect directly to that saved BLE address.
 4. Discover/read the Keg Scale protocol.
@@ -27,16 +27,14 @@ A pairing record contains:
 
 The logical ID is verified against the scale's read-only device-info characteristic before pairing is saved.
 
-For initial setup:
-
-- exactly one compatible scale: optional automatic selection
-- more than one compatible scale: no automatic choice
-- current bring-up selection: serial `pair KegScale-XXXX`
-- future selection: touch UI or temporary setup portal calling the same pairing API
+For initial setup, an unpaired display shows the LAN address advertised by one
+compatible scale as a QR code. The scale webpage wizard opens an explicit pairing
+window, the display presents a random six-digit code, and the user enters that
+code in the wizard. If multiple scales are pairing, the display does not guess.
 
 ## Capacitive touch wake
 
-GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 8% with older scale firmware. The normal 180-second timer wake remains enabled in parallel.
+GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 3% with older scale firmware. The normal 180-second timer wake is optional; touch-only mode explicitly clears it before sleeping.
 
 The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0 wake cannot be enabled together.
 
@@ -44,7 +42,7 @@ The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0
 
 RTC memory remembers the last image-driving state across deep sleep without writing flash every three minutes.
 
-Firmware update offers are checked during the same timer-wake BLE read. When a compatible new version is offered, the display uses its saved pairing PIN to authenticate the BLE link, retrieves the home Wi-Fi and OTA metadata in RAM, downloads by HTTPS into the inactive OTA slot, validates the manifest size and SHA-256 digest, turns Wi-Fi off, and reboots. Normal wake cycles never start Wi-Fi.
+Firmware update offers are checked during a normal BLE read. When a compatible new version is offered, the display uses its authenticated bond to retrieve the home Wi-Fi and OTA metadata in RAM, downloads by HTTPS into the inactive OTA slot, validates the manifest size and SHA-256 digest, turns Wi-Fi off, and reboots. Normal wake cycles never start Wi-Fi.
 
 The display refreshes when:
 
@@ -57,22 +55,20 @@ The display refreshes when:
 
 An unstable/settling snapshot does not replace an already stable e-paper image.
 
-## Hardware assumptions needing physical validation
+## E-paper implementation
 
 The V2.3.1 board uses the published T5 pin map. Current LILYGO documentation identifies DEPG0213BN as the default 2.13-inch panel option; GDEY0213B74 is another supported panel. Both are SSD1680-class 122x250 panels and firmware currently uses a 250x122 logical landscape framebuffer.
 
-Physical testing must confirm:
-
-- panel orientation
-- busy polarity/timing
-- full-refresh waveform behavior
-- whether the exact installed panel needs a different init profile
-- actual deep-sleep current on this V2.3.1 board revision
+Full refresh initializes both SSD1680 RAM planes and the update-control register.
+The immediate touch acknowledgement uses the DEPG0213BN partial-update waveform,
+BUSY monitoring, and minimum power-on/update settling intervals validated on the
+target display. The top-left acknowledgement area is reserved so a full refresh
+always restores a clean baseline.
 
 
 ## Touch-pour observation window
 
-Timer wakes remain fast one-shot checks.
+Timer wakes remain fast one-shot checks when periodic check-in is enabled.
 
 A capacitive-touch wake is treated as a likely pour event instead:
 
@@ -81,8 +77,9 @@ A capacitive-touch wake is treated as a likely pour event instead:
 3. Read the paired scale.
 4. If the result is unchanged or settling, wait 2 seconds and read again.
 5. As soon as a meaningful stable state is observed, refresh e-paper once and sleep.
-6. If no meaningful stable change arrives by 20 seconds total, keep the existing image and return to sleep.
+6. If no meaningful stable change arrives by 30 seconds total, keep the existing image and return to sleep.
 
 The scale-side significant-change sequence is the primary signal. The display also retains defensive comparisons for servings, profile revision, stability, and >=0.5 lb total-weight changes.
 
-This prevents the display from refreshing immediately when somebody first touches the tap, before the pour has actually changed and settled the scale.
+In touch-only mode, the display instead performs one BLE read after the initial
+10-second delay and returns to deep sleep with only capacitive touch armed.

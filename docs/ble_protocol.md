@@ -70,6 +70,7 @@ The display consumes the scale-owned appearance configuration:
 - flag bit 3: show serving size
 - flag bit 4: show total keg weight
 - flag bit 5: place the beer name at the top in layouts 1 and 2
+- flag bit 6: disable periodic display check-in (strict touch-only wake)
 - flag bit 7: configuration is explicitly present
 
 If bit 7 is absent, the display treats the payload as a legacy configuration
@@ -116,7 +117,7 @@ configuration packet unchanged for backward compatibility:
 
 Valid thresholds are 1–50%. Lower values are more sensitive. If an older scale
 does not expose this characteristic, or a value is invalid, the display uses its
-8% firmware default.
+3% firmware default.
 
 ## Encrypted display OTA
 
