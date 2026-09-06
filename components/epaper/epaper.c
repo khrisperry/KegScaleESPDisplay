@@ -5,7 +5,6 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
-#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -34,14 +33,6 @@ static const char *TAG = "epaper";
 static spi_device_handle_t s_spi;
 static bool s_initialized;
 static uint8_t s_framebuffer[FRAMEBUFFER_SIZE];
-
-typedef enum {
-    PARTIAL_DRIVER_UNKNOWN = 0,
-    PARTIAL_DRIVER_GDEM0213B74 = 1,
-    PARTIAL_DRIVER_DEPG0213BN = 2,
-} partial_driver_t;
-
-RTC_DATA_ATTR static partial_driver_t s_partial_driver;
 
 /* DEPG0213BN fast partial-update waveform from LILYGO's GxEPD2 driver. */
 static const uint8_t s_depg0213bn_partial_lut[] = {
@@ -119,23 +110,24 @@ static bool wait_busy(uint32_t timeout_ms)
     return true;
 }
 
-static bool wait_busy_cycle(
-    uint32_t assert_timeout_ms,
-    uint32_t complete_timeout_ms)
+static bool wait_busy_minimum(
+    uint32_t timeout_ms,
+    uint32_t minimum_ms)
 {
     const TickType_t start =
         xTaskGetTickCount();
+    const bool completed =
+        wait_busy(timeout_ms);
+    const TickType_t minimum_ticks =
+        pdMS_TO_TICKS(minimum_ms);
+    const TickType_t elapsed =
+        xTaskGetTickCount() - start;
 
-    while (gpio_get_level(PIN_EPD_BUSY) == 0) {
-        if ((xTaskGetTickCount() - start) >=
-            pdMS_TO_TICKS(assert_timeout_ms)) {
-            return false;
-        }
-
-        vTaskDelay(1);
+    if (elapsed < minimum_ticks) {
+        vTaskDelay(minimum_ticks - elapsed);
     }
 
-    return wait_busy(complete_timeout_ms);
+    return completed;
 }
 
 static void hardware_reset(void)
@@ -919,8 +911,8 @@ static esp_err_t refresh_partial_depg0213bn(
         TAG,
         "DEPG0213BN power-on activation failed");
 
-    if (!wait_busy_cycle(100, 2000)) {
-        ESP_LOGW(TAG, "DEPG0213BN power-on did not assert BUSY");
+    if (!wait_busy_minimum(2000, 150)) {
+        ESP_LOGW(TAG, "DEPG0213BN power-on timed out");
         return ESP_ERR_TIMEOUT;
     }
 
@@ -939,8 +931,8 @@ static esp_err_t refresh_partial_depg0213bn(
         TAG,
         "DEPG0213BN partial activation failed");
 
-    if (!wait_busy_cycle(100, 2500)) {
-        ESP_LOGW(TAG, "DEPG0213BN partial update did not assert BUSY");
+    if (!wait_busy_minimum(2500, 1000)) {
+        ESP_LOGW(TAG, "DEPG0213BN partial update timed out");
         return ESP_ERR_TIMEOUT;
     }
 
@@ -986,63 +978,14 @@ esp_err_t epaper_refresh_partial(
             1 -
             x);
 
-    if (s_partial_driver ==
-        PARTIAL_DRIVER_DEPG0213BN) {
-        ESP_RETURN_ON_ERROR(
-            refresh_partial_depg0213bn(
-                native_x_start,
-                native_x_end,
-                native_y_start,
-                native_y_end),
-            TAG,
-            "DEPG0213BN partial refresh failed");
-    } else {
-        ESP_RETURN_ON_ERROR(
-            write_partial_plane(
-                0x24,
-                native_x_start,
-                native_x_end,
-                native_y_start,
-                native_y_end),
-            TAG,
-            "Current partial framebuffer transfer failed");
-
-        const uint8_t update = 0xFC;
-
-        ESP_RETURN_ON_ERROR(
-            send_command(0x22),
-            TAG,
-            "GDEM0213B74 partial update command failed");
-        ESP_RETURN_ON_ERROR(
-            send_data(&update, 1),
-            TAG,
-            "GDEM0213B74 partial update config failed");
-        ESP_RETURN_ON_ERROR(
-            send_command(0x20),
-            TAG,
-            "GDEM0213B74 partial activation failed");
-
-        if (wait_busy_cycle(100, 2000)) {
-            s_partial_driver =
-                PARTIAL_DRIVER_GDEM0213B74;
-        } else {
-            ESP_LOGW(
-                TAG,
-                "GDEM0213B74 partial command was ignored; retrying with LILYGO's default DEPG0213BN waveform");
-
-            s_partial_driver =
-                PARTIAL_DRIVER_DEPG0213BN;
-
-            ESP_RETURN_ON_ERROR(
-                refresh_partial_depg0213bn(
-                    native_x_start,
-                    native_x_end,
-                    native_y_start,
-                    native_y_end),
-                TAG,
-                "DEPG0213BN fallback refresh failed");
-        }
-    }
+    ESP_RETURN_ON_ERROR(
+        refresh_partial_depg0213bn(
+            native_x_start,
+            native_x_end,
+            native_y_start,
+            native_y_end),
+        TAG,
+        "DEPG0213BN partial refresh failed");
 
     /*
      * Differential refresh compares current RAM (0x24) with previous RAM
@@ -1069,6 +1012,9 @@ esp_err_t epaper_refresh_partial(
         TAG,
         "Current partial framebuffer synchronization failed");
 
+    /* Match LILYGO's required post-update settling interval. */
+    vTaskDelay(pdMS_TO_TICKS(300));
+
     const uint8_t power_off = 0x83;
 
     ESP_RETURN_ON_ERROR(
@@ -1090,11 +1036,7 @@ esp_err_t epaper_refresh_partial(
 
     ESP_LOGI(
         TAG,
-        "Partial refresh complete (%s): x=%d y=%d w=%d h=%d",
-        s_partial_driver ==
-                PARTIAL_DRIVER_DEPG0213BN ?
-            "DEPG0213BN" :
-            "GDEM0213B74",
+        "Partial refresh complete (DEPG0213BN): x=%d y=%d w=%d h=%d",
         x,
         y,
         width,
