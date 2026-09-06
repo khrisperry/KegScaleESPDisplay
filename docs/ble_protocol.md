@@ -116,7 +116,7 @@ configuration packet unchanged for backward compatibility:
 
 Valid thresholds are 1–50%. Lower values are more sensitive. If an older scale
 does not expose this characteristic, or a value is invalid, the display uses its
-8% firmware default.
+3% firmware default.
 
 ## Encrypted display OTA
 
@@ -124,4 +124,7 @@ The update offer is non-secret and may be read during the normal wake cycle. If 
 
 The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionally verifies that the connected peer is the specifically authorized bonded display. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
 
-The display-control characteristic is also restricted to the exact authorized bond. A remove/replace request sets an unpair flag; after reading it, the display clears its local bond and pairing identity.
+The display-control characteristic is also restricted to the exact authorized
+bond. Flag bit 0 requests unpair, bit 1 identifies replacement, and bit 2
+requests an immediate full-screen refresh. A full refresh redraws the current
+keg screen and resets the changed-region partial-refresh counter.

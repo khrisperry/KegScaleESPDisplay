@@ -383,19 +383,21 @@ static void configure_wake_sources(void)
 {
     /*
      * Wake-source configuration survives a sleep cycle. Clear every previous
-     * source first, then arm only the sources selected below. In touch-only
-     * mode this guarantees that neither a stale timer nor an older GPIO wake
-     * configuration can remain active.
+     * source first, then arm only the sources selected below. When frequent
+     * check-in is disabled, the one-hour safety timer remains armed so a touch
+     * sensor problem cannot leave the display permanently unreachable.
      */
     disable_wake_source_if_enabled(
         ESP_SLEEP_WAKEUP_ALL);
 
-    if (s_periodic_checkin_enabled) {
-        ESP_ERROR_CHECK(
-            esp_sleep_enable_timer_wakeup(
-                (uint64_t)CONFIG_KEG_DISPLAY_SLEEP_SECONDS *
-                1000000ULL));
-    }
+    const uint64_t wake_seconds =
+        s_periodic_checkin_enabled ?
+            CONFIG_KEG_DISPLAY_SLEEP_SECONDS :
+            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS;
+
+    ESP_ERROR_CHECK(
+        esp_sleep_enable_timer_wakeup(
+            wake_seconds * 1000000ULL));
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
     ESP_ERROR_CHECK(
@@ -418,13 +420,16 @@ static void go_to_sleep(void)
     } else {
         ESP_LOGI(
             TAG,
-            "Periodic check-in disabled; sleeping until GPIO12 capacitive touch");
+            "Frequent check-in disabled; safety check in %d seconds; GPIO12 capacitive touch also wakes the display",
+            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
     }
 #else
     ESP_LOGI(
         TAG,
         "Sleeping for %d seconds",
-        CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
+        s_periodic_checkin_enabled ?
+            CONFIG_KEG_DISPLAY_SLEEP_SECONDS :
+            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
 #endif
 
     fflush(stdout);
@@ -685,7 +690,8 @@ static bool render_if_needed(
     const ble_client_scale_state_t *state,
     uint8_t battery_percent)
 {
-    if (!should_refresh(
+    if (!state->force_refresh_requested &&
+        !should_refresh(
             peer,
             state,
             battery_percent)) {
@@ -701,7 +707,8 @@ static bool render_if_needed(
         display_ui_show_scale(
             peer,
             state,
-            battery_percent);
+            battery_percent,
+            state->force_refresh_requested);
 
     if (err == ESP_OK) {
         remember_displayed_state(
@@ -882,19 +889,26 @@ static esp_err_t wait_for_touch_pour_result(
                 return ESP_OK;
             }
 
-            if (should_refresh(
+            if (state->force_refresh_requested ||
+                should_refresh(
                     &pairing->peer,
                     state,
                     battery_percent)) {
                 *meaningful_change = true;
 
-                ESP_LOGI(
-                    TAG,
-                    "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb battery=%u%%",
-                    (unsigned)state->sequence,
-                    (unsigned)state->remaining_servings,
-                    (double)state->total_weight_lbs,
-                    (unsigned)battery_percent);
+                if (state->force_refresh_requested) {
+                    ESP_LOGI(
+                        TAG,
+                        "Touch wake: authenticated full-refresh request received");
+                } else {
+                    ESP_LOGI(
+                        TAG,
+                        "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb battery=%u%%",
+                        (unsigned)state->sequence,
+                        (unsigned)state->remaining_servings,
+                        (double)state->total_weight_lbs,
+                        (unsigned)battery_percent);
+                }
 
                 return ESP_OK;
             }
@@ -1236,7 +1250,7 @@ void app_main(void)
 
             ESP_LOGI(
                 TAG,
-                "Touch-only mode: awake for %d seconds, then one scale check before sleeping again",
+                "Reduced-check-in mode: awake for %d seconds, then one scale check before sleeping again",
                 CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
 
             vTaskDelay(
@@ -1270,7 +1284,7 @@ void app_main(void)
             } else {
                 ESP_LOGW(
                     TAG,
-                    "Touch-only scale check failed: %s; returning to deep sleep without retries",
+                    "Reduced-check-in touch check failed: %s; returning to deep sleep without retries",
                     esp_err_to_name(err));
 
                 clear_touch_acknowledgement_if_needed(

@@ -35,6 +35,7 @@ static const char *TAG = "ble_client";
 #define UPDATE_FLAG_VALID (1U << 0)
 #define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
 #define DISPLAY_CONTROL_UNPAIR (1U << 0)
+#define DISPLAY_CONTROL_FORCE_REFRESH (1U << 2)
 #define PAIRING_ADV_MAGIC_0 0x4b
 #define PAIRING_ADV_MAGIC_1 0x53
 #define PAIRING_ADV_VERSION 1
@@ -1611,6 +1612,9 @@ esp_err_t ble_client_fetch(
                 state->unpair_requested =
                     (control.flags &
                      DISPLAY_CONTROL_UNPAIR) != 0;
+                state->force_refresh_requested =
+                    (control.flags &
+                     DISPLAY_CONTROL_FORCE_REFRESH) != 0;
             }
         }
 

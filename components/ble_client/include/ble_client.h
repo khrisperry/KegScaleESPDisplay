@@ -70,6 +70,7 @@ typedef struct {
     uint8_t touch_threshold_percent;
     bool unpair_requested;
     bool replacement_requested;
+    bool force_refresh_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     ble_client_update_offer_t update;

@@ -133,9 +133,9 @@ The GitHub Actions build also targets classic ESP32.
 
 ## Capacitive touch wake
 
-The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 8% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive.
+The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive.
 
-The timer wake remains enabled at the same time. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
+Periodic check-in can be enabled alongside touch wake. When the normal three-minute check-in is disabled, a one-hour safety timer remains armed so the display can still receive data, settings, firmware updates, removal requests, and manual full-refresh commands if the touch sensor fails. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
 
 For a direct touch electrode, connect the electrode to GPIO12. A 470 ohm to 2 kohm series resistor near the ESP32 is recommended for noise/ESD protection; 510 ohms is a good starting value.
 
@@ -144,8 +144,12 @@ If an active 3-pin capacitive-touch module is used instead of a passive electrod
 
 ### Touch wake waits for the pour
 
-A timer wake performs the normal quick BLE check. A GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 20 seconds total have elapsed. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
+A timer wake performs the normal quick BLE check. When frequent periodic check-in is enabled, a GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 30 seconds total have elapsed. In reduced-check-in mode, it performs one scale read after the 10-second delay and returns to sleep. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
 The scale also coordinates display firmware updates. The display reads a version offer over BLE, retrieves home Wi-Fi credentials and update metadata only through an authenticated encrypted BLE session, performs an HTTPS A/B OTA download, validates the image size and SHA-256 digest, and turns Wi-Fi back off before rebooting.
 
 
-When periodic check-in is disabled, the display clears every stale wake source before deep sleep and then arms only GPIO12 capacitive touch.
+Before deep sleep, the display clears every stale wake source and arms GPIO12 capacitive touch plus either the selected periodic timer or the one-hour safety timer.
+
+The scale webpage can queue an authenticated full-screen refresh. The display
+receives it on its next touch or timer wake, redraws the complete current keg
+screen, and resets the changed-region refresh counter.

@@ -175,17 +175,24 @@ static esp_err_t present(void)
     return err;
 }
 
-static esp_err_t present_scale(void)
+static esp_err_t present_scale(
+    bool force_full_refresh)
 {
     clear_touch_ack_area();
 
     esp_err_t err;
 
-    if (s_scale_screen_magic ==
+    if (!force_full_refresh &&
+        s_scale_screen_magic ==
         SCALE_SCREEN_MAGIC) {
         err = epaper_refresh_changed(
             SCALE_FULL_REFRESH_INTERVAL);
     } else {
+        if (force_full_refresh) {
+            ESP_LOGI(
+                TAG,
+                "Full scale-screen refresh requested");
+        }
         err = epaper_refresh();
     }
 
@@ -1202,7 +1209,8 @@ static void draw_diagnostics_layout(
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
-    uint8_t battery_percent)
+    uint8_t battery_percent,
+    bool force_full_refresh)
 {
     if (peer == NULL ||
         state == NULL) {
@@ -1244,5 +1252,6 @@ esp_err_t display_ui_show_scale(
     }
 
     draw_battery_indicator(battery_percent);
-    return present_scale();
+    return present_scale(
+        force_full_refresh);
 }

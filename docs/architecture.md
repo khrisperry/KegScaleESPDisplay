@@ -4,7 +4,7 @@
 
 The display is designed around e-paper retention and deep sleep rather than a persistent BLE connection.
 
-1. ESP32 wakes from the 180-second timer or native capacitive touch on GPIO12.
+1. ESP32 wakes from the 180-second timer, the one-hour safety timer when frequent check-in is disabled, or native capacitive touch on GPIO12.
 2. Load the one paired scale identity from NVS.
 3. Connect directly to that saved BLE address.
 4. Discover/read the Keg Scale protocol.
@@ -36,7 +36,7 @@ For initial setup:
 
 ## Capacitive touch wake
 
-GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 8% with older scale firmware. The normal 180-second timer wake remains enabled in parallel.
+GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 3% with older scale firmware. The normal 180-second timer can be disabled, but a 3,600-second safety timer remains armed so a touch-sensor problem cannot make the display unreachable.
 
 The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0 wake cannot be enabled together.
 
@@ -63,8 +63,11 @@ The display refreshes when:
 - profile revision changes
 - whole servings remaining changes
 - stable total weight differs by at least 0.5 lb
+- the authenticated scale control requests a full refresh
 
 An unstable/settling snapshot does not replace an already stable e-paper image.
+A manual full-refresh command intentionally overrides this policy, redraws the
+current keg screen, and resets the partial-update counter.
 
 ## Hardware assumptions needing physical validation
 
