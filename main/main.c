@@ -26,9 +26,10 @@
 
 static const char *TAG = "display";
 
-/* Bumped when the reserved touch-acknowledgement area was introduced. */
-#define RETAINED_MAGIC 0x4B534453U
+/* Bumped when retained scale-offline tracking was added. */
+#define RETAINED_MAGIC 0x4B534454U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
+#define SCALE_OFFLINE_FAILURE_THRESHOLD 5U
 #define BATTERY_ADC_SAMPLES 16
 #define BATTERY_ADC_FULL_SCALE 4095.0f
 #define BATTERY_DIVIDER_SCALE 7.46f
@@ -42,6 +43,8 @@ typedef struct {
     uint8_t touch_threshold_percent;
     uint8_t periodic_checkin_disabled;
     uint8_t battery_percent;
+    uint8_t consecutive_scale_failures;
+    uint8_t scale_offline_displayed;
     uint16_t remaining_servings;
     float total_weight_lbs;
 } retained_state_t;
@@ -268,10 +271,33 @@ static bool retained_matches_peer(
     const ble_client_peer_t *peer)
 {
     return
+        peer != NULL &&
         s_retained.magic == RETAINED_MAGIC &&
         strcmp(
             s_retained.scale_id,
             peer->scale_id) == 0;
+}
+
+static void initialize_retained_peer(
+    const ble_client_peer_t *peer)
+{
+    if (peer == NULL ||
+        retained_matches_peer(peer)) {
+        return;
+    }
+
+    memset(
+        &s_retained,
+        0,
+        sizeof(s_retained));
+
+    s_retained.magic = RETAINED_MAGIC;
+    s_retained.battery_percent = 255U;
+
+    strlcpy(
+        s_retained.scale_id,
+        peer->scale_id,
+        sizeof(s_retained.scale_id));
 }
 
 static void remember_runtime_settings(
@@ -281,10 +307,70 @@ static void remember_runtime_settings(
         return;
     }
 
+    if (s_retained.consecutive_scale_failures > 0) {
+        ESP_LOGI(
+            TAG,
+            "Scale %s reachable again after %u failed check(s)",
+            peer->scale_id,
+            (unsigned)s_retained.consecutive_scale_failures);
+    }
+
     s_retained.touch_threshold_percent =
         s_touch_threshold_percent;
     s_retained.periodic_checkin_disabled =
         s_periodic_checkin_enabled ? 0U : 1U;
+    s_retained.consecutive_scale_failures = 0;
+}
+
+static bool record_scale_check_failure(
+    const ble_client_peer_t *peer)
+{
+    if (peer == NULL) {
+        return false;
+    }
+
+    initialize_retained_peer(peer);
+
+    if (s_retained.consecutive_scale_failures < 255U) {
+        ++s_retained.consecutive_scale_failures;
+    }
+
+    ESP_LOGW(
+        TAG,
+        "Scale %s consecutive failed check-ins=%u; offline screen after more than %u failures",
+        peer->scale_id,
+        (unsigned)s_retained.consecutive_scale_failures,
+        (unsigned)SCALE_OFFLINE_FAILURE_THRESHOLD);
+
+    if (s_retained.consecutive_scale_failures <=
+            SCALE_OFFLINE_FAILURE_THRESHOLD ||
+        s_retained.scale_offline_displayed != 0) {
+        return false;
+    }
+
+    esp_err_t err =
+        display_ui_show_message(
+            "KEG DISPLAY",
+            "SCALE OFFLINE",
+            peer->scale_id);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not show Scale Offline screen: %s",
+            esp_err_to_name(err));
+        return false;
+    }
+
+    s_retained.scale_offline_displayed = 1U;
+
+    ESP_LOGW(
+        TAG,
+        "Scale %s marked offline after %u consecutive failed check-ins",
+        peer->scale_id,
+        (unsigned)s_retained.consecutive_scale_failures);
+
+    return true;
 }
 
 static bool should_refresh(
@@ -293,6 +379,11 @@ static bool should_refresh(
     uint8_t battery_percent)
 {
     if (!retained_matches_peer(peer)) {
+        return true;
+    }
+
+    /* Restore live scale data immediately after an offline screen. */
+    if (s_retained.scale_offline_displayed != 0) {
         return true;
     }
 
@@ -1287,9 +1378,13 @@ void app_main(void)
                     "Reduced-check-in touch check failed: %s; returning to deep sleep without retries",
                     esp_err_to_name(err));
 
+                screen_refreshed =
+                    record_scale_check_failure(
+                        &pairing.peer);
+
                 clear_touch_acknowledgement_if_needed(
                     touch_ack_visible,
-                    false);
+                    screen_refreshed);
             }
 
             go_to_sleep();
@@ -1324,6 +1419,10 @@ void app_main(void)
                     TAG,
                     "Touch wake ended without a successful final scale read: %s",
                     esp_err_to_name(err));
+
+                screen_refreshed =
+                    record_scale_check_failure(
+                        &pairing.peer);
             }
 
             clear_touch_acknowledgement_if_needed(
@@ -1361,17 +1460,12 @@ void app_main(void)
         } else {
             ESP_LOGW(
                 TAG,
-                "Paired scale %s unavailable: %s; keeping previous e-paper image",
+                "Paired scale %s unavailable: %s",
                 pairing.peer.scale_id,
                 esp_err_to_name(err));
 
-            if (!retained_matches_peer(
-                    &pairing.peer)) {
-                display_ui_show_message(
-                    "KEG DISPLAY",
-                    "SCALE OFFLINE",
-                    pairing.peer.scale_id);
-            }
+            record_scale_check_failure(
+                &pairing.peer);
         }
 
         go_to_sleep();
