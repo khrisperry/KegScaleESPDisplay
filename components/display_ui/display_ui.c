@@ -83,39 +83,38 @@ static void draw_touch_acknowledged(void)
 {
     clear_touch_ack_area();
 
-    epaper_draw_rect(
-        TOUCH_ACK_X,
-        TOUCH_ACK_Y,
-        TOUCH_ACK_WIDTH,
-        TOUCH_ACK_HEIGHT,
-        true);
-
-    /* Compact monochrome fingerprint inside the existing touch badge. */
+    /* Borderless compact fingerprint tuned for the 18x16 touch-ack area. */
     static const uint16_t fingerprint_rows[] = {
-        0x03F0,
-        0x0C0C,
-        0x19E6,
-        0x3333,
-        0x260D,
-        0x24C9,
-        0x24C9,
-        0x18C6,
-        0x10C2,
-        0x08C4,
-        0x0C0C,
-        0x03F0,
+        0x03C0,
+        0x0FF0,
+        0x1C38,
+        0x381C,
+        0x300C,
+        0x631E,
+        0x6616,
+        0x6C36,
+        0x4C32,
+        0x0C30,
+        0x0C30,
+        0x0630,
+        0x0330,
+        0x01E0,
     };
 
-    for (int y = 0;
-         y < (int)(sizeof(fingerprint_rows) /
-                   sizeof(fingerprint_rows[0]));
-         ++y) {
-        for (int x = 0; x < 14; ++x) {
+    const int icon_width = 14;
+    const int icon_height =
+        (int)(sizeof(fingerprint_rows) /
+              sizeof(fingerprint_rows[0]));
+    const int origin_x = TOUCH_ACK_X + 2;
+    const int origin_y = TOUCH_ACK_Y + 1;
+
+    for (int y = 0; y < icon_height; ++y) {
+        for (int x = 0; x < icon_width; ++x) {
             if ((fingerprint_rows[y] &
-                 (1U << (13 - x))) != 0) {
+                 (1U << (icon_width - 1 - x))) != 0) {
                 epaper_set_pixel(
-                    TOUCH_ACK_X + 2 + x,
-                    TOUCH_ACK_Y + 2 + y,
+                    origin_x + x,
+                    origin_y + y,
                     true);
             }
         }
