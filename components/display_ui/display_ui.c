@@ -36,8 +36,8 @@ enum {
     BATTERY_RESERVED_WIDTH = 30,
     TOUCH_ACK_X = 13,
     TOUCH_ACK_Y = 16,
-    TOUCH_ACK_WIDTH = 18,
-    TOUCH_ACK_HEIGHT = 16,
+    TOUCH_ACK_WIDTH = 32,
+    TOUCH_ACK_HEIGHT = 32,
 };
 
 static void draw_font_centered_at(
@@ -83,38 +83,49 @@ static void draw_touch_acknowledged(void)
 {
     clear_touch_ack_area();
 
-    /* Borderless compact fingerprint tuned for the 18x16 touch-ack area. */
-    static const uint16_t fingerprint_rows[] = {
-        0x03C0,
-        0x0FF0,
-        0x1C38,
-        0x381C,
-        0x300C,
-        0x631E,
-        0x6616,
-        0x6C36,
-        0x4C32,
-        0x0C30,
-        0x0C30,
-        0x0630,
-        0x0330,
-        0x01E0,
+    /* Detailed borderless 32x32 fingerprint for touch acknowledgement. */
+    static const uint32_t fingerprint_rows[] = {
+        0x00000000U,
+        0x000FF000U,
+        0x00300C00U,
+        0x00C00300U,
+        0x0107F080U,
+        0x02180C40U,
+        0x04600320U,
+        0x0883E090U,
+        0x110C1848U,
+        0x11100448U,
+        0x2221E224U,
+        0x24461914U,
+        0x2488049CU,
+        0x4488E492U,
+        0x4891128AU,
+        0x41120A4AU,
+        0x4802484AU,
+        0x4904A44AU,
+        0x4925154AU,
+        0x4925054AU,
+        0x4925054CU,
+        0x2925054CU,
+        0x29250548U,
+        0x25250590U,
+        0x14A50590U,
+        0x14950A90U,
+        0x0A928A80U,
+        0x0A528B00U,
+        0x01490900U,
+        0x01289000U,
+        0x00241000U,
+        0x00000000U,
     };
 
-    const int icon_width = 14;
-    const int icon_height =
-        (int)(sizeof(fingerprint_rows) /
-              sizeof(fingerprint_rows[0]));
-    const int origin_x = TOUCH_ACK_X + 2;
-    const int origin_y = TOUCH_ACK_Y + 1;
-
-    for (int y = 0; y < icon_height; ++y) {
-        for (int x = 0; x < icon_width; ++x) {
+    for (int y = 0; y < TOUCH_ACK_HEIGHT; ++y) {
+        for (int x = 0; x < TOUCH_ACK_WIDTH; ++x) {
             if ((fingerprint_rows[y] &
-                 (1U << (icon_width - 1 - x))) != 0) {
+                 (1U << (TOUCH_ACK_WIDTH - 1 - x))) != 0) {
                 epaper_set_pixel(
-                    origin_x + x,
-                    origin_y + y,
+                    TOUCH_ACK_X + x,
+                    TOUCH_ACK_Y + y,
                     true);
             }
         }
