@@ -314,12 +314,6 @@ esp_err_t display_ui_show_message(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
     if (title != NULL) {
         draw_font_centered_at(
@@ -358,12 +352,6 @@ esp_err_t display_ui_show_pairing_code(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
