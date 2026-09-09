@@ -90,23 +90,35 @@ static void draw_touch_acknowledged(void)
         TOUCH_ACK_HEIGHT,
         true);
 
-    /* Compact check mark: immediately recognizable without another font. */
-    for (int i = 0; i < 4; ++i) {
-        epaper_fill_rect(
-            TOUCH_ACK_X + 3 + i,
-            TOUCH_ACK_Y + 7 + i,
-            2,
-            2,
-            true);
-    }
+    /* Compact monochrome fingerprint inside the existing touch badge. */
+    static const uint16_t fingerprint_rows[] = {
+        0x03F0,
+        0x0C0C,
+        0x19E6,
+        0x3333,
+        0x260D,
+        0x24C9,
+        0x24C9,
+        0x18C6,
+        0x10C2,
+        0x08C4,
+        0x0C0C,
+        0x03F0,
+    };
 
-    for (int i = 0; i < 7; ++i) {
-        epaper_fill_rect(
-            TOUCH_ACK_X + 6 + i,
-            TOUCH_ACK_Y + 10 - i,
-            2,
-            2,
-            true);
+    for (int y = 0;
+         y < (int)(sizeof(fingerprint_rows) /
+                   sizeof(fingerprint_rows[0]));
+         ++y) {
+        for (int x = 0; x < 14; ++x) {
+            if ((fingerprint_rows[y] &
+                 (1U << (13 - x))) != 0) {
+                epaper_set_pixel(
+                    TOUCH_ACK_X + 2 + x,
+                    TOUCH_ACK_Y + 2 + y,
+                    true);
+            }
+        }
     }
 }
 
