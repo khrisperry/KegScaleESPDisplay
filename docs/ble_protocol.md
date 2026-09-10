@@ -20,6 +20,7 @@ While unpaired, the display continuously scans. If exactly one scale advertises 
 | Display update offer | `8f7a0006-3f7b-4c61-a2b8-6d2f5b71c001` | Latest compatible display firmware |
 | Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
+| Display information | `8f7a0009-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted firmware and battery-voltage report |
 | Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Optional runtime touch threshold |
 
 ## 20-byte snapshot
@@ -100,6 +101,21 @@ The display reads this 6-byte packet when available:
 Serving size lets the display show both the configured size and a friendly remaining-unit label, e.g. 12 oz -> CANS LEFT and 16 oz -> PINTS LEFT.
 
 For compatibility with older scale firmware that does not yet expose this characteristic, the display falls back to 16 oz / serving-focused layout.
+
+### Display information
+
+After measuring its battery, the display writes this 20-byte packet during each
+authenticated check-in:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 17 | null-terminated display firmware version |
+| 18 | 2 | battery voltage in millivolts, little-endian; 0 when unavailable |
+
+The shortened on-wire version field preserves the original packet size. Existing
+semantic firmware versions fit within it, and zero-filled legacy packets are read
+as having no battery-voltage value.
 
 ### Touch configuration
 

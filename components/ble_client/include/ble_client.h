@@ -107,6 +107,9 @@ enum {
 
 esp_err_t ble_client_init(void);
 
+void ble_client_set_display_battery_millivolts(
+    uint16_t battery_millivolts);
+
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
     size_t capacity,

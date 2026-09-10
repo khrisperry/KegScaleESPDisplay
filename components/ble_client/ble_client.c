@@ -180,12 +180,15 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
-    char version[19];
+    char version[17];
+    uint16_t battery_millivolts;
 } wire_display_info_t;
 
 _Static_assert(
     sizeof(wire_display_info_t) == 20,
     "Display info must fit in the default ATT write payload");
+
+static uint16_t s_display_battery_millivolts;
 
 typedef struct {
     ble_client_peer_t *items;
@@ -913,6 +916,13 @@ static void host_task(void *arg)
     nimble_port_freertos_deinit();
 }
 
+void ble_client_set_display_battery_millivolts(
+    uint16_t battery_millivolts)
+{
+    s_display_battery_millivolts =
+        battery_millivolts;
+}
+
 esp_err_t ble_client_init(void)
 {
     if (s_initialized) {
@@ -1637,6 +1647,8 @@ esp_err_t ble_client_fetch(
             wire_display_info_t info = {
                 .protocol_version =
                     BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+                .battery_millivolts =
+                    s_display_battery_millivolts,
             };
 
             const esp_app_desc_t *app =
@@ -1658,8 +1670,9 @@ esp_err_t ble_client_fetch(
                 if (info_err == ESP_OK) {
                     ESP_LOGI(
                         TAG,
-                        "Reported display firmware %s to scale",
-                        info.version);
+                        "Reported display firmware %s and battery %u mV to scale",
+                        info.version,
+                        (unsigned)info.battery_millivolts);
                 }
             }
         }

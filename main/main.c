@@ -123,6 +123,8 @@ static uint8_t battery_fallback_percent(void)
 
 static uint8_t read_battery_percent(void)
 {
+    ble_client_set_display_battery_millivolts(0);
+
     adc_oneshot_unit_handle_t adc = NULL;
     const adc_oneshot_unit_init_cfg_t unit_config = {
         .unit_id = ADC_UNIT_1,
@@ -185,6 +187,11 @@ static uint8_t read_battery_percent(void)
     const float voltage =
         (raw_average / BATTERY_ADC_FULL_SCALE) *
         BATTERY_DIVIDER_SCALE;
+
+    const uint16_t battery_millivolts =
+        (uint16_t)(voltage * 1000.0f + 0.5f);
+    ble_client_set_display_battery_millivolts(
+        battery_millivolts);
 
     float percent = 0.0f;
 
@@ -1144,6 +1151,9 @@ static void enter_pairing_mode(void)
         if (err == ESP_OK) {
             ble_client_scale_state_t state = {0};
 
+            const uint8_t battery_percent =
+                read_battery_percent();
+
             err =
                 validate_and_save_peer(
                     selected,
@@ -1156,9 +1166,6 @@ static void enter_pairing_mode(void)
                     selected->scale_id);
 
                 vTaskDelay(pdMS_TO_TICKS(1000));
-
-                const uint8_t battery_percent =
-                    read_battery_percent();
 
                 render_if_needed(
                     selected,
