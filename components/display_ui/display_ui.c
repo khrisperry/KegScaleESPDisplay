@@ -707,6 +707,12 @@ static const char *serving_unit_label(
 
     if (serving_size_near(
             serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
             32.0f)) {
         return "CROWLERS";
     }
