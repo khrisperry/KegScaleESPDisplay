@@ -594,6 +594,12 @@ static const char *serving_count_label(
 
     if (serving_size_near(
             serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS LEFT";
+    }
+    
+    if (serving_size_near(
+            serving_size_oz,
             32.0f)) {
         return "CROWLERS LEFT";
     }
