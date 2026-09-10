@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "esp_app_desc.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -1386,9 +1387,30 @@ esp_err_t ble_client_pair(
     return err;
 }
 
+typedef struct {
+    uint32_t magic;
+    ble_client_peer_t peer;
+    uint16_t handles[9];
+    char identity[BLE_CLIENT_DEVICE_INFO_MAX + 1];
+    char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
+    uint8_t profile_revision;
+    uint8_t config_revision;
+    uint8_t touch_threshold;
+} retained_gatt_cache_t;
+RTC_DATA_ATTR static retained_gatt_cache_t s_gatt_cache;
+#define GATT_CACHE_MAGIC 0x4b474331U
+
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state)
+{
+    return ble_client_fetch_mode(peer, state, true);
+}
+
+esp_err_t ble_client_fetch_mode(
+    const ble_client_peer_t *peer,
+    ble_client_scale_state_t *state,
+    bool maintenance)
 {
     if (!s_initialized ||
         peer == NULL ||
@@ -1420,6 +1442,11 @@ esp_err_t ble_client_fetch(
         return err;
     }
 
+    bool cached = !maintenance && s_gatt_cache.magic == GATT_CACHE_MAGIC &&
+        strcmp(peer->scale_id, s_gatt_cache.peer.scale_id) == 0 &&
+        peer->address_type == s_gatt_cache.peer.address_type &&
+        memcmp(peer->address, s_gatt_cache.peer.address, sizeof(peer->address)) == 0;
+    bool rediscovered = false;
     uint16_t snapshot_handle = 0;
     uint16_t keg_name_handle = 0;
     uint16_t device_info_handle = 0;
@@ -1429,59 +1456,75 @@ esp_err_t ble_client_fetch(
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
-
-    err =
-        discover_handles(
-            conn_handle,
-            &snapshot_handle,
-            &keg_name_handle,
-            &device_info_handle,
-            &display_config_handle,
-            &display_update_handle,
-            &update_bundle_handle,
-            &display_control_handle,
-            &display_info_handle,
-            &touch_config_handle);
-
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
-
-    if (err == ESP_OK) {
-        err =
-            read_value(
-                conn_handle,
-                snapshot_handle,
-                raw_snapshot,
-                sizeof(raw_snapshot),
-                &raw_snapshot_len);
-    }
-
     size_t text_len = 0;
 
-    if (err == ESP_OK) {
+rediscover:
+    if (cached) {
+        snapshot_handle = s_gatt_cache.handles[0];
+        keg_name_handle = s_gatt_cache.handles[1];
+        device_info_handle = s_gatt_cache.handles[2];
+        display_config_handle = s_gatt_cache.handles[3];
+        display_update_handle = s_gatt_cache.handles[4];
+        update_bundle_handle = s_gatt_cache.handles[5];
+        display_control_handle = s_gatt_cache.handles[6];
+        display_info_handle = s_gatt_cache.handles[7];
+        touch_config_handle = s_gatt_cache.handles[8];
+        ESP_LOGI(TAG, "Touch fetch: using retained BLE handles");
+    } else {
         err =
-            read_long_value(
+            discover_handles(
                 conn_handle,
-                keg_name_handle,
-                (uint8_t *)state->keg_name,
-                BLE_CLIENT_KEG_NAME_MAX,
-                &text_len);
-
-        state->keg_name[text_len] = '\0';
+                &snapshot_handle,
+                &keg_name_handle,
+                &device_info_handle,
+                &display_config_handle,
+                &display_update_handle,
+                &update_bundle_handle,
+                &display_control_handle,
+                &display_info_handle,
+                &touch_config_handle);
     }
 
+    /* Validate protocol and scale firmware before using cached handles to write. */
     text_len = 0;
+    if (err == ESP_OK) {
+        err = read_long_value(conn_handle, device_info_handle,
+            (uint8_t *)state->device_info, BLE_CLIENT_DEVICE_INFO_MAX, &text_len);
+        state->device_info[text_len] = '\0';
+        state->protocol_version = BLE_CLIENT_PROTOCOL_VERSION;
+        if (err == ESP_OK && (!ble_client_state_is_compatible(peer, state) ||
+            (cached && strcmp(state->device_info, s_gatt_cache.identity) != 0))) {
+            err = ESP_ERR_INVALID_VERSION;
+        }
+    }
+    if (err == ESP_OK) {
+        err = read_value(conn_handle, snapshot_handle, raw_snapshot,
+            sizeof(raw_snapshot), &raw_snapshot_len);
+        if (err == ESP_OK && (raw_snapshot_len != sizeof(wire_snapshot_t) ||
+            raw_snapshot[0] != BLE_CLIENT_PROTOCOL_VERSION)) err = ESP_ERR_INVALID_VERSION;
+    }
+    if (err != ESP_OK && cached && !rediscovered) {
+        cached = false;
+        rediscovered = true;
+        s_gatt_cache.magic = 0;
+        err = ESP_OK;
+        ESP_LOGW(TAG, "Cached BLE identity/handles changed; rediscovering once");
+        goto rediscover;
+    }
 
     if (err == ESP_OK) {
-        err =
-            read_long_value(
-                conn_handle,
-                device_info_handle,
-                (uint8_t *)state->device_info,
-                BLE_CLIENT_DEVICE_INFO_MAX,
-                &text_len);
-
-        state->device_info[text_len] = '\0';
+        wire_snapshot_t current;
+        memcpy(&current, raw_snapshot, sizeof(current));
+        if (cached && current.profile_revision == s_gatt_cache.profile_revision) {
+            strlcpy(state->keg_name, s_gatt_cache.keg_name, sizeof(state->keg_name));
+        } else {
+            text_len = 0;
+            err = read_long_value(conn_handle, keg_name_handle,
+                (uint8_t *)state->keg_name, BLE_CLIENT_KEG_NAME_MAX, &text_len);
+            state->keg_name[text_len] = '\0';
+        }
     }
 
     if (err == ESP_OK &&
@@ -1515,6 +1558,13 @@ esp_err_t ble_client_fetch(
                     100.0f;
             }
         } else {
+            if (cached && !rediscovered) {
+                cached = false;
+                rediscovered = true;
+                s_gatt_cache.magic = 0;
+                err = ESP_OK;
+                goto rediscover;
+            }
             ESP_LOGW(
                 TAG,
                 "Display configuration unavailable; using %.0f oz serving fallback",
@@ -1523,7 +1573,8 @@ esp_err_t ble_client_fetch(
     }
 
     if (err == ESP_OK &&
-        touch_config_handle != 0) {
+        touch_config_handle != 0 &&
+        (!cached || state->display_config_revision != s_gatt_cache.config_revision)) {
         wire_touch_config_t touch_config = {0};
         size_t touch_config_len = 0;
 
@@ -1542,13 +1593,24 @@ esp_err_t ble_client_fetch(
             state->touch_threshold_percent =
                 touch_config.threshold_percent;
         } else {
+            if (cached && !rediscovered) {
+                cached = false;
+                rediscovered = true;
+                s_gatt_cache.magic = 0;
+                err = ESP_OK;
+                goto rediscover;
+            }
             ESP_LOGW(
                 TAG,
                 "Touch configuration unavailable; using firmware fallback");
         }
     }
 
-    if (err == ESP_OK &&
+    if (cached && state->display_config_revision == s_gatt_cache.config_revision) {
+        state->touch_threshold_percent = s_gatt_cache.touch_threshold;
+    }
+
+    if (err == ESP_OK && maintenance &&
         display_update_handle != 0) {
         wire_display_update_t update = {0};
         size_t update_len = 0;
@@ -1625,10 +1687,20 @@ esp_err_t ble_client_fetch(
                 state->force_refresh_requested =
                     (control.flags &
                      DISPLAY_CONTROL_FORCE_REFRESH) != 0;
+            } else if (control_err == ESP_OK) {
+                control_err = ESP_ERR_INVALID_VERSION;
             }
         }
 
         if (control_err != ESP_OK) {
+            if (cached && !rediscovered) {
+                cached = false;
+                rediscovered = true;
+                s_gatt_cache.magic = 0;
+                err = ESP_OK;
+                goto rediscover;
+            }
+            err = control_err;
             ESP_LOGW(
                 TAG,
                 "Authenticated display control unavailable: %s",
@@ -1678,6 +1750,8 @@ esp_err_t ble_client_fetch(
         }
 
         if (info_err != ESP_OK) {
+            /* A best-effort report must not discard an already received unpair
+             * or force-refresh command. Do not reconnect just to resend it. */
             ESP_LOGW(
                 TAG,
                 "Could not report display firmware to scale: %s",
@@ -1688,6 +1762,7 @@ esp_err_t ble_client_fetch(
     disconnect_peer(conn_handle);
 
     if (err != ESP_OK) {
+        s_gatt_cache.magic = 0;
         return err;
     }
 
@@ -1723,6 +1798,25 @@ esp_err_t ble_client_fetch(
         wire.wifi_rssi_dbm;
     state->profile_revision =
         wire.profile_revision;
+
+    if (ble_client_state_is_compatible(peer, state)) {
+        s_gatt_cache.peer = *peer;
+        s_gatt_cache.handles[0] = snapshot_handle;
+        s_gatt_cache.handles[1] = keg_name_handle;
+        s_gatt_cache.handles[2] = device_info_handle;
+        s_gatt_cache.handles[3] = display_config_handle;
+        s_gatt_cache.handles[4] = display_update_handle;
+        s_gatt_cache.handles[5] = update_bundle_handle;
+        s_gatt_cache.handles[6] = display_control_handle;
+        s_gatt_cache.handles[7] = display_info_handle;
+        s_gatt_cache.handles[8] = touch_config_handle;
+        strlcpy(s_gatt_cache.identity, state->device_info, sizeof(s_gatt_cache.identity));
+        strlcpy(s_gatt_cache.keg_name, state->keg_name, sizeof(s_gatt_cache.keg_name));
+        s_gatt_cache.profile_revision = state->profile_revision;
+        s_gatt_cache.config_revision = state->display_config_revision;
+        s_gatt_cache.touch_threshold = state->touch_threshold_percent;
+        s_gatt_cache.magic = GATT_CACHE_MAGIC;
+    }
 
     ESP_LOGI(
         TAG,

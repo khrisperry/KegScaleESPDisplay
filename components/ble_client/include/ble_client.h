@@ -124,6 +124,12 @@ esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state);
 
+/* Touch reads omit OTA offers; maintenance refreshes discovery and all data. */
+esp_err_t ble_client_fetch_mode(
+    const ble_client_peer_t *peer,
+    ble_client_scale_state_t *state,
+    bool maintenance);
+
 esp_err_t ble_client_fetch_update_bundle(
     const ble_client_peer_t *peer,
     ble_client_update_bundle_t *bundle);

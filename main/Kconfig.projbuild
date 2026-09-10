@@ -54,29 +54,17 @@ config KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS
     range 1 30
     default 10
     help
-        After a capacitive-touch wake, keep the existing e-paper image visible
-        and wait this long before the first BLE read. In reduced-check-in mode
-        this is the full intentional awake delay: one BLE read follows, then the
-        display returns to deep sleep with touch and the hourly safety timer armed.
-
-config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
-    int "Touch wake maximum observation window (seconds)"
-    depends on KEG_DISPLAY_TOUCH_WAKE
-    range 5 60
-    default 30
-    help
-        Maximum total time after a touch wake to wait for a meaningful stable
-        scale change before returning to deep sleep. This longer observation loop
-        is used only while periodic check-in mode remains enabled. Reduced-check-in
-        mode performs one scale read after the 10-second delay and returns to sleep.
+        After touch acknowledgment, deep-sleep with only the timer armed before
+        one BLE fetch. Touch cannot retrigger this short pour delay.
 
 config KEG_DISPLAY_TOUCH_RETRY_SECONDS
     int "Touch wake retry interval (seconds)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 1 10
-    default 2
+    default 5
     help
-        If the first post-touch read is unchanged or settling, wait this long
-        before checking the scale again while periodic check-in mode is enabled.
+        After an unstable first touch result, deep-sleep this long then fetch
+        once more. A stable unchanged result never retries. Timer checks do not
+        use this settling retry.
 
 endmenu

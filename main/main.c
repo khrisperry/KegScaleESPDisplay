@@ -23,6 +23,7 @@
 #include "pairing.h"
 #include "sdkconfig.h"
 #include "touch_wake.h"
+#include "power_policy.h"
 
 static const char *TAG = "display";
 
@@ -53,7 +54,24 @@ RTC_DATA_ATTR static retained_state_t s_retained;
 
 static uint8_t s_touch_threshold_percent =
     CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
-static bool s_periodic_checkin_enabled = true;
+static bool s_periodic_checkin_enabled = false;
+/* Separate from the last rendered state, which is reset after a redraw. */
+RTC_DATA_ATTR static uint8_t s_touch_phase;
+RTC_DATA_ATTR static bool s_touch_ack_pending;
+static bool s_lightweight_fetch;
+static void disable_wake_source_if_enabled(esp_sleep_source_t source);
+
+static void sleep_for_touch_delay(unsigned seconds)
+{
+    pairing_reset_power_cycle_count();
+    disable_wake_source_if_enabled(ESP_SLEEP_WAKEUP_ALL);
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL));
+    ESP_LOGI(TAG, "Touch phase %u: deep sleep for %u seconds",
+             (unsigned)s_touch_phase, seconds);
+    /* Timer-only during the pour delay: a held finger cannot cause a wake loop. */
+    fflush(stdout);
+    esp_deep_sleep_start();
+}
 
 static bool touch_threshold_is_valid(
     uint8_t threshold_percent)
@@ -488,10 +506,10 @@ static void configure_wake_sources(void)
     disable_wake_source_if_enabled(
         ESP_SLEEP_WAKEUP_ALL);
 
-    const uint64_t wake_seconds =
-        s_periodic_checkin_enabled ?
-            CONFIG_KEG_DISPLAY_SLEEP_SECONDS :
-            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS;
+    const uint64_t wake_seconds = power_next_check_seconds(
+        s_periodic_checkin_enabled, s_retained.consecutive_scale_failures,
+        CONFIG_KEG_DISPLAY_SLEEP_SECONDS, CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
+    ESP_LOGI(TAG, "Next scheduled check in %llu seconds", (unsigned long long)wake_seconds);
 
     ESP_ERROR_CHECK(
         esp_sleep_enable_timer_wakeup(
@@ -637,147 +655,15 @@ static esp_err_t validate_and_save_peer(
     return pairing_save(peer);
 }
 
-static esp_err_t find_peer_by_id(
-    const char *scale_id,
-    ble_client_peer_t *peer)
-{
-    ble_client_peer_t candidates[
-        BLE_CLIENT_MAX_CANDIDATES];
-
-    size_t count = 0;
-
-    esp_err_t err =
-        scan_scales(
-            candidates,
-            &count);
-
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    for (size_t i = 0;
-         i < count;
-         ++i) {
-        if (strcmp(
-                candidates[i].scale_id,
-                scale_id) == 0) {
-            *peer = candidates[i];
-            return ESP_OK;
-        }
-    }
-
-    return ESP_ERR_NOT_FOUND;
-}
-
 static esp_err_t fetch_paired_state_once(
     pairing_config_t *pairing,
     ble_client_scale_state_t *state)
 {
-    if (pairing == NULL || state == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    esp_err_t err =
-        ble_client_fetch(
-            &pairing->peer,
-            state);
-
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    if (!ble_client_state_is_compatible(
-            &pairing->peer,
-            state)) {
+    esp_err_t err = ble_client_fetch_mode(&pairing->peer, state, !s_lightweight_fetch);
+    if (err != ESP_OK) return err;
+    if (!ble_client_state_is_compatible(&pairing->peer, state)) {
         return ESP_ERR_INVALID_VERSION;
     }
-
-    apply_display_settings(state);
-    remember_runtime_settings(&pairing->peer);
-    return ESP_OK;
-}
-
-static esp_err_t fetch_paired_state(
-    pairing_config_t *pairing,
-    ble_client_scale_state_t *state)
-{
-    esp_err_t err =
-        ble_client_fetch(
-            &pairing->peer,
-            state);
-
-    if (err == ESP_OK &&
-        ble_client_state_is_compatible(
-            &pairing->peer,
-            state)) {
-        apply_display_settings(state);
-        remember_runtime_settings(&pairing->peer);
-        return ESP_OK;
-    }
-
-    ESP_LOGW(
-        TAG,
-        "Direct connection to %s failed; retrying saved address once",
-        pairing->peer.scale_id);
-
-    vTaskDelay(pdMS_TO_TICKS(750));
-
-    err =
-        ble_client_fetch(
-            &pairing->peer,
-            state);
-
-    if (err == ESP_OK &&
-        ble_client_state_is_compatible(
-            &pairing->peer,
-            state)) {
-        apply_display_settings(state);
-        remember_runtime_settings(&pairing->peer);
-        ESP_LOGI(
-            TAG,
-            "Saved-address BLE retry succeeded");
-        return ESP_OK;
-    }
-
-    ESP_LOGW(
-        TAG,
-        "Saved-address retry failed; looking for exact ID %s",
-        pairing->peer.scale_id);
-
-    ble_client_peer_t recovered = {0};
-
-    err =
-        find_peer_by_id(
-            pairing->peer.scale_id,
-            &recovered);
-
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(250));
-
-    err =
-        ble_client_fetch(
-            &recovered,
-            state);
-
-    if (err != ESP_OK ||
-        !ble_client_state_is_compatible(
-            &recovered,
-            state)) {
-        return err != ESP_OK ?
-            err :
-            ESP_ERR_INVALID_VERSION;
-    }
-
-    ESP_RETURN_ON_ERROR(
-        pairing_save(
-            &recovered),
-        TAG,
-        "Could not repair saved BLE address");
-
-    pairing->peer = recovered;
     apply_display_settings(state);
     remember_runtime_settings(&pairing->peer);
     return ESP_OK;
@@ -931,117 +817,6 @@ static void install_display_update_if_needed(
         TAG,
         "Display OTA failed: %s; Wi-Fi is off and the current firmware remains active",
         esp_err_to_name(err));
-}
-
-static esp_err_t wait_for_touch_pour_result(
-    pairing_config_t *pairing,
-    ble_client_scale_state_t *state,
-    uint8_t battery_percent,
-    bool *meaningful_change)
-{
-    if (pairing == NULL ||
-        state == NULL ||
-        meaningful_change == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    *meaningful_change = false;
-
-    ESP_LOGI(
-        TAG,
-        "Touch wake: waiting %d seconds before checking the pour",
-        CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
-
-    vTaskDelay(
-        pdMS_TO_TICKS(
-            CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS *
-            1000));
-
-    const TickType_t started =
-        xTaskGetTickCount();
-
-    int observation_seconds =
-        CONFIG_KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS -
-        CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS;
-
-    if (observation_seconds < 0) {
-        observation_seconds = 0;
-    }
-
-    const TickType_t remaining_window =
-        pdMS_TO_TICKS(
-            observation_seconds *
-            1000);
-
-    while (true) {
-        esp_err_t err =
-            fetch_paired_state(
-                pairing,
-                state);
-
-        if (err == ESP_OK) {
-            if (state->unpair_requested) {
-                ESP_LOGI(
-                    TAG,
-                    "Touch wake: authenticated unpair request received");
-                return ESP_OK;
-            }
-
-            if (state->force_refresh_requested ||
-                should_refresh(
-                    &pairing->peer,
-                    state,
-                    battery_percent)) {
-                *meaningful_change = true;
-
-                if (state->force_refresh_requested) {
-                    ESP_LOGI(
-                        TAG,
-                        "Touch wake: authenticated full-refresh request received");
-                } else {
-                    ESP_LOGI(
-                        TAG,
-                        "Touch wake: meaningful stable change detected; seq=%u servings=%u weight=%.3f lb battery=%u%%",
-                        (unsigned)state->sequence,
-                        (unsigned)state->remaining_servings,
-                        (double)state->total_weight_lbs,
-                        (unsigned)battery_percent);
-                }
-
-                return ESP_OK;
-            }
-
-            ESP_LOGI(
-                TAG,
-                "Touch wake: no settled meaningful change yet; seq=%u stable=%s",
-                (unsigned)state->sequence,
-                (state->flags &
-                 BLE_SCALE_FLAG_STABLE) ?
-                    "yes" :
-                    "no");
-        } else {
-            ESP_LOGW(
-                TAG,
-                "Touch wake scale check failed: %s",
-                esp_err_to_name(err));
-        }
-
-        const TickType_t elapsed =
-            xTaskGetTickCount() -
-            started;
-
-        if (elapsed >= remaining_window) {
-            ESP_LOGI(
-                TAG,
-                "Touch wake observation window ended with no new settled change");
-            return err;
-        }
-
-        vTaskDelay(
-            pdMS_TO_TICKS(
-                CONFIG_KEG_DISPLAY_TOUCH_RETRY_SECONDS *
-                1000));
-    }
 }
 
 static void enter_pairing_mode(void)
@@ -1242,7 +1017,13 @@ void app_main(void)
 
     const bool touch_wake =
         is_touch_wake();
-    bool touch_ack_visible = false;
+    const bool timer_wake =
+        (esp_sleep_get_wakeup_causes() & BIT(ESP_SLEEP_WAKEUP_TIMER)) != 0;
+    if (!timer_wake) {
+        s_touch_phase = 0;
+        s_touch_ack_pending = false;
+    }
+    bool touch_ack_visible = timer_wake && s_touch_ack_pending;
 
     if (touch_wake &&
         err == ESP_OK &&
@@ -1257,6 +1038,14 @@ void app_main(void)
                 "Could not draw the touch acknowledgement");
         }
     }
+
+    if (touch_wake && err == ESP_OK && pairing.paired) {
+        s_touch_phase = 1;
+        s_touch_ack_pending = touch_ack_visible;
+        sleep_for_touch_delay(CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
+    }
+    const bool touch_result_wake = timer_wake && s_touch_phase != 0;
+    s_lightweight_fetch = touch_result_wake;
 
     ESP_ERROR_CHECK(
         ble_client_init());
@@ -1341,113 +1130,30 @@ void app_main(void)
 
         ble_client_scale_state_t state = {0};
 
-#if CONFIG_KEG_DISPLAY_TOUCH_WAKE
-        if (touch_wake &&
-            !s_periodic_checkin_enabled) {
+        if (touch_result_wake) {
+            err = fetch_paired_state_once(&pairing, &state);
             bool screen_refreshed = false;
-
-            ESP_LOGI(
-                TAG,
-                "Reduced-check-in mode: awake for %d seconds, then one scale check before sleeping again",
-                CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
-
-            vTaskDelay(
-                pdMS_TO_TICKS(
-                    CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS *
-                    1000));
-
-            err =
-                fetch_paired_state_once(
-                    &pairing,
-                    &state);
-
             if (err == ESP_OK) {
-                handle_unpair_request(
-                    &pairing,
-                    &state);
-
-                screen_refreshed =
-                    render_if_needed(
-                        &pairing.peer,
-                        &state,
-                        battery_percent);
-
-                clear_touch_acknowledgement_if_needed(
-                    touch_ack_visible,
-                    screen_refreshed);
-
-                install_display_update_if_needed(
-                    &pairing,
-                    &state);
+                handle_unpair_request(&pairing, &state);
+                if (power_retry_touch(s_touch_phase,
+                    (state.flags & BLE_SCALE_FLAG_CALIBRATED) != 0,
+                    (state.flags & BLE_SCALE_FLAG_STABLE) != 0,
+                    state.force_refresh_requested)) {
+                    s_touch_phase = 2;
+                    sleep_for_touch_delay(CONFIG_KEG_DISPLAY_TOUCH_RETRY_SECONDS);
+                }
+                screen_refreshed = render_if_needed(&pairing.peer, &state, battery_percent);
             } else {
-                ESP_LOGW(
-                    TAG,
-                    "Reduced-check-in touch check failed: %s; returning to deep sleep without retries",
-                    esp_err_to_name(err));
-
-                screen_refreshed =
-                    record_scale_check_failure(
-                        &pairing.peer);
-
-                clear_touch_acknowledgement_if_needed(
-                    touch_ack_visible,
-                    screen_refreshed);
+                screen_refreshed = record_scale_check_failure(&pairing.peer);
             }
-
+            clear_touch_acknowledgement_if_needed(touch_ack_visible, screen_refreshed);
+            s_touch_phase = 0;
+            s_touch_ack_pending = false;
             go_to_sleep();
         }
-
-        if (touch_wake) {
-            bool meaningful_change = false;
-            bool screen_refreshed = false;
-
-            err =
-                wait_for_touch_pour_result(
-                    &pairing,
-                    &state,
-                    battery_percent,
-                    &meaningful_change);
-
-            if (err == ESP_OK) {
-                handle_unpair_request(
-                    &pairing,
-                    &state);
-            }
-
-            if (err == ESP_OK &&
-                meaningful_change) {
-                screen_refreshed =
-                    render_if_needed(
-                        &pairing.peer,
-                        &state,
-                        battery_percent);
-            } else if (err != ESP_OK) {
-                ESP_LOGW(
-                    TAG,
-                    "Touch wake ended without a successful final scale read: %s",
-                    esp_err_to_name(err));
-
-                screen_refreshed =
-                    record_scale_check_failure(
-                        &pairing.peer);
-            }
-
-            clear_touch_acknowledgement_if_needed(
-                touch_ack_visible,
-                screen_refreshed);
-
-            if (err == ESP_OK) {
-                install_display_update_if_needed(
-                    &pairing,
-                    &state);
-            }
-
-            go_to_sleep();
-        }
-#endif
 
         err =
-            fetch_paired_state(
+            fetch_paired_state_once(
                 &pairing,
                 &state);
 

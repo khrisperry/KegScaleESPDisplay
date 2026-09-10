@@ -1,0 +1,13 @@
+name: Power policy tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test touch retry bounds and failure backoff
+        run: |
+          gcc -Wall -Wextra -Werror tests/power_policy_test.c -o /tmp/power_policy_test
+          /tmp/power_policy_test
