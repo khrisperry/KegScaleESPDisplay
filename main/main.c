@@ -954,11 +954,15 @@ static void run_touch_calibration(
             result.noise_span,
             (unsigned)result.threshold_percent);
     } else {
-        display_ui_show_message(
+        esp_err_t screen_err = display_ui_show_message(
             "CALIBRATION FAILED",
             touch_calibration_error_text(
                 result.failure),
-            "START AGAIN ON SCALE");
+            esp_err_to_name(err));
+        if (screen_err != ESP_OK) {
+            ESP_LOGE(TAG, "Calibration failure screen failed: %s",
+                     esp_err_to_name(screen_err));
+        }
 
         ESP_LOGW(
             TAG,
@@ -971,7 +975,8 @@ static void run_touch_calibration(
             result.noise_span);
     }
 
-    vTaskDelay(pdMS_TO_TICKS(4000));
+    /* Keep the error readable on battery without requiring USB diagnostics. */
+    vTaskDelay(pdMS_TO_TICKS(err == ESP_OK ? 4000 : 30000));
 
     state->force_refresh_requested = true;
     render_if_needed(

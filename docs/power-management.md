@@ -59,3 +59,21 @@ the tap handle's outside edges, releasing it, and completing three verification
 touches in the same area. The calculated percentage is accepted only when the
 touch signal clears the measured noise margin. A successful value is saved back
 to the scale; failure keeps the previous threshold.
+
+Calibration uses a bounded oneshot conversion for every sample, including a
+32-sample software-filter warm-up before baseline noise measurement. It does
+not depend on background continuous scanning. Failures show the reason and
+ESP-IDF error name for 30 seconds before restoring the normal screen. These
+changes still require battery-powered hardware validation; host tests exercise
+the production routine with fake samples, conversion errors, zero readings,
+and missing touches.
+
+Run the calibration regression locally with:
+`gcc -std=c11 -Wall -Wextra -Werror -Itests/touch_stubs -Icomponents/touch_wake/include tests/touch_calibration_test.c -o /tmp/touch_calibration_test`
+and `/tmp/touch_calibration_test`.
+
+During OTA, the Wi-Fi DHCP hostname is `KegScaleDisplay-XXXX`, where `XXXX`
+is the final two station MAC bytes. It is reapplied at station start before
+connection/DHCP. The display normally uses BLE, so a router may retain the
+previous lease name until the next Wi-Fi OTA connection; controller aliases
+are independent of the device's DHCP hostname.

@@ -33,6 +33,8 @@ static const char *TAG = "display_ota";
 typedef struct {
     EventGroupHandle_t events;
     unsigned retries;
+    esp_netif_t *netif;
+    char hostname[32];
 } wifi_context_t;
 
 static void secure_zero(void *value, size_t size)
@@ -54,6 +56,15 @@ static void wifi_event(
 
     if (event_base == WIFI_EVENT &&
         event_id == WIFI_EVENT_STA_START) {
+        /* Apply after the default STA start handler, before association/DHCP.
+         * Reapply on every start so Wi-Fi initialization cannot replace it. */
+        esp_err_t err = esp_netif_set_hostname(context->netif, context->hostname);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not set Wi-Fi hostname: %s", esp_err_to_name(err));
+            xEventGroupSetBits(context->events, WIFI_FAILED_BIT);
+            return;
+        }
+        ESP_LOGI(TAG, "Wi-Fi DHCP hostname: %s", context->hostname);
         ESP_LOGI(TAG, "OTA Wi-Fi station started");
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT &&
@@ -165,6 +176,9 @@ static esp_err_t connect_wifi(
         TAG,
         "OTA Wi-Fi hostname: %s",
         hostname);
+
+    context->netif = *netif;
+    snprintf(context->hostname, sizeof(context->hostname), "%s", hostname);
 
     wifi_init_config_t init =
         WIFI_INIT_CONFIG_DEFAULT();

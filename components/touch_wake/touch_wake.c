@@ -204,6 +204,12 @@ static esp_err_t read_touch_value(
     const touch_context_t *context,
     uint32_t *value)
 {
+    /* Calibration owns each conversion. On ESP32 v1 SMOOTH is a software
+     * cache; reading it alone does not initiate a measurement. Use the same
+     * bounded oneshot path as wake setup, which also updates the filter. */
+    ESP_RETURN_ON_ERROR(
+        touch_sensor_trigger_oneshot_scanning(context->sensor, 2000),
+        TAG, "Calibration conversion failed");
     uint32_t values[TOUCH_SAMPLE_COUNT] = {0};
 
     const esp_err_t err =
@@ -477,7 +483,7 @@ esp_err_t touch_wake_calibrate(
     err =
         touch_context_enable(
             &context,
-            true);
+            false);
 
     if (err != ESP_OK) {
         touch_context_destroy(&context);
@@ -487,6 +493,17 @@ esp_err_t touch_wake_calibrate(
     vTaskDelay(
         pdMS_TO_TICKS(
             TOUCH_CALIBRATION_SETTLE_MS));
+
+    /* Let the software IIR converge before treating its range as noise. */
+    for (unsigned i = 0; i < 32; ++i) {
+        uint32_t discarded;
+        err = read_touch_value(&context, &discarded);
+        if (err != ESP_OK) {
+            touch_context_destroy(&context);
+            return err;
+        }
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_CALIBRATION_SAMPLE_MS));
+    }
 
     uint32_t baseline_samples[
         TOUCH_CALIBRATION_BASELINE_SAMPLES];
