@@ -444,6 +444,7 @@ esp_err_t touch_wake_prepare(
 }
 
 esp_err_t touch_wake_calibrate(
+    bool resume_after_unplug,
     touch_calibration_progress_cb_t progress,
     void *progress_context,
     touch_calibration_result_t *result)
@@ -456,20 +457,26 @@ esp_err_t touch_wake_calibrate(
     result->failure =
         TOUCH_CALIBRATION_FAILURE_HARDWARE;
 
-    ESP_RETURN_ON_ERROR(
-        report_progress(
-            progress,
-            TOUCH_CALIBRATION_STAGE_PREPARE,
-            0,
-            TOUCH_CALIBRATION_VERIFY_TAPS,
-            progress_context),
-        TAG,
-        "Could not show touch calibration instructions");
+    if (!resume_after_unplug) {
+        ESP_RETURN_ON_ERROR(
+            report_progress(
+                progress,
+                TOUCH_CALIBRATION_STAGE_PREPARE,
+                0,
+                TOUCH_CALIBRATION_VERIFY_TAPS,
+                progress_context),
+            TAG,
+            "Could not show touch calibration instructions");
 
-    vTaskDelay(
-        pdMS_TO_TICKS(
-            TOUCH_CALIBRATION_UNPLUG_SECONDS *
-            1000));
+        vTaskDelay(
+            pdMS_TO_TICKS(
+                TOUCH_CALIBRATION_UNPLUG_SECONDS *
+                1000));
+    } else {
+        ESP_LOGI(
+            TAG,
+            "Resuming touch calibration after USB power transition");
+    }
 
     touch_context_t context;
     esp_err_t err =

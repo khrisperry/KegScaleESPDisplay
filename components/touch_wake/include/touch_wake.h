@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -53,9 +54,12 @@ esp_err_t touch_wake_prepare(
 
 /**
  * Run an awake, user-guided calibration. The progress callback is used by the
- * application to render each instruction on the e-paper display.
+ * application to render each instruction on the e-paper display. Set
+ * resume_after_unplug when the display rebooted while the user unplugged USB;
+ * this skips the unplug prompt and continues at the untouched baseline step.
  */
 esp_err_t touch_wake_calibrate(
+    bool resume_after_unplug,
     touch_calibration_progress_cb_t progress,
     void *context,
     touch_calibration_result_t *result);

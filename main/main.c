@@ -20,6 +20,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "pairing.h"
 #include "sdkconfig.h"
@@ -35,6 +36,8 @@ static const char *TAG = "display";
 #define BATTERY_ADC_SAMPLES 16
 #define BATTERY_ADC_FULL_SCALE 4095.0f
 #define BATTERY_DIVIDER_SCALE 7.46f
+#define DISPLAY_STATE_NAMESPACE "display_state"
+#define KEY_TOUCH_CAL_PENDING "touch_cal"
 
 typedef struct {
     uint32_t magic;
@@ -61,6 +64,81 @@ RTC_DATA_ATTR static uint8_t s_touch_phase;
 RTC_DATA_ATTR static bool s_touch_ack_pending;
 static bool s_lightweight_fetch;
 static void disable_wake_source_if_enabled(esp_sleep_source_t source);
+
+static esp_err_t set_touch_calibration_pending(bool pending)
+{
+    nvs_handle_t nvs;
+    esp_err_t err =
+        nvs_open(
+            DISPLAY_STATE_NAMESPACE,
+            NVS_READWRITE,
+            &nvs);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (pending) {
+        err = nvs_set_u8(
+            nvs,
+            KEY_TOUCH_CAL_PENDING,
+            1);
+    } else {
+        err = nvs_erase_key(
+            nvs,
+            KEY_TOUCH_CAL_PENDING);
+
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
+    }
+
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+
+    nvs_close(nvs);
+    return err;
+}
+
+static bool touch_calibration_is_pending(void)
+{
+    nvs_handle_t nvs;
+    esp_err_t err =
+        nvs_open(
+            DISPLAY_STATE_NAMESPACE,
+            NVS_READONLY,
+            &nvs);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return false;
+    }
+
+    if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not read touch calibration state: %s",
+            esp_err_to_name(err));
+        return false;
+    }
+
+    uint8_t pending = 0;
+    err = nvs_get_u8(
+        nvs,
+        KEY_TOUCH_CAL_PENDING,
+        &pending);
+    nvs_close(nvs);
+
+    if (err != ESP_OK &&
+        err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(
+            TAG,
+            "Could not load touch calibration state: %s",
+            esp_err_to_name(err));
+    }
+
+    return err == ESP_OK && pending == 1;
+}
 
 static void sleep_for_touch_delay(unsigned seconds)
 {
@@ -787,16 +865,43 @@ static const char *touch_calibration_error_text(
 static void run_touch_calibration(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state,
-    uint8_t battery_percent)
+    uint8_t battery_percent,
+    bool resume_after_unplug)
 {
     touch_calibration_result_t result = {0};
 
     ESP_LOGI(
         TAG,
-        "Starting guided touch calibration requested by scale");
+        "%s guided touch calibration requested by scale",
+        resume_after_unplug ? "Resuming" : "Starting");
 
-    esp_err_t err =
+    esp_err_t err = ESP_OK;
+
+    if (!resume_after_unplug) {
+        err = set_touch_calibration_pending(true);
+
+        if (err != ESP_OK) {
+            ESP_LOGE(
+                TAG,
+                "Could not persist touch calibration state: %s",
+                esp_err_to_name(err));
+            display_ui_show_message(
+                "CALIBRATION FAILED",
+                "STATE SAVE ERROR",
+                "START AGAIN ON SCALE");
+            vTaskDelay(pdMS_TO_TICKS(4000));
+            state->force_refresh_requested = true;
+            render_if_needed(
+                peer,
+                state,
+                battery_percent);
+            return;
+        }
+    }
+
+    err =
         touch_wake_calibrate(
+            resume_after_unplug,
             show_touch_calibration_progress,
             NULL,
             &result);
@@ -806,6 +911,16 @@ static void run_touch_calibration(
             ble_client_save_touch_threshold(
                 peer,
                 result.threshold_percent);
+    }
+
+    esp_err_t clear_err =
+        set_touch_calibration_pending(false);
+
+    if (clear_err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not clear touch calibration state: %s",
+            esp_err_to_name(clear_err));
     }
 
     if (err == ESP_OK) {
@@ -1163,6 +1278,15 @@ void app_main(void)
 
     init_nvs();
 
+    const bool touch_calibration_pending =
+        touch_calibration_is_pending();
+
+    if (touch_calibration_pending) {
+        ESP_LOGI(
+            TAG,
+            "Touch calibration was interrupted by USB power transition; will resume");
+    }
+
     pairing_config_t pairing = {0};
     esp_err_t err =
         pairing_load(&pairing);
@@ -1178,6 +1302,7 @@ void app_main(void)
     bool touch_ack_visible = timer_wake && s_touch_ack_pending;
 
     if (touch_wake &&
+        !touch_calibration_pending &&
         err == ESP_OK &&
         pairing.paired) {
         touch_ack_visible =
@@ -1191,7 +1316,10 @@ void app_main(void)
         }
     }
 
-    if (touch_wake && err == ESP_OK && pairing.paired) {
+    if (touch_wake &&
+        !touch_calibration_pending &&
+        err == ESP_OK &&
+        pairing.paired) {
         s_touch_phase = 1;
         s_touch_ack_pending = touch_ack_visible;
         sleep_for_touch_delay(CONFIG_KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS);
@@ -1215,7 +1343,8 @@ void app_main(void)
     const uint32_t wake_causes =
         esp_sleep_get_wakeup_causes();
 
-    if (wake_causes == 0) {
+    if (wake_causes == 0 &&
+        !touch_calibration_pending) {
         uint8_t power_cycles = 0;
         bool recovery_requested = false;
 
@@ -1287,11 +1416,13 @@ void app_main(void)
             bool screen_refreshed = false;
             if (err == ESP_OK) {
                 handle_unpair_request(&pairing, &state);
-                if (state.touch_calibration_requested) {
+                if (touch_calibration_pending ||
+                    state.touch_calibration_requested) {
                     run_touch_calibration(
                         &pairing.peer,
                         &state,
-                        battery_percent);
+                        battery_percent,
+                        touch_calibration_pending);
                     s_touch_phase = 0;
                     s_touch_ack_pending = false;
                     go_to_sleep();
@@ -1323,11 +1454,13 @@ void app_main(void)
                 &pairing,
                 &state);
 
-            if (state.touch_calibration_requested) {
+            if (touch_calibration_pending ||
+                state.touch_calibration_requested) {
                 run_touch_calibration(
                     &pairing.peer,
                     &state,
-                    battery_percent);
+                    battery_percent,
+                    touch_calibration_pending);
                 go_to_sleep();
             }
 

@@ -102,8 +102,12 @@ esp_err_t display_ui_show_message(
     const bool calibration_start =
         title != NULL &&
         strcmp(title, "TOUCH CALIBRATION") == 0;
+    const bool calibration_resume =
+        title != NULL &&
+        strcmp(title, "STEP 1 OF 4") == 0;
 
-    if (calibration_start) {
+    if (calibration_start ||
+        calibration_resume) {
         s_calibration_active = true;
     } else if (!s_calibration_active) {
         return display_ui_show_message_original(
