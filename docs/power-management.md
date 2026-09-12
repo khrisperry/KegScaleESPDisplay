@@ -50,8 +50,9 @@ is claimed without those measurements.
 ## Battery-powered touch calibration
 
 The scale webpage can queue a guided calibration for the bonded display. On the
-next wake, the display walks the user through unplugging USB, leaving the sensor
-untouched for a baseline measurement, holding the sensor for a touched reading,
-and completing three test taps. The calculated percentage is accepted only when
-the touch signal clears the measured noise margin. A successful value is saved
-back to the scale; failure keeps the previous threshold.
+next wake, the display walks the user through unplugging USB, leaving the case
+untouched for a baseline measurement, touching and holding the outside of the
+display case, and completing three test touches on the case exterior. The
+calculated percentage is accepted only when the touch signal clears the measured
+noise margin. A successful value is saved back to the scale; failure keeps the
+previous threshold.

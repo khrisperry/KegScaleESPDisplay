@@ -729,19 +729,19 @@ static esp_err_t show_touch_calibration_progress(
         case TOUCH_CALIBRATION_STAGE_BASELINE:
             return display_ui_show_message(
                 "STEP 1 OF 3",
-                "HANDS OFF SENSOR",
+                "HANDS OFF CASE",
                 "MEASURING BASELINE");
 
         case TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD:
             return display_ui_show_message(
                 "STEP 2 OF 3",
                 "TOUCH AND HOLD",
-                "TOP LEFT SENSOR");
+                "OUTSIDE DISPLAY CASE");
 
         case TOUCH_CALIBRATION_STAGE_RELEASE:
             return display_ui_show_message(
                 "STEP 3 OF 3",
-                "RELEASE SENSOR",
+                "RELEASE CASE",
                 "GET READY TO TAP");
 
         case TOUCH_CALIBRATION_STAGE_VERIFY: {
@@ -755,7 +755,7 @@ static esp_err_t show_touch_calibration_progress(
 
             return display_ui_show_message(
                 "TOUCH TEST",
-                "TAP TOP LEFT",
+                "TOUCH OUTSIDE CASE",
                 progress_text);
         }
 
