@@ -20,7 +20,6 @@ static const char *TAG = "touch_wake";
 #define TOUCH_CALIBRATION_BASELINE_SAMPLES 32
 #define TOUCH_CALIBRATION_TOUCHED_SAMPLES 16
 #define TOUCH_CALIBRATION_VERIFY_TAPS 3
-#define TOUCH_CALIBRATION_UNPLUG_SECONDS 10
 #define TOUCH_CALIBRATION_SETTLE_MS 1500
 #define TOUCH_CALIBRATION_SAMPLE_MS 50
 #define TOUCH_CALIBRATION_ACTION_TIMEOUT_MS 60000
@@ -444,7 +443,6 @@ esp_err_t touch_wake_prepare(
 }
 
 esp_err_t touch_wake_calibrate(
-    bool resume_after_unplug,
     touch_calibration_progress_cb_t progress,
     void *progress_context,
     touch_calibration_result_t *result)
@@ -457,26 +455,15 @@ esp_err_t touch_wake_calibrate(
     result->failure =
         TOUCH_CALIBRATION_FAILURE_HARDWARE;
 
-    if (!resume_after_unplug) {
-        ESP_RETURN_ON_ERROR(
-            report_progress(
-                progress,
-                TOUCH_CALIBRATION_STAGE_PREPARE,
-                0,
-                TOUCH_CALIBRATION_VERIFY_TAPS,
-                progress_context),
-            TAG,
-            "Could not show touch calibration instructions");
-
-        vTaskDelay(
-            pdMS_TO_TICKS(
-                TOUCH_CALIBRATION_UNPLUG_SECONDS *
-                1000));
-    } else {
-        ESP_LOGI(
-            TAG,
-            "Resuming touch calibration after USB power transition");
-    }
+    ESP_RETURN_ON_ERROR(
+        report_progress(
+            progress,
+            TOUCH_CALIBRATION_STAGE_BASELINE,
+            0,
+            TOUCH_CALIBRATION_VERIFY_TAPS,
+            progress_context),
+        TAG,
+        "Could not show untouched calibration step");
 
     touch_context_t context;
     esp_err_t err =
@@ -491,19 +478,6 @@ esp_err_t touch_wake_calibrate(
         touch_context_enable(
             &context,
             true);
-
-    if (err != ESP_OK) {
-        touch_context_destroy(&context);
-        return err;
-    }
-
-    err =
-        report_progress(
-            progress,
-            TOUCH_CALIBRATION_STAGE_BASELINE,
-            0,
-            TOUCH_CALIBRATION_VERIFY_TAPS,
-            progress_context);
 
     if (err != ESP_OK) {
         touch_context_destroy(&context);

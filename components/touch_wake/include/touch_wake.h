@@ -15,8 +15,7 @@ extern "C" {
 #define TOUCH_WAKE_THRESHOLD_MAX_PERCENT 50
 
 typedef enum {
-    TOUCH_CALIBRATION_STAGE_PREPARE = 0,
-    TOUCH_CALIBRATION_STAGE_BASELINE,
+    TOUCH_CALIBRATION_STAGE_BASELINE = 0,
     TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD,
     TOUCH_CALIBRATION_STAGE_RELEASE,
     TOUCH_CALIBRATION_STAGE_VERIFY,
@@ -54,12 +53,11 @@ esp_err_t touch_wake_prepare(
 
 /**
  * Run an awake, user-guided calibration. The progress callback is used by the
- * application to render each instruction on the e-paper display. Set
- * resume_after_unplug when the display rebooted while the user unplugged USB;
- * this skips the unplug prompt and continues at the untouched baseline step.
+ * application to render each instruction on the e-paper display. The caller
+ * must ensure USB is disconnected before starting so the measured baseline is
+ * representative of battery operation.
  */
 esp_err_t touch_wake_calibrate(
-    bool resume_after_unplug,
     touch_calibration_progress_cb_t progress,
     void *context,
     touch_calibration_result_t *result);

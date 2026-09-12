@@ -38,6 +38,7 @@ static const char *TAG = "display";
 #define BATTERY_DIVIDER_SCALE 7.46f
 #define DISPLAY_STATE_NAMESPACE "display_state"
 #define KEY_TOUCH_CAL_PENDING "touch_cal"
+#define KEY_OTA_SCREEN_PENDING "ota_screen"
 
 typedef struct {
     uint32_t magic;
@@ -65,7 +66,9 @@ RTC_DATA_ATTR static bool s_touch_ack_pending;
 static bool s_lightweight_fetch;
 static void disable_wake_source_if_enabled(esp_sleep_source_t source);
 
-static esp_err_t set_touch_calibration_pending(bool pending)
+static esp_err_t set_display_state_flag(
+    const char *key,
+    bool enabled)
 {
     nvs_handle_t nvs;
     esp_err_t err =
@@ -78,15 +81,15 @@ static esp_err_t set_touch_calibration_pending(bool pending)
         return err;
     }
 
-    if (pending) {
+    if (enabled) {
         err = nvs_set_u8(
             nvs,
-            KEY_TOUCH_CAL_PENDING,
+            key,
             1);
     } else {
         err = nvs_erase_key(
             nvs,
-            KEY_TOUCH_CAL_PENDING);
+            key);
 
         if (err == ESP_ERR_NVS_NOT_FOUND) {
             err = ESP_OK;
@@ -101,7 +104,8 @@ static esp_err_t set_touch_calibration_pending(bool pending)
     return err;
 }
 
-static bool touch_calibration_is_pending(void)
+static bool display_state_flag_is_set(
+    const char *key)
 {
     nvs_handle_t nvs;
     esp_err_t err =
@@ -117,7 +121,8 @@ static bool touch_calibration_is_pending(void)
     if (err != ESP_OK) {
         ESP_LOGW(
             TAG,
-            "Could not read touch calibration state: %s",
+            "Could not read display state flag %s: %s",
+            key,
             esp_err_to_name(err));
         return false;
     }
@@ -125,7 +130,7 @@ static bool touch_calibration_is_pending(void)
     uint8_t pending = 0;
     err = nvs_get_u8(
         nvs,
-        KEY_TOUCH_CAL_PENDING,
+        key,
         &pending);
     nvs_close(nvs);
 
@@ -133,7 +138,8 @@ static bool touch_calibration_is_pending(void)
         err != ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGW(
             TAG,
-            "Could not load touch calibration state: %s",
+            "Could not load display state flag %s: %s",
+            key,
             esp_err_to_name(err));
     }
 
@@ -798,12 +804,6 @@ static esp_err_t show_touch_calibration_progress(
     (void)context;
 
     switch (stage) {
-        case TOUCH_CALIBRATION_STAGE_PREPARE:
-            return display_ui_show_message(
-                "TOUCH CALIBRATION",
-                "UNPLUG USB NOW",
-                "WAIT FOR STEP 1");
-
         case TOUCH_CALIBRATION_STAGE_BASELINE:
             return display_ui_show_message(
                 "STEP 1 OF 4",
@@ -866,19 +866,21 @@ static void run_touch_calibration(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state,
     uint8_t battery_percent,
-    bool resume_after_unplug)
+    bool resume_interrupted)
 {
     touch_calibration_result_t result = {0};
 
     ESP_LOGI(
         TAG,
         "%s guided touch calibration requested by scale",
-        resume_after_unplug ? "Resuming" : "Starting");
+        resume_interrupted ? "Resuming" : "Starting");
 
     esp_err_t err = ESP_OK;
 
-    if (!resume_after_unplug) {
-        err = set_touch_calibration_pending(true);
+    if (!resume_interrupted) {
+        err = set_display_state_flag(
+            KEY_TOUCH_CAL_PENDING,
+            true);
 
         if (err != ESP_OK) {
             ESP_LOGE(
@@ -901,7 +903,6 @@ static void run_touch_calibration(
 
     err =
         touch_wake_calibrate(
-            resume_after_unplug,
             show_touch_calibration_progress,
             NULL,
             &result);
@@ -914,7 +915,9 @@ static void run_touch_calibration(
     }
 
     esp_err_t clear_err =
-        set_touch_calibration_pending(false);
+        set_display_state_flag(
+            KEY_TOUCH_CAL_PENDING,
+            false);
 
     if (clear_err != ESP_OK) {
         ESP_LOGW(
@@ -1020,7 +1023,8 @@ static bool display_update_needed(
 
 static void install_display_update_if_needed(
     const pairing_config_t *pairing,
-    const ble_client_scale_state_t *state)
+    ble_client_scale_state_t *state,
+    uint8_t battery_percent)
 {
     if (!display_update_needed(state)) {
         return;
@@ -1031,6 +1035,23 @@ static void install_display_update_if_needed(
         "Display update %s is available; requesting encrypted Wi-Fi/OTA bundle",
         state->update.version);
 
+    esp_err_t screen_state_err =
+        set_display_state_flag(
+            KEY_OTA_SCREEN_PENDING,
+            true);
+
+    if (screen_state_err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not persist OTA screen state: %s",
+            esp_err_to_name(screen_state_err));
+    }
+
+    display_ui_show_message(
+        "DISPLAY UPDATE",
+        "UPDATE IN PROGRESS",
+        "PLEASE WAIT");
+
     ble_client_update_bundle_t *bundle =
         calloc(
             1,
@@ -1040,13 +1061,15 @@ static void install_display_update_if_needed(
         ESP_LOGW(
             TAG,
             "Display OTA failed: could not allocate update bundle");
-        return;
+        screen_state_err = ESP_ERR_NO_MEM;
+    } else {
+        screen_state_err =
+            ble_client_fetch_update_bundle(
+                &pairing->peer,
+                bundle);
     }
 
-    esp_err_t err =
-        ble_client_fetch_update_bundle(
-            &pairing->peer,
-            bundle);
+    esp_err_t err = screen_state_err;
 
     if (err == ESP_OK &&
         (strcmp(
@@ -1064,12 +1087,14 @@ static void install_display_update_if_needed(
         err = display_ota_install(bundle);
     }
 
-    memset(
-        bundle,
-        0,
-        sizeof(*bundle));
-    free(bundle);
-    bundle = NULL;
+    if (bundle != NULL) {
+        memset(
+            bundle,
+            0,
+            sizeof(*bundle));
+        free(bundle);
+        bundle = NULL;
+    }
 
     if (err == ESP_OK) {
         ESP_LOGI(
@@ -1084,6 +1109,30 @@ static void install_display_update_if_needed(
         TAG,
         "Display OTA failed: %s; Wi-Fi is off and the current firmware remains active",
         esp_err_to_name(err));
+
+    display_ui_show_message(
+        "DISPLAY UPDATE",
+        "UPDATE FAILED",
+        "WILL RETRY LATER");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    screen_state_err =
+        set_display_state_flag(
+            KEY_OTA_SCREEN_PENDING,
+            false);
+
+    if (screen_state_err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not clear OTA screen state: %s",
+            esp_err_to_name(screen_state_err));
+    }
+
+    state->force_refresh_requested = true;
+    render_if_needed(
+        &pairing->peer,
+        state,
+        battery_percent);
 }
 
 static void enter_pairing_mode(void)
@@ -1279,12 +1328,22 @@ void app_main(void)
     init_nvs();
 
     const bool touch_calibration_pending =
-        touch_calibration_is_pending();
+        display_state_flag_is_set(
+            KEY_TOUCH_CAL_PENDING);
+    const bool ota_screen_pending =
+        display_state_flag_is_set(
+            KEY_OTA_SCREEN_PENDING);
 
     if (touch_calibration_pending) {
         ESP_LOGI(
             TAG,
-            "Touch calibration was interrupted by USB power transition; will resume");
+            "Touch calibration was interrupted; will resume at step 1");
+    }
+
+    if (ota_screen_pending) {
+        ESP_LOGI(
+            TAG,
+            "OTA screen is pending restoration after update reboot");
     }
 
     pairing_config_t pairing = {0};
@@ -1434,7 +1493,27 @@ void app_main(void)
                     s_touch_phase = 2;
                     sleep_for_touch_delay(CONFIG_KEG_DISPLAY_TOUCH_RETRY_SECONDS);
                 }
+                if (ota_screen_pending) {
+                    state.force_refresh_requested = true;
+                }
                 screen_refreshed = render_if_needed(&pairing.peer, &state, battery_percent);
+                if (ota_screen_pending &&
+                    screen_refreshed) {
+                    esp_err_t clear_err =
+                        set_display_state_flag(
+                            KEY_OTA_SCREEN_PENDING,
+                            false);
+                    if (clear_err != ESP_OK) {
+                        ESP_LOGW(
+                            TAG,
+                            "Could not clear restored OTA screen state: %s",
+                            esp_err_to_name(clear_err));
+                    } else {
+                        ESP_LOGI(
+                            TAG,
+                            "Restored normal display after OTA");
+                    }
+                }
             } else {
                 screen_refreshed = record_scale_check_failure(&pairing.peer);
             }
@@ -1464,14 +1543,37 @@ void app_main(void)
                 go_to_sleep();
             }
 
-            render_if_needed(
+            if (ota_screen_pending) {
+                state.force_refresh_requested = true;
+            }
+
+            const bool screen_refreshed = render_if_needed(
                 &pairing.peer,
                 &state,
                 battery_percent);
 
+            if (ota_screen_pending &&
+                screen_refreshed) {
+                esp_err_t clear_err =
+                    set_display_state_flag(
+                        KEY_OTA_SCREEN_PENDING,
+                        false);
+                if (clear_err != ESP_OK) {
+                    ESP_LOGW(
+                        TAG,
+                        "Could not clear restored OTA screen state: %s",
+                        esp_err_to_name(clear_err));
+                } else {
+                    ESP_LOGI(
+                        TAG,
+                        "Restored normal display after OTA");
+                }
+            }
+
             install_display_update_if_needed(
                 &pairing,
-                &state);
+                &state,
+                battery_percent);
         } else {
             ESP_LOGW(
                 TAG,

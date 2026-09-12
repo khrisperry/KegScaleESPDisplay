@@ -120,8 +120,9 @@ as having no battery-voltage value.
 ### Guided touch calibration
 
 The scale webpage can queue an authenticated control flag (bit 3) that starts
-the calibration wizard on the display's next wake. The display asks the user to
-unplug USB, measures the untouched battery-powered baseline, captures a held
+the calibration wizard on the display's next wake. The scale webpage asks the
+user to unplug USB before queuing the command. The display then immediately
+measures the untouched battery-powered baseline, captures a held
 touch on the tap handle's outside edges, calculates a threshold from the
 signal-to-noise gap, and verifies three additional touches in the same area. A
 successful result is written back to the scale and becomes the new persisted
