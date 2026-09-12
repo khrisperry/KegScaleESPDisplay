@@ -122,10 +122,10 @@ as having no battery-voltage value.
 The scale webpage can queue an authenticated control flag (bit 3) that starts
 the calibration wizard on the display's next wake. The display asks the user to
 unplug USB, measures the untouched battery-powered baseline, captures a held
-touch on the outside of the display case, calculates a threshold from the
-signal-to-noise gap, and verifies three separate case touches. A successful
-result is written back to the scale and becomes the new persisted touch
-threshold. A failed calibration leaves the previous value unchanged.
+touch on the tap handle's outside edges, calculates a threshold from the
+signal-to-noise gap, and verifies three additional touches in the same area. A
+successful result is written back to the scale and becomes the new persisted
+touch threshold. A failed calibration leaves the previous value unchanged.
 
 ### Touch configuration
 

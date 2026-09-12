@@ -724,39 +724,42 @@ static esp_err_t show_touch_calibration_progress(
             return display_ui_show_message(
                 "TOUCH CALIBRATION",
                 "UNPLUG USB NOW",
-                "DO NOT TOUCH - WAIT");
+                "WAIT FOR STEP 1");
 
         case TOUCH_CALIBRATION_STAGE_BASELINE:
             return display_ui_show_message(
-                "STEP 1 OF 3",
-                "HANDS OFF CASE",
-                "MEASURING BASELINE");
+                "STEP 1 OF 4",
+                "PLEASE DO NOT TOUCH",
+                "THE TAP HANDLE");
 
         case TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD:
             return display_ui_show_message(
-                "STEP 2 OF 3",
+                "STEP 2 OF 4",
                 "TOUCH AND HOLD",
-                "OUTSIDE DISPLAY CASE");
+                "TAP HANDLE - OUTSIDE EDGES");
 
         case TOUCH_CALIBRATION_STAGE_RELEASE:
             return display_ui_show_message(
-                "STEP 3 OF 3",
-                "RELEASE CASE",
-                "GET READY TO TAP");
+                "STEP 3 OF 4",
+                "RELEASE TOUCH",
+                "WAIT FOR NEXT STEP");
 
         case TOUCH_CALIBRATION_STAGE_VERIFY: {
-            char progress_text[32];
-            snprintf(
-                progress_text,
-                sizeof(progress_text),
-                "%u OF %u DETECTED",
-                (unsigned)completed,
-                (unsigned)total);
+            char title[32] = "STEP 4 OF 4";
+
+            if (completed > 0) {
+                snprintf(
+                    title,
+                    sizeof(title),
+                    "%u OF %u DETECTED",
+                    (unsigned)completed,
+                    (unsigned)total);
+            }
 
             return display_ui_show_message(
-                "TOUCH TEST",
-                "TOUCH OUTSIDE CASE",
-                progress_text);
+                title,
+                "TOUCH AND HOLD",
+                "TAP HANDLE - OUTSIDE EDGES");
         }
 
         default:
