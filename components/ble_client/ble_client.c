@@ -37,6 +37,7 @@ static const char *TAG = "ble_client";
 #define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
 #define DISPLAY_CONTROL_UNPAIR (1U << 0)
 #define DISPLAY_CONTROL_FORCE_REFRESH (1U << 2)
+#define DISPLAY_CONTROL_CALIBRATE_TOUCH (1U << 3)
 #define PAIRING_ADV_MAGIC_0 0x4b
 #define PAIRING_ADV_MAGIC_1 0x53
 #define PAIRING_ADV_VERSION 1
@@ -1687,6 +1688,9 @@ rediscover:
                 state->force_refresh_requested =
                     (control.flags &
                      DISPLAY_CONTROL_FORCE_REFRESH) != 0;
+                state->touch_calibration_requested =
+                    (control.flags &
+                     DISPLAY_CONTROL_CALIBRATE_TOUCH) != 0;
             } else if (control_err == ESP_OK) {
                 control_err = ESP_ERR_INVALID_VERSION;
             }
@@ -1961,6 +1965,98 @@ esp_err_t ble_client_fetch_update_bundle(
 
     secure_zero(&wire, sizeof(wire));
     return ESP_OK;
+}
+
+esp_err_t ble_client_save_touch_threshold(
+    const ble_client_peer_t *peer,
+    uint8_t threshold_percent)
+{
+    if (!s_initialized ||
+        peer == NULL ||
+        threshold_percent < 1U ||
+        threshold_percent > 50U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint16_t conn_handle =
+        BLE_HS_CONN_HANDLE_NONE;
+    connect_context_t connection = {0};
+
+    esp_err_t err =
+        connect_peer(
+            peer,
+            &conn_handle,
+            &connection,
+            0);
+
+    if (err == ESP_OK) {
+        err =
+            secure_connection(
+                conn_handle,
+                &connection);
+    }
+
+    uint16_t snapshot_handle = 0;
+    uint16_t keg_name_handle = 0;
+    uint16_t device_info_handle = 0;
+    uint16_t display_config_handle = 0;
+    uint16_t display_update_handle = 0;
+    uint16_t update_bundle_handle = 0;
+    uint16_t display_control_handle = 0;
+    uint16_t display_info_handle = 0;
+    uint16_t touch_config_handle = 0;
+
+    if (err == ESP_OK) {
+        err =
+            discover_handles(
+                conn_handle,
+                &snapshot_handle,
+                &keg_name_handle,
+                &device_info_handle,
+                &display_config_handle,
+                &display_update_handle,
+                &update_bundle_handle,
+                &display_control_handle,
+                &display_info_handle,
+                &touch_config_handle);
+    }
+
+    if (err == ESP_OK &&
+        touch_config_handle == 0) {
+        err = ESP_ERR_NOT_FOUND;
+    }
+
+    if (err == ESP_OK) {
+        const wire_touch_config_t config = {
+            .protocol_version =
+                BLE_CLIENT_PROTOCOL_VERSION,
+            .threshold_percent =
+                threshold_percent,
+            .config_revision = 0,
+        };
+
+        err =
+            write_value(
+                conn_handle,
+                touch_config_handle,
+                &config,
+                sizeof(config));
+    }
+
+    if (conn_handle !=
+        BLE_HS_CONN_HANDLE_NONE) {
+        disconnect_peer(conn_handle);
+    }
+
+    if (err == ESP_OK) {
+        s_gatt_cache.magic = 0;
+        ESP_LOGI(
+            TAG,
+            "Saved calibrated touch threshold %u%% to scale",
+            (unsigned)threshold_percent);
+    }
+
+    return err;
 }
 
 esp_err_t ble_client_forget_peer(

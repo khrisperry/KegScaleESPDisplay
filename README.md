@@ -14,7 +14,7 @@ Initial hardware target:
 - Native capacitive touch wake on GPIO12 (ESP32 touch channel 5)
 - Timer wake every 180 seconds
 
-The scale remains the source of truth. This display does not perform tare, calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA.
+The scale remains the source of truth. This display does not perform tare, load-cell calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA. Touch sensitivity can be calibrated with the guided on-display procedure started from the scale webpage.
 
 ## Pairing model
 
@@ -133,7 +133,7 @@ The GitHub Actions build also targets classic ESP32.
 
 ## Capacitive touch wake
 
-The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive.
+The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive. The scale webpage can also queue a guided calibration: the display walks through unplugging USB, measuring the untouched sensor, touching and holding it, releasing it, and verifying three taps before saving the measured threshold back to the scale.
 
 Periodic check-in can be enabled alongside touch wake. When the normal three-minute check-in is disabled, a one-hour safety timer remains armed so the display can still receive data, settings, firmware updates, removal requests, and manual full-refresh commands if the touch sensor fails. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
 

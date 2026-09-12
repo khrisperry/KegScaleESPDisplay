@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -710,6 +711,154 @@ static bool render_if_needed(
     return false;
 }
 
+static esp_err_t show_touch_calibration_progress(
+    touch_calibration_stage_t stage,
+    uint8_t completed,
+    uint8_t total,
+    void *context)
+{
+    (void)context;
+
+    switch (stage) {
+        case TOUCH_CALIBRATION_STAGE_PREPARE:
+            return display_ui_show_message(
+                "TOUCH CALIBRATION",
+                "UNPLUG USB NOW",
+                "DO NOT TOUCH - WAIT");
+
+        case TOUCH_CALIBRATION_STAGE_BASELINE:
+            return display_ui_show_message(
+                "STEP 1 OF 3",
+                "HANDS OFF SENSOR",
+                "MEASURING BASELINE");
+
+        case TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD:
+            return display_ui_show_message(
+                "STEP 2 OF 3",
+                "TOUCH AND HOLD",
+                "TOP LEFT SENSOR");
+
+        case TOUCH_CALIBRATION_STAGE_RELEASE:
+            return display_ui_show_message(
+                "STEP 3 OF 3",
+                "RELEASE SENSOR",
+                "GET READY TO TAP");
+
+        case TOUCH_CALIBRATION_STAGE_VERIFY: {
+            char progress_text[32];
+            snprintf(
+                progress_text,
+                sizeof(progress_text),
+                "%u OF %u DETECTED",
+                (unsigned)completed,
+                (unsigned)total);
+
+            return display_ui_show_message(
+                "TOUCH TEST",
+                "TAP TOP LEFT",
+                progress_text);
+        }
+
+        default:
+            return ESP_ERR_INVALID_ARG;
+    }
+}
+
+static const char *touch_calibration_error_text(
+    touch_calibration_failure_t failure)
+{
+    switch (failure) {
+        case TOUCH_CALIBRATION_FAILURE_TIMEOUT:
+            return "NO TOUCH DETECTED";
+        case TOUCH_CALIBRATION_FAILURE_NOISY:
+            return "SIGNAL TOO NOISY";
+        case TOUCH_CALIBRATION_FAILURE_WEAK_SIGNAL:
+            return "TOUCH TOO WEAK";
+        case TOUCH_CALIBRATION_FAILURE_HARDWARE:
+            return "SENSOR ERROR";
+        default:
+            return "PLEASE TRY AGAIN";
+    }
+}
+
+static void run_touch_calibration(
+    const ble_client_peer_t *peer,
+    ble_client_scale_state_t *state,
+    uint8_t battery_percent)
+{
+    touch_calibration_result_t result = {0};
+
+    ESP_LOGI(
+        TAG,
+        "Starting guided touch calibration requested by scale");
+
+    esp_err_t err =
+        touch_wake_calibrate(
+            show_touch_calibration_progress,
+            NULL,
+            &result);
+
+    if (err == ESP_OK) {
+        err =
+            ble_client_save_touch_threshold(
+                peer,
+                result.threshold_percent);
+    }
+
+    if (err == ESP_OK) {
+        s_touch_threshold_percent =
+            result.threshold_percent;
+        state->touch_threshold_percent =
+            result.threshold_percent;
+
+        char saved_text[32];
+        snprintf(
+            saved_text,
+            sizeof(saved_text),
+            "SAVED: %u%% BELOW",
+            (unsigned)result.threshold_percent);
+
+        display_ui_show_message(
+            "CALIBRATION PASSED",
+            saved_text,
+            "3 TOUCHES VERIFIED");
+
+        ESP_LOGI(
+            TAG,
+            "Touch calibration passed: baseline=%" PRIu32
+            " touched=%" PRIu32 " noise=%" PRIu32
+            " threshold=%u%%",
+            result.untouched_value,
+            result.touched_value,
+            result.noise_span,
+            (unsigned)result.threshold_percent);
+    } else {
+        display_ui_show_message(
+            "CALIBRATION FAILED",
+            touch_calibration_error_text(
+                result.failure),
+            "START AGAIN ON SCALE");
+
+        ESP_LOGW(
+            TAG,
+            "Touch calibration failed: %s (reason=%u baseline=%" PRIu32
+            " touched=%" PRIu32 " noise=%" PRIu32 ")",
+            esp_err_to_name(err),
+            (unsigned)result.failure,
+            result.untouched_value,
+            result.touched_value,
+            result.noise_span);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(4000));
+
+    state->force_refresh_requested = true;
+    render_if_needed(
+        peer,
+        state,
+        battery_percent);
+}
+
 static void clear_touch_acknowledgement_if_needed(
     bool touch_ack_visible,
     bool screen_refreshed)
@@ -1135,6 +1284,15 @@ void app_main(void)
             bool screen_refreshed = false;
             if (err == ESP_OK) {
                 handle_unpair_request(&pairing, &state);
+                if (state.touch_calibration_requested) {
+                    run_touch_calibration(
+                        &pairing.peer,
+                        &state,
+                        battery_percent);
+                    s_touch_phase = 0;
+                    s_touch_ack_pending = false;
+                    go_to_sleep();
+                }
                 if (power_retry_touch(s_touch_phase,
                     (state.flags & BLE_SCALE_FLAG_CALIBRATED) != 0,
                     (state.flags & BLE_SCALE_FLAG_STABLE) != 0,
@@ -1161,6 +1319,14 @@ void app_main(void)
             handle_unpair_request(
                 &pairing,
                 &state);
+
+            if (state.touch_calibration_requested) {
+                run_touch_calibration(
+                    &pairing.peer,
+                    &state,
+                    battery_percent);
+                go_to_sleep();
+            }
 
             render_if_needed(
                 &pairing.peer,

@@ -46,3 +46,12 @@ held finger (no delay wake loop), timed check, scale disconnected (backoff),
 scale firmware upgrade (cache rediscovery), force refresh/unpair, and OTA.
 Measure current/awake time to quantify battery savings; no battery-life duration
 is claimed without those measurements.
+
+## Battery-powered touch calibration
+
+The scale webpage can queue a guided calibration for the bonded display. On the
+next wake, the display walks the user through unplugging USB, leaving the sensor
+untouched for a baseline measurement, holding the sensor for a touched reading,
+and completing three test taps. The calculated percentage is accepted only when
+the touch signal clears the measured noise margin. A successful value is saved
+back to the scale; failure keeps the previous threshold.

@@ -71,6 +71,7 @@ typedef struct {
     bool unpair_requested;
     bool replacement_requested;
     bool force_refresh_requested;
+    bool touch_calibration_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     ble_client_update_offer_t update;
@@ -133,6 +134,11 @@ esp_err_t ble_client_fetch_mode(
 esp_err_t ble_client_fetch_update_bundle(
     const ble_client_peer_t *peer,
     ble_client_update_bundle_t *bundle);
+
+/** Save a completed display-side touch calibration back to the bonded scale. */
+esp_err_t ble_client_save_touch_threshold(
+    const ble_client_peer_t *peer,
+    uint8_t threshold_percent);
 
 esp_err_t ble_client_forget_peer(
     const ble_client_peer_t *peer);
