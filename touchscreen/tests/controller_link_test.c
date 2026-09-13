@@ -11,9 +11,9 @@ int main(void) {
     assert(cl_agree(&scale,display_pub,scale_pub,display_pub,a_code)==ESP_OK);
     assert(cl_agree(&display,scale_pub,scale_pub,display_pub,b_code)==ESP_OK);
     assert(!strcmp(a_code,b_code));assert(!memcmp(scale.master,display.master,32));
-    uint8_t challenge[32]={1};
-    assert(cl_start(&scale,challenge,true)==ESP_OK);
-    assert(cl_start(&display,challenge,false)==ESP_OK);
+    uint8_t challenge[32]={1},client_nonce[32]={2};
+    assert(cl_start(&scale,challenge,client_nonce,true)==ESP_OK);
+    assert(cl_start(&display,challenge,client_nonce,false)==ESP_OK);
     uint8_t frame[CL_MAX_FRAME],damaged[CL_MAX_FRAME];char plain[CL_MAX_PLAIN];size_t len;
     assert(cl_seal(&display,"{\"type\":\"auth\"}",frame,&len)==ESP_OK);
     memcpy(damaged,frame,len);damaged[len-1]^=1;
@@ -25,9 +25,12 @@ int main(void) {
     assert(cl_seal(&scale,"state",frame,&len)==ESP_OK);
     assert(cl_open(&display,frame,len,plain)==ESP_OK);
     memcpy(other.master,display.master,32);challenge[0]=2;
-    assert(cl_start(&other,challenge,false)==ESP_OK);
+    assert(cl_start(&other,challenge,client_nonce,false)==ESP_OK);
     assert(cl_open(&other,frame,len,plain)!=ESP_OK); /* previous connection */
     assert(cl_open(&display,frame,3,plain)!=ESP_OK);
+    challenge[0]=1;client_nonce[0]=3;
+    assert(cl_start(&other,challenge,client_nonce,false)==ESP_OK);
+    assert(cl_open(&other,frame,len,plain)!=ESP_OK); /* replayed server nonce */
     char max[CL_MAX_PLAIN];memset(max,'x',sizeof(max));max[sizeof(max)-1]=0;
     assert(cl_seal(&scale,max,frame,&len)==ESP_OK);
     assert(cl_open(&display,frame,len,plain)==ESP_OK);assert(!strcmp(max,plain));

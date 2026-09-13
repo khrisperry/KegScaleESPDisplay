@@ -7,6 +7,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_ota_ops.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
@@ -32,6 +33,7 @@ struct Frame {
   uint8_t bytes[CL_MAX_FRAME + 1];
 };
 char own_public[131], uri[180], pending_op[32];
+uint8_t client_nonce[32];
 uint32_t request_id, pending_id;
 int64_t last_state, pending_since, last_ping, last_reading, last_age_update;
 bool authenticated, traffic_ready;
@@ -145,18 +147,23 @@ void on_frame(const Frame &f) {
   }
   if (f.kind == 1) {
     disconnected();
-    char hello[220];
+    char hello[320], nonce_hex[65];
+    esp_fill_random(client_nonce, 32);
+    cl_hex(client_nonce, 32, nonce_hex);
     if (settings.paired) {
       memcpy(link.master, settings.master, 32);
-      snprintf(hello, sizeof(hello), "{\"type\":\"hello\",\"protocol\":1}");
+      snprintf(hello, sizeof(hello),
+               "{\"type\":\"hello\",\"protocol\":1,\"nonce\":\"%s\"}",
+               nonce_hex);
     } else {
       if (cl_keypair(&link, own_public) != ESP_OK) {
         ui_message("Pairing initialization failed");
         return;
       }
       snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"public\":\"%s\"}",
-               own_public);
+               "{\"type\":\"hello\",\"protocol\":1,\"public\":\"%s\",\"nonce\":"
+               "\"%s\"}",
+               own_public, nonce_hex);
     }
     esp_websocket_client_send_text(ws, hello, strlen(hello),
                                    pdMS_TO_TICKS(1000));
@@ -196,7 +203,7 @@ void on_frame(const Frame &f) {
     } else if (!settings.paired)
       e = ESP_FAIL;
     if (e == ESP_OK) {
-      e = cl_start(&link, challenge, false);
+      e = cl_start(&link, challenge, client_nonce, false);
       traffic_ready = e == ESP_OK;
     }
     if (e == ESP_OK && !pairing)
@@ -329,10 +336,9 @@ void action(const Action &a) {
         esp_websocket_client_stop(ws);
       disconnected();
       esp_err_t e = touchscreen_ota();
-      if (e != ESP_OK) {
+      if (e != ESP_OK)
         ui_message(esp_err_to_name(e));
-        connect_scale();
-      }
+      connect_scale();
     }
   } else if (!strcmp(a.kind, "command") && o) {
     if (!authenticated || !state.online) {

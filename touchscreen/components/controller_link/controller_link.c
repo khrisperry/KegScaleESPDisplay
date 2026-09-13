@@ -81,12 +81,15 @@ esp_err_t cl_agree(cl_session_t *s, const char *peer, const char *server,
     cl_hex(digest, 6, code);
   return e;
 }
-esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32], bool server) {
-  /* A secret prefix of fixed size plus a fresh 256-bit server challenge.
-   * Keys are never reused across connections; direction is bound in nonce. */
-  uint8_t input[64];
+esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32],
+                   const uint8_t client_nonce[32], bool server) {
+  /* A secret prefix of fixed size plus fresh 256-bit server and client
+   * challenges. Keys are never reused across connections; direction is bound in
+   * nonce. */
+  uint8_t input[96];
   memcpy(input, s->master, 32);
   memcpy(input + 32, challenge, 32);
+  memcpy(input + 64, client_nonce, 32);
   esp_err_t e = hash(input, sizeof(input), s->traffic);
   memset(input, 0, sizeof(input));
   s->server = server;

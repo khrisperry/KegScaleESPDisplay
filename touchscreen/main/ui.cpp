@@ -14,6 +14,7 @@ lv_obj_t *content, *notice, *keyboard, *fields[6], *headline, *detail,
     *connection, *arc, *networks;
 int page_id, cal_step;
 uint32_t edit_revision;
+bool editor_valid;
 char pair_code[13];
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
@@ -100,6 +101,10 @@ void command(const char *op) {
 }
 void nav(lv_event_t *e) { build((int)(intptr_t)lv_event_get_user_data(e)); }
 void save_keg(lv_event_t *) {
+  if (!editor_valid) {
+    message("Connection changed. Reload from scale before saving.");
+    return;
+  }
   dismiss_keyboard();
   auto o = cJSON_CreateObject();
   cJSON_AddStringToObject(o, "op", "save");
@@ -269,6 +274,7 @@ void build(int page) {
     dashboard();
   } else if (page == 1) {
     edit_revision = current.revision;
+    editor_valid = current.online;
     label(content, "Keg information", 8, 0, 424, &lv_font_montserrat_24);
     fields[0] = field("Beer / beverage name", current.name, 42);
     const char *names[] = {"Keg capacity (gallons)", "Empty keg weight (lb)",
@@ -389,7 +395,14 @@ void ui_start(const Settings &s) {
 void ui_state(const State &s) {
   if (!bsp_display_lock(1000))
     return;
+  bool lost_connection = current.online && !s.online;
+  if (!s.online) {
+    editor_valid = false;
+    cal_step = 0;
+  }
   current = s;
+  if (lost_connection && page_id == 2)
+    build(2);
   dashboard();
   bsp_display_unlock();
 }

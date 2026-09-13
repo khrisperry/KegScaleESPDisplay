@@ -25,7 +25,8 @@ esp_err_t cl_keypair(cl_session_t *s, char public_hex[131]);
 esp_err_t cl_agree(cl_session_t *s, const char *peer_hex,
                    const char *server_hex, const char *client_hex,
                    char code[13]);
-esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32], bool server);
+esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32],
+                   const uint8_t client_nonce[32], bool server);
 esp_err_t cl_seal(cl_session_t *s, const char *plain, uint8_t *out,
                   size_t *len);
 esp_err_t cl_open(cl_session_t *s, const uint8_t *in, size_t len, char *out);

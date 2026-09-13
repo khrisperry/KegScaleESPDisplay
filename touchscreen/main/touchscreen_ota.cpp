@@ -70,13 +70,21 @@ esp_err_t touchscreen_ota() {
       !strncmp(text(o, "url"), base, strlen(base)) &&
       strlen(text(o, "url")) < sizeof(url) &&
       cl_unhex(text(o, "sha256"), expected, 32);
+  auto protocol = cJSON_GetObjectItemCaseSensitive(o, "protocol_version");
+  auto minimum =
+      cJSON_GetObjectItemCaseSensitive(o, "requires_scale_wifi_protocol_min");
+  auto maximum =
+      cJSON_GetObjectItemCaseSensitive(o, "requires_scale_wifi_protocol_max");
+  valid = valid && cJSON_IsNumber(protocol) && protocol->valuedouble == 1 &&
+          cJSON_IsNumber(minimum) && minimum->valuedouble <= 1 &&
+          cJSON_IsNumber(maximum) && maximum->valuedouble >= 1;
   snprintf(url, sizeof(url), "%s", text(o, "url"));
   cJSON_Delete(o);
   if (!valid)
     return ESP_ERR_INVALID_RESPONSE;
   if (!strcmp(version, esp_app_get_description()->version)) {
     ui_message("Touchscreen firmware is already current");
-    return ESP_ERR_INVALID_STATE;
+    return ESP_OK;
   }
   h = open_url(url);
   if (!h)
