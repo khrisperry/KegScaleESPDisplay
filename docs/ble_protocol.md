@@ -2,6 +2,12 @@
 
 This display consumes the read-only BLE service implemented by KegScaleESP.
 
+## Discovery advertisement
+
+The scale advertises an eight-byte manufacturer payload alongside its 128-bit service UUID. Bytes 0-1 are `4b 53`, byte 2 is advertisement version 1, and byte 3 contains flags. Bit 0 means display pairing is active. Bit 1 means bytes 4-7 contain the scale's IPv4 address octets.
+
+While unpaired, the display continuously scans. If exactly one scale advertises a LAN address and no scale is currently pairing, the display renders `http://<address>/` as a QR code. This URL handoff is intentionally unauthenticated discovery data; all credentials, OTA bundles, and display-control data remain protected by the exact authenticated bond.
+
 ## UUIDs
 
 | Item | UUID | Use |
@@ -14,6 +20,8 @@ This display consumes the read-only BLE service implemented by KegScaleESP.
 | Display update offer | `8f7a0006-3f7b-4c61-a2b8-6d2f5b71c001` | Latest compatible display firmware |
 | Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
+| Display information | `8f7a0009-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted firmware and battery-voltage report |
+| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Runtime threshold and calibrated-result writeback |
 
 ## 20-byte snapshot
 
@@ -94,10 +102,58 @@ Serving size lets the display show both the configured size and a friendly remai
 
 For compatibility with older scale firmware that does not yet expose this characteristic, the display falls back to 16 oz / serving-focused layout.
 
+### Display information
+
+After measuring its battery, the display writes this 20-byte packet during each
+authenticated check-in:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 17 | null-terminated display firmware version |
+| 18 | 2 | battery voltage in millivolts, little-endian; 0 when unavailable |
+
+The shortened on-wire version field preserves the original packet size. Existing
+semantic firmware versions fit within it, and zero-filled legacy packets are read
+as having no battery-voltage value.
+
+### Guided touch calibration
+
+The scale webpage can queue an authenticated control flag (bit 3) that starts
+the calibration wizard on the display's next wake. The scale webpage asks the
+user to unplug USB before queuing the command. The display then immediately
+measures the untouched battery-powered baseline, captures a held
+touch on the tap handle's outside edges, calculates a threshold from the
+signal-to-noise gap, and verifies three additional touches in the same area. A
+successful result is written back to the scale and becomes the new persisted
+touch threshold. A failed calibration leaves the previous value unchanged.
+
+### Touch configuration
+
+The optional touch-configuration characteristic keeps the existing display
+configuration packet unchanged for backward compatibility:
+
+`8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001`
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 1 | threshold percentage below the untouched baseline |
+| 2 | 1 | display/config revision |
+
+Valid thresholds are 1–50%. Lower values are more sensitive. Reads remain
+backward compatible; saving a calibration uses an authenticated encrypted write
+of the same 3-byte packet. If an older scale does not expose this characteristic,
+or a value is invalid, the display uses its 3% firmware default.
+
 ## Encrypted display OTA
 
 The update offer is non-secret and may be read during the normal wake cycle. If its hardware ID matches `lilygo_t5_v2_3_1` and the version differs from the running application, the display reconnects using its persistent BLE bond and establishes an authenticated encrypted session. No pairing code is stored or reused.
 
 The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionally verifies that the connected peer is the specifically authorized bonded display. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
 
-The display-control characteristic is also restricted to the exact authorized bond. A remove/replace request sets an unpair flag; after reading it, the display clears its local bond and pairing identity.
+The display-control characteristic is also restricted to the exact authorized
+bond. Flag bit 0 requests unpair, bit 1 identifies replacement, bit 2 requests
+an immediate full-screen refresh, and bit 3 starts guided touch calibration. A
+full refresh redraws the current keg screen and resets the changed-region
+partial-refresh counter.

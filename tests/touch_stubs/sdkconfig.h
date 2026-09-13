@@ -1,0 +1,2 @@
+#pragma once
+#define CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT 3

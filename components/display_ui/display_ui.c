@@ -4,10 +4,17 @@
 #include <string.h>
 
 #include "epaper.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "qrcode.h"
 
 static const char *TAG = "display_ui";
+
+#define SCALE_SCREEN_MAGIC 0x4B535343U
+#define SCALE_FULL_REFRESH_INTERVAL 50U
+
+RTC_DATA_ATTR static uint32_t s_scale_screen_magic;
 
 /*
  * The controller exposes 250x122 pixels, but the V2.3.1 board's physical
@@ -23,34 +30,164 @@ enum {
         DISPLAY_SAFE_RIGHT - DISPLAY_SAFE_LEFT,
     DISPLAY_SAFE_HEIGHT =
         DISPLAY_SAFE_BOTTOM - DISPLAY_SAFE_TOP,
+    BATTERY_BODY_WIDTH = 20,
+    BATTERY_BODY_HEIGHT = 10,
+    BATTERY_TERMINAL_WIDTH = 3,
+    BATTERY_RESERVED_WIDTH = 30,
+    TOUCH_ACK_X = 13,
+    TOUCH_ACK_Y = 16,
+    TOUCH_ACK_WIDTH = 32,
+    TOUCH_ACK_HEIGHT = 32,
 };
 
-static void draw_centered(
+static void draw_font_centered_at(
+    int center_x,
     int y,
     const char *text,
-    int scale,
-    bool black)
+    const epaper_font_t *font)
 {
-    int width =
-        epaper_text_width(text, scale);
+    const int width =
+        epaper_font_text_width(
+            text,
+            font);
 
-    int x =
-        (EPAPER_WIDTH - width) / 2;
+    int x = center_x - width / 2;
 
     if (x < DISPLAY_SAFE_LEFT) {
         x = DISPLAY_SAFE_LEFT;
     }
 
-    epaper_draw_text(
+    if (x + width > DISPLAY_SAFE_RIGHT) {
+        x = DISPLAY_SAFE_RIGHT - width;
+    }
+
+    epaper_draw_text_font(
         x,
         y,
         text,
-        scale,
-        black);
+        font,
+        true);
+}
+
+static void clear_touch_ack_area(void)
+{
+    epaper_fill_rect(
+        TOUCH_ACK_X,
+        TOUCH_ACK_Y,
+        TOUCH_ACK_WIDTH,
+        TOUCH_ACK_HEIGHT,
+        false);
+}
+
+static void draw_touch_acknowledged(void)
+{
+    clear_touch_ack_area();
+
+    /* Detailed borderless 32x32 fingerprint for touch acknowledgement. */
+    static const uint32_t fingerprint_rows[] = {
+        0x00000000U,
+        0x000FF000U,
+        0x00300C00U,
+        0x00C00300U,
+        0x0107F080U,
+        0x02180C40U,
+        0x04600320U,
+        0x0883E090U,
+        0x110C1848U,
+        0x11100448U,
+        0x2221E224U,
+        0x24461914U,
+        0x2488049CU,
+        0x4488E492U,
+        0x4891128AU,
+        0x41120A4AU,
+        0x4802484AU,
+        0x4904A44AU,
+        0x4925154AU,
+        0x4925054AU,
+        0x4925054CU,
+        0x2925054CU,
+        0x29250548U,
+        0x25250590U,
+        0x14A50590U,
+        0x14950A90U,
+        0x0A928A80U,
+        0x0A528B00U,
+        0x01490900U,
+        0x01289000U,
+        0x00241000U,
+        0x00000000U,
+    };
+
+    for (int y = 0; y < TOUCH_ACK_HEIGHT; ++y) {
+        for (int x = 0; x < TOUCH_ACK_WIDTH; ++x) {
+            if ((fingerprint_rows[y] &
+                 (1U << (TOUCH_ACK_WIDTH - 1 - x))) != 0) {
+                epaper_set_pixel(
+                    TOUCH_ACK_X + x,
+                    TOUCH_ACK_Y + y,
+                    true);
+            }
+        }
+    }
+}
+
+static void draw_battery_indicator(uint8_t battery_percent)
+{
+    if (battery_percent > 100) {
+        battery_percent = 100;
+    }
+
+    const int x =
+        DISPLAY_SAFE_RIGHT -
+        BATTERY_BODY_WIDTH -
+        BATTERY_TERMINAL_WIDTH;
+    const int y = DISPLAY_SAFE_TOP + 1;
+
+    /* Clear the reserved corner before drawing the icon over any layout. */
+    epaper_fill_rect(
+        DISPLAY_SAFE_RIGHT - BATTERY_RESERVED_WIDTH,
+        DISPLAY_SAFE_TOP,
+        BATTERY_RESERVED_WIDTH,
+        BATTERY_BODY_HEIGHT + 3,
+        false);
+
+    epaper_draw_rect(
+        x,
+        y,
+        BATTERY_BODY_WIDTH,
+        BATTERY_BODY_HEIGHT,
+        true);
+    epaper_fill_rect(
+        x + BATTERY_BODY_WIDTH,
+        y + 3,
+        BATTERY_TERMINAL_WIDTH,
+        4,
+        true);
+
+    const unsigned bars =
+        (unsigned)(battery_percent / 20U);
+
+    for (unsigned i = 0;
+         i < bars && i < 5U;
+         ++i) {
+        epaper_fill_rect(
+            x + 2 + (int)i * 3,
+            y + 2,
+            2,
+            BATTERY_BODY_HEIGHT - 4,
+            true);
+    }
 }
 
 static esp_err_t present(void)
 {
+    /* Every full screen restores the transient touch area's blank baseline. */
+    clear_touch_ack_area();
+
+    /* Setup/status screens must not be used as a scale-screen diff baseline. */
+    s_scale_screen_magic = 0;
+
     esp_err_t err = epaper_refresh();
 
     if (err == ESP_OK) {
@@ -58,6 +195,112 @@ static esp_err_t present(void)
     }
 
     return err;
+}
+
+static esp_err_t present_scale(
+    bool force_full_refresh)
+{
+    clear_touch_ack_area();
+
+    esp_err_t err;
+
+    if (!force_full_refresh &&
+        s_scale_screen_magic ==
+        SCALE_SCREEN_MAGIC) {
+        err = epaper_refresh_changed(
+            SCALE_FULL_REFRESH_INTERVAL);
+    } else {
+        if (force_full_refresh) {
+            ESP_LOGI(
+                TAG,
+                "Full scale-screen refresh requested");
+        }
+        err = epaper_refresh();
+    }
+
+    if (err == ESP_OK) {
+        s_scale_screen_magic = SCALE_SCREEN_MAGIC;
+        err = epaper_sleep();
+    }
+
+    return err;
+}
+
+static void draw_setup_qrcode(
+    esp_qrcode_handle_t qrcode)
+{
+    const int modules =
+        esp_qrcode_get_size(qrcode);
+    const int module_pixels = 3;
+    const int quiet_modules = 4;
+    const int quiet_pixels =
+        quiet_modules * module_pixels;
+    const int qr_pixels =
+        modules * module_pixels;
+    const int origin_x =
+        DISPLAY_SAFE_LEFT + quiet_pixels;
+    const int origin_y =
+        (EPAPER_HEIGHT - qr_pixels) / 2;
+
+    epaper_fill_rect(
+        DISPLAY_SAFE_LEFT,
+        origin_y - quiet_pixels,
+        qr_pixels + quiet_pixels * 2,
+        qr_pixels + quiet_pixels * 2,
+        false);
+
+    for (int y = 0; y < modules; ++y) {
+        for (int x = 0; x < modules; ++x) {
+            if (esp_qrcode_get_module(
+                    qrcode,
+                    x,
+                    y)) {
+                epaper_fill_rect(
+                    origin_x + x * module_pixels,
+                    origin_y + y * module_pixels,
+                    module_pixels,
+                    module_pixels,
+                    true);
+            }
+        }
+    }
+}
+
+esp_err_t display_ui_show_touch_acknowledged(void)
+{
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    draw_touch_acknowledged();
+
+    return epaper_refresh_partial(
+        TOUCH_ACK_X,
+        TOUCH_ACK_Y,
+        TOUCH_ACK_WIDTH,
+        TOUCH_ACK_HEIGHT);
+}
+
+esp_err_t display_ui_clear_touch_acknowledged(void)
+{
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    clear_touch_ack_area();
+
+    ESP_RETURN_ON_ERROR(
+        epaper_refresh_partial(
+            TOUCH_ACK_X,
+            TOUCH_ACK_Y,
+            TOUCH_ACK_WIDTH,
+            TOUCH_ACK_HEIGHT),
+        TAG,
+        "Could not clear touch acknowledgement");
+
+    return epaper_sleep();
 }
 
 esp_err_t display_ui_show_message(
@@ -71,39 +314,34 @@ esp_err_t display_ui_show_message(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
     if (title != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             12,
             title,
-            2,
-            true);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     if (line1 != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             55,
             line1,
-            2,
-            true);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     if (line2 != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             88,
             line2,
-            1,
-            true);
+            &EPAPER_FONT_BODY_MEDIUM);
     }
 
     return present();
 }
+
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey)
@@ -114,37 +352,31 @@ esp_err_t display_ui_show_pairing_code(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         12,
         "PAIR DISPLAY",
-        2,
-        true);
+        &EPAPER_FONT_BODY_LARGE);
 
     if (scale_id != NULL) {
-        draw_centered(
+        draw_font_centered_at(
+            EPAPER_WIDTH / 2,
             29,
             scale_id,
-            1,
-            true);
+            &EPAPER_FONT_BODY_SMALL);
     }
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         48,
         "ENTER THIS CODE ON",
-        1,
-        true);
-    draw_centered(
+        &EPAPER_FONT_BODY_MEDIUM);
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         60,
         "THE SCALE WEBPAGE",
-        1,
-        true);
+        &EPAPER_FONT_BODY_MEDIUM);
 
     char code[16];
     snprintf(
@@ -154,11 +386,88 @@ esp_err_t display_ui_show_pairing_code(
         (unsigned long)(passkey / 1000U),
         (unsigned long)(passkey % 1000U));
 
-    draw_centered(
+    draw_font_centered_at(
+        EPAPER_WIDTH / 2,
         82,
         code,
-        3,
+        &EPAPER_FONT_BODY_LARGE);
+
+    return present();
+}
+
+esp_err_t display_ui_show_setup_qr(
+    const char *scale_id,
+    const char *ip_address)
+{
+    if (ip_address == NULL ||
+        ip_address[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_RETURN_ON_ERROR(
+        epaper_init(),
+        TAG,
+        "E-paper init failed");
+
+    epaper_clear(false);
+
+    char setup_url[32];
+    snprintf(
+        setup_url,
+        sizeof(setup_url),
+        "http://%s/",
+        ip_address);
+
+    esp_qrcode_config_t config =
+        ESP_QRCODE_CONFIG_DEFAULT();
+    config.display_func =
+        draw_setup_qrcode;
+    config.max_qrcode_version = 2;
+    config.qrcode_ecc_level =
+        ESP_QRCODE_ECC_LOW;
+
+    ESP_RETURN_ON_ERROR(
+        esp_qrcode_generate(
+            &config,
+            setup_url),
+        TAG,
+        "Could not generate setup QR code");
+
+    epaper_draw_text_font(
+        126,
+        14,
+        "SCALE READY",
+        &EPAPER_FONT_BODY_LARGE,
         true);
+    epaper_draw_text_font(
+        126,
+        43,
+        "SCAN TO OPEN",
+        &EPAPER_FONT_BODY_SMALL,
+        true);
+    epaper_draw_text_font(
+        126,
+        56,
+        "SETUP WIZARD",
+        &EPAPER_FONT_BODY_SMALL,
+        true);
+
+    epaper_draw_text_font(
+        126,
+        78,
+        ip_address,
+        &EPAPER_FONT_BODY_SMALL,
+        true);
+
+    if (scale_id != NULL &&
+        scale_id[0] != '\0') {
+        epaper_draw_text_font(
+            126,
+            96,
+            scale_id,
+            &EPAPER_FONT_BODY_SMALL,
+            true);
+    }
 
     return present();
 }
@@ -173,18 +482,18 @@ esp_err_t display_ui_show_candidates(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_text(
+    epaper_draw_text_font(
         DISPLAY_SAFE_LEFT,
         DISPLAY_SAFE_TOP,
         "SELECT SCALE",
-        2,
+        &EPAPER_FONT_BODY_LARGE,
         true);
 
-    epaper_draw_text(
+    epaper_draw_text_font(
         DISPLAY_SAFE_LEFT,
         27,
         "USE SERIAL: PAIR <ID>",
-        1,
+        &EPAPER_FONT_BODY_SMALL,
         true);
 
     size_t shown =
@@ -203,192 +512,24 @@ esp_err_t display_ui_show_candidates(
             candidates[i].scale_id,
             (int)candidates[i].rssi);
 
-        epaper_draw_text(
+        epaper_draw_text_font(
             DISPLAY_SAFE_LEFT,
             42 + (int)i * 15,
             line,
-            1,
+            &EPAPER_FONT_BODY_MEDIUM,
             true);
     }
 
     if (count > shown) {
-        epaper_draw_text(
+        epaper_draw_text_font(
             DISPLAY_SAFE_LEFT,
             42 + (int)shown * 15,
             "MORE ON SERIAL",
-            1,
+            &EPAPER_FONT_BODY_SMALL,
             true);
     }
 
     return present();
-}
-
-/*
- * Clean geometric seven-segment-style numerals for the hero serving count.
- * The supporting text intentionally stays small so the serving count owns
- * the visual hierarchy on the 250x122 panel.
- */
-enum {
-    SEG_A = 1U << 0,
-    SEG_B = 1U << 1,
-    SEG_C = 1U << 2,
-    SEG_D = 1U << 3,
-    SEG_E = 1U << 4,
-    SEG_F = 1U << 5,
-    SEG_G = 1U << 6,
-};
-
-static uint8_t hero_digit_segments(char digit)
-{
-    switch (digit) {
-        case '0': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F;
-        case '1': return SEG_B | SEG_C;
-        case '2': return SEG_A | SEG_B | SEG_G | SEG_E | SEG_D;
-        case '3': return SEG_A | SEG_B | SEG_G | SEG_C | SEG_D;
-        case '4': return SEG_F | SEG_G | SEG_B | SEG_C;
-        case '5': return SEG_A | SEG_F | SEG_G | SEG_C | SEG_D;
-        case '6': return SEG_A | SEG_F | SEG_G | SEG_E | SEG_C | SEG_D;
-        case '7': return SEG_A | SEG_B | SEG_C;
-        case '8': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G;
-        case '9': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_F | SEG_G;
-        default: return 0;
-    }
-}
-
-static void draw_horizontal_segment(
-    int x,
-    int y,
-    int width,
-    int thickness)
-{
-    /*
-     * Slightly inset the first/last row to soften the square corners and make
-     * the large numerals look less like scaled bitmap text.
-     */
-    epaper_fill_rect(
-        x + 1,
-        y,
-        width - 2,
-        thickness,
-        true);
-
-    if (thickness >= 3) {
-        epaper_fill_rect(
-            x,
-            y + 1,
-            width,
-            thickness - 2,
-            true);
-    }
-}
-
-static void draw_vertical_segment(
-    int x,
-    int y,
-    int height,
-    int thickness)
-{
-    epaper_fill_rect(
-        x,
-        y + 1,
-        thickness,
-        height - 2,
-        true);
-
-    if (thickness >= 3) {
-        epaper_fill_rect(
-            x + 1,
-            y,
-            thickness - 2,
-            height,
-            true);
-    }
-}
-
-static void draw_hero_digit(
-    int x,
-    int y,
-    char digit)
-{
-    const int width = 26;
-    const int height = 43;
-    const int thickness = 4;
-    const int half = height / 2;
-
-    const uint8_t segments =
-        hero_digit_segments(digit);
-
-    if (segments & SEG_A) {
-        draw_horizontal_segment(
-            x + thickness,
-            y,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_G) {
-        draw_horizontal_segment(
-            x + thickness,
-            y + half - thickness / 2,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_D) {
-        draw_horizontal_segment(
-            x + thickness,
-            y + height - thickness,
-            width - 2 * thickness,
-            thickness);
-    }
-
-    if (segments & SEG_F) {
-        draw_vertical_segment(
-            x,
-            y + thickness,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_B) {
-        draw_vertical_segment(
-            x + width - thickness,
-            y + thickness,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_E) {
-        draw_vertical_segment(
-            x,
-            y + half,
-            half - thickness,
-            thickness);
-    }
-
-    if (segments & SEG_C) {
-        draw_vertical_segment(
-            x + width - thickness,
-            y + half,
-            half - thickness,
-            thickness);
-    }
-}
-
-static int hero_number_width(const char *text)
-{
-    if (text == NULL ||
-        text[0] == '\0') {
-        return 0;
-    }
-
-    const int digit_width = 26;
-    const int spacing = 5;
-    const size_t count = strlen(text);
-
-    return
-        (int)count * digit_width +
-        ((int)count - 1) * spacing;
 }
 
 static void draw_hero_number(
@@ -396,61 +537,11 @@ static void draw_hero_number(
     int y,
     const char *text)
 {
-    const int digit_width = 26;
-    const int spacing = 5;
-
-    int x =
-        center_x -
-        hero_number_width(text) / 2;
-
-    for (const char *p = text;
-         *p != '\0';
-         ++p) {
-        draw_hero_digit(
-            x,
-            y,
-            *p);
-
-        x += digit_width + spacing;
-    }
-}
-
-static void draw_hero_percent_symbol(
-    int x,
-    int y)
-{
-    const int width = 21;
-    const int height = 43;
-
-    epaper_fill_rect(
-        x + 1,
-        y + 4,
-        7,
-        7,
-        true);
-    epaper_fill_rect(
-        x + width - 8,
-        y + height - 11,
-        7,
-        7,
-        true);
-
-    /* Pixel-stepped diagonal keeps the symbol consistent with the digits. */
-    for (int row = 0;
-         row < height - 8;
-         ++row) {
-        const int diagonal_x =
-            x + width - 5 -
-            (row * (width - 9)) /
-                (height - 9);
-
-        epaper_fill_rect(
-            diagonal_x,
-            y + 4 + row,
-            2,
-            2,
-            true);
-    }
+    draw_font_centered_at(
+        center_x,
+        y,
+        text,
+        &EPAPER_FONT_HERO);
 }
 
 static void draw_hero_percent(
@@ -458,49 +549,18 @@ static void draw_hero_percent(
     int y,
     const char *digits)
 {
-    const int spacing = 6;
-    const int symbol_width = 21;
-    const int digits_width =
-        hero_number_width(digits);
-    const int total_width =
-        digits_width + spacing + symbol_width;
-    const int digits_center =
-        center_x - total_width / 2 +
-        digits_width / 2;
-
-    draw_hero_number(
-        digits_center,
-        y,
+    char text[12];
+    snprintf(
+        text,
+        sizeof(text),
+        "%s%%",
         digits);
-    draw_hero_percent_symbol(
-        center_x - total_width / 2 +
-            digits_width + spacing,
-        y);
-}
 
-static void draw_text_centered_at(
-    int center_x,
-    int y,
-    const char *text,
-    int scale)
-{
-    const int width =
-        epaper_text_width(
-            text,
-            scale);
-
-    int x = center_x - width / 2;
-
-    if (x < DISPLAY_SAFE_LEFT) {
-        x = DISPLAY_SAFE_LEFT;
-    }
-
-    epaper_draw_text(
-        x,
+    draw_font_centered_at(
+        center_x,
         y,
         text,
-        scale,
-        true);
+        &EPAPER_FONT_HERO);
 }
 
 static bool serving_size_near(
@@ -532,6 +592,12 @@ static const char *serving_count_label(
         return "PINTS LEFT";
     }
 
+    if (serving_size_near(
+            serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS LEFT";
+    }
+    
     if (serving_size_near(
             serving_size_oz,
             32.0f)) {
@@ -588,20 +654,26 @@ static uint8_t effective_display_flags(
     return state->display_flags;
 }
 
-static int fitting_text_scale(
+static const epaper_font_t *fitting_text_font(
     const char *text,
-    int preferred,
+    const epaper_font_t *preferred,
     int max_width)
 {
-    int scale = preferred;
-
-    while (scale > 1 &&
-           epaper_text_width(text, scale) >
-               max_width) {
-        --scale;
+    if (preferred == &EPAPER_FONT_BODY_LARGE &&
+        epaper_font_text_width(
+            text,
+            &EPAPER_FONT_BODY_LARGE) <= max_width) {
+        return &EPAPER_FONT_BODY_LARGE;
     }
 
-    return scale;
+    if (preferred != &EPAPER_FONT_BODY_SMALL &&
+        epaper_font_text_width(
+            text,
+            &EPAPER_FONT_BODY_MEDIUM) <= max_width) {
+        return &EPAPER_FONT_BODY_MEDIUM;
+    }
+
+    return &EPAPER_FONT_BODY_SMALL;
 }
 
 static float clamped_percent(
@@ -631,6 +703,12 @@ static const char *serving_unit_label(
             serving_size_oz,
             16.0f)) {
         return "PINTS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS";
     }
 
     if (serving_size_near(
@@ -671,7 +749,7 @@ static void draw_keg_name(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
     int y,
-    int preferred_scale)
+    const epaper_font_t *preferred_font)
 {
     char keg_name[
         BLE_CLIENT_KEG_NAME_MAX + 1];
@@ -682,16 +760,37 @@ static void draw_keg_name(
         keg_name,
         sizeof(keg_name));
 
-    const int keg_scale =
-        fitting_text_scale(
-            keg_name,
-            preferred_scale,
-            DISPLAY_SAFE_WIDTH);
+    const bool reserve_corners =
+        y <= 12;
+    const int left_reserve =
+        reserve_corners ?
+            TOUCH_ACK_WIDTH + 6 :
+            0;
+    const int right_reserve =
+        reserve_corners ?
+            BATTERY_RESERVED_WIDTH :
+            0;
+    const int max_width =
+        DISPLAY_SAFE_WIDTH -
+        left_reserve -
+        right_reserve;
+    const int center_x =
+        reserve_corners ?
+            DISPLAY_SAFE_LEFT +
+                left_reserve +
+                max_width / 2 :
+            EPAPER_WIDTH / 2;
 
-    while (epaper_text_width(
+    const epaper_font_t *keg_font =
+        fitting_text_font(
+            keg_name,
+            preferred_font,
+            max_width);
+
+    while (epaper_font_text_width(
                keg_name,
-               keg_scale) >
-           DISPLAY_SAFE_WIDTH) {
+               keg_font) >
+           max_width) {
         const size_t length =
             strlen(keg_name);
 
@@ -702,11 +801,11 @@ static void draw_keg_name(
         keg_name[length - 1] = '\0';
     }
 
-    draw_text_centered_at(
-        EPAPER_WIDTH / 2,
+    draw_font_centered_at(
+        center_x,
         y,
         keg_name,
-        keg_scale);
+        keg_font);
 }
 
 static void append_metric(
@@ -735,20 +834,20 @@ static void append_metric(
 static void draw_inline_metrics(
     int y,
     const char *line,
-    int preferred_scale)
+    const epaper_font_t *preferred_font)
 {
     if (line == NULL ||
         line[0] == '\0') {
         return;
     }
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
         y,
         line,
-        fitting_text_scale(
+        fitting_text_font(
             line,
-            preferred_scale,
+            preferred_font,
             DISPLAY_SAFE_WIDTH));
 }
 
@@ -775,7 +874,7 @@ static void draw_servings_layout(
             peer,
             state,
             12,
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char hero[8];
@@ -794,13 +893,13 @@ static void draw_servings_layout(
         serving_count_label(
             state->serving_size_oz);
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
         hero_y + 46,
         hero_label,
-        fitting_text_scale(
+        fitting_text_font(
             hero_label,
-            2,
+            &EPAPER_FONT_BODY_LARGE,
             DISPLAY_SAFE_WIDTH));
 
     if (show_name &&
@@ -809,7 +908,7 @@ static void draw_servings_layout(
             peer,
             state,
             78,
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char metrics[64] = {0};
@@ -854,9 +953,9 @@ static void draw_servings_layout(
     }
 
     draw_inline_metrics(
-        show_name ? 102 : 94,
+        show_name ? 99 : 94,
         metrics,
-        1);
+        &EPAPER_FONT_BODY_MEDIUM);
 }
 
 static void draw_percent_layout(
@@ -882,7 +981,7 @@ static void draw_percent_layout(
             peer,
             state,
             12,
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char percent[8];
@@ -903,7 +1002,7 @@ static void draw_percent_layout(
             peer,
             state,
             72,
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char metrics[64] = {0};
@@ -947,7 +1046,7 @@ static void draw_percent_layout(
     draw_inline_metrics(
         95,
         metrics,
-        2);
+        &EPAPER_FONT_BODY_LARGE);
 }
 
 static void draw_diagnostic_metric(
@@ -957,19 +1056,19 @@ static void draw_diagnostic_metric(
     const char *label,
     int max_width)
 {
-    draw_text_centered_at(
+    draw_font_centered_at(
         center_x,
         value_y,
         value,
-        fitting_text_scale(
+        fitting_text_font(
             value,
-            2,
+            &EPAPER_FONT_BODY_LARGE,
             max_width));
-    draw_text_centered_at(
+    draw_font_centered_at(
         center_x,
         value_y + 15,
         label,
-        1);
+        &EPAPER_FONT_BODY_SMALL);
 }
 
 static void draw_diagnostics_layout(
@@ -983,13 +1082,13 @@ static void draw_diagnostics_layout(
             peer,
             state,
             11,
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     } else {
-        draw_text_centered_at(
+        draw_font_centered_at(
             EPAPER_WIDTH / 2,
             11,
             "DIAGNOSTICS",
-            2);
+            &EPAPER_FONT_BODY_LARGE);
     }
 
     char percent[12];
@@ -1119,19 +1218,21 @@ static void draw_diagnostics_layout(
             sizeof(status));
     }
 
-    draw_text_centered_at(
+    draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        105,
+        104,
         status,
-        fitting_text_scale(
+        fitting_text_font(
             status,
-            1,
+            &EPAPER_FONT_BODY_SMALL,
             DISPLAY_SAFE_WIDTH));
 }
 
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state)
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent,
+    bool force_full_refresh)
 {
     if (peer == NULL ||
         state == NULL) {
@@ -1172,5 +1273,7 @@ esp_err_t display_ui_show_scale(
             break;
     }
 
-    return present();
+    draw_battery_indicator(battery_percent);
+    return present_scale(
+        force_full_refresh);
 }

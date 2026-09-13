@@ -1,0 +1,17 @@
+name: Power policy tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test touch retry bounds and failure backoff
+        run: |
+          gcc -Wall -Wextra -Werror tests/power_policy_test.c -o /tmp/power_policy_test
+          /tmp/power_policy_test
+      - name: Test guided calibration sampling and failures
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -Itests/touch_stubs -Icomponents/touch_wake/include tests/touch_calibration_test.c -o /tmp/touch_calibration_test
+          /tmp/touch_calibration_test

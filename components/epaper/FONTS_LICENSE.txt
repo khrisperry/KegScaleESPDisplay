@@ -1,0 +1,28 @@
+Keg Display Sans bitmap font
+
+The embedded Keg Display Sans bitmap glyphs were generated from TeX Gyre
+Heros Bold, version 2.004. The derived bitmap face has been renamed in
+accordance with the GUST Font License request.
+
+Upstream source:
+https://www.gust.org.pl/projects/e-foundry/tex-gyre/heros/qhv2.004otf.zip
+
+Copyright 2006, 2009 for TeX Gyre extensions by B. Jackowski and
+J.M. Nowacki (on behalf of TeX users groups).
+
+GUST Font License, version 1.0, 22 June 2009
+
+This work may be distributed and/or modified under the conditions of the
+LaTeX Project Public License, either version 1.3c of this license or (at your
+option) any later version.
+
+Please also observe the following clause:
+
+It is requested, but not legally required, that derived works be distributed
+only after changing the names of the fonts comprising this work and given in
+an accompanying "manifest", and that the files comprising the Work, as
+listed in the manifest, also be given new names. Any exceptions to this
+request are also given in the manifest.
+
+The latest version of the LaTeX Project Public License is available at:
+https://www.latex-project.org/lppl/lppl-1-3c/

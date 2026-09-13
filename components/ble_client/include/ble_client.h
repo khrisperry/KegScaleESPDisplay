@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define BLE_CLIENT_SCALE_ID_MAX 20
+#define BLE_CLIENT_IP_ADDRESS_MAX 15
 #define BLE_CLIENT_KEG_NAME_MAX 32
 #define BLE_CLIENT_DEVICE_INFO_MAX 96
 #define BLE_CLIENT_MAX_CANDIDATES 8
@@ -47,6 +48,8 @@ typedef struct {
     int8_t rssi;
     bool service_seen;
     bool pairing_mode;
+    bool setup_url_available;
+    char ip_address[BLE_CLIENT_IP_ADDRESS_MAX + 1];
 } ble_client_peer_t;
 
 typedef struct {
@@ -64,8 +67,11 @@ typedef struct {
     uint8_t layout_id;
     uint8_t display_config_revision;
     uint8_t display_flags;
+    uint8_t touch_threshold_percent;
     bool unpair_requested;
     bool replacement_requested;
+    bool force_refresh_requested;
+    bool touch_calibration_requested;
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     char device_info[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     ble_client_update_offer_t update;
@@ -87,6 +93,8 @@ enum {
     BLE_DISPLAY_FLAG_SHOW_SERVING_SIZE = 1U << 3,
     BLE_DISPLAY_FLAG_SHOW_TOTAL_WEIGHT = 1U << 4,
     BLE_DISPLAY_FLAG_BEER_NAME_TOP = 1U << 5,
+    /* Absence means the legacy/default 3-minute check-in remains enabled. */
+    BLE_DISPLAY_FLAG_DISABLE_PERIODIC_CHECKIN = 1U << 6,
     BLE_DISPLAY_FLAG_CONFIG_PRESENT = 1U << 7,
 };
 
@@ -99,6 +107,9 @@ enum {
      BLE_DISPLAY_FLAG_SHOW_TOTAL_WEIGHT)
 
 esp_err_t ble_client_init(void);
+
+void ble_client_set_display_battery_millivolts(
+    uint16_t battery_millivolts);
 
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
@@ -114,9 +125,20 @@ esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
     ble_client_scale_state_t *state);
 
+/* Touch reads omit OTA offers; maintenance refreshes discovery and all data. */
+esp_err_t ble_client_fetch_mode(
+    const ble_client_peer_t *peer,
+    ble_client_scale_state_t *state,
+    bool maintenance);
+
 esp_err_t ble_client_fetch_update_bundle(
     const ble_client_peer_t *peer,
     ble_client_update_bundle_t *bundle);
+
+/** Save a completed display-side touch calibration back to the bonded scale. */
+esp_err_t ble_client_save_touch_threshold(
+    const ble_client_peer_t *peer,
+    uint8_t threshold_percent);
 
 esp_err_t ble_client_forget_peer(
     const ble_client_peer_t *peer);

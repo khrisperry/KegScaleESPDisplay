@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "ble_client.h"
 #include "esp_err.h"
@@ -14,9 +16,16 @@ esp_err_t display_ui_show_message(
     const char *line1,
     const char *line2);
 
+esp_err_t display_ui_show_touch_acknowledged(void);
+esp_err_t display_ui_clear_touch_acknowledged(void);
+
 esp_err_t display_ui_show_pairing_code(
     const char *scale_id,
     uint32_t passkey);
+
+esp_err_t display_ui_show_setup_qr(
+    const char *scale_id,
+    const char *ip_address);
 
 esp_err_t display_ui_show_candidates(
     const ble_client_peer_t *candidates,
@@ -24,7 +33,9 @@ esp_err_t display_ui_show_candidates(
 
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
-    const ble_client_scale_state_t *state);
+    const ble_client_scale_state_t *state,
+    uint8_t battery_percent,
+    bool force_full_refresh);
 
 #ifdef __cplusplus
 }

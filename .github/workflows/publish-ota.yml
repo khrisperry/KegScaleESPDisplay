@@ -10,6 +10,7 @@ on:
       - "main/**"
       - "components/**"
       - "CMakeLists.txt"
+      - "version.txt"
       - "partitions.csv"
       - "sdkconfig.defaults"
       - ".github/workflows/build.yml"
@@ -58,7 +59,11 @@ jobs:
               ;;
           esac
 
-          firmware_version="$(git describe --tags --always --dirty)"
+          firmware_version="$(tr -d '[:space:]' < version.txt)"
+          if [[ ! "${firmware_version}" =~ ^V[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid firmware version: ${firmware_version}"
+            exit 1
+          fi
           base_url="https://raw.githubusercontent.com/khrisperry/KegScaleFirmware/main/display"
           source_bin="${GITHUB_WORKSPACE}/source/build/keg_scale_display.bin"
           output="${RUNNER_TEMP}/display-ota/display/${channel}/esp32"

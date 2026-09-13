@@ -5,8 +5,19 @@ config KEG_DISPLAY_SLEEP_SECONDS
     range 30 3600
     default 180
     help
-        Normal deep-sleep timer wake interval. The display wakes, reads its paired
-        scale once, refreshes e-paper only if useful data changed, then sleeps again.
+        Normal deep-sleep timer wake interval. The scale-owned display setting can
+        disable this frequent periodic wake. Before every deep sleep all stale
+        wake sources are cleared, then touch plus either this timer or the hourly
+        safety timer are armed.
+
+config KEG_DISPLAY_SAFETY_WAKE_SECONDS
+    int "Safety wake interval when periodic check-in is disabled (seconds)"
+    range 900 86400
+    default 3600
+    help
+        Fallback timer used when the scale-owned three-minute check-in setting is
+        disabled. It guarantees that the display checks in even if capacitive
+        touch is unavailable or stops working.
 
 config KEG_DISPLAY_SCAN_SECONDS
     int "Initial pairing scan duration (seconds)"
@@ -31,7 +42,7 @@ config KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT
     int "Touch sensitivity threshold below baseline (percent)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 1 50
-    default 8
+    default 3
     help
         ESP32 touch values decrease when touched. The wake threshold is calibrated
         before each deep sleep as this percentage below the untouched benchmark.
@@ -43,28 +54,17 @@ config KEG_DISPLAY_TOUCH_INITIAL_WAIT_SECONDS
     range 1 30
     default 10
     help
-        After a capacitive-touch wake, keep the existing e-paper image visible
-        and wait this long before the first BLE read. This gives the user time
-        to begin and mostly complete a pour.
-
-config KEG_DISPLAY_TOUCH_MAX_WAIT_SECONDS
-    int "Touch wake maximum observation window (seconds)"
-    depends on KEG_DISPLAY_TOUCH_WAKE
-    range 5 60
-    default 30
-    help
-        Maximum total time after a touch wake to wait for a meaningful stable
-        scale change before returning to deep sleep. Normal successful reads
-        still refresh as soon as the settled change is available; the extra
-        headroom is only used for slow settling or transient BLE retries.
+        After touch acknowledgment, deep-sleep with only the timer armed before
+        one BLE fetch. Touch cannot retrigger this short pour delay.
 
 config KEG_DISPLAY_TOUCH_RETRY_SECONDS
     int "Touch wake retry interval (seconds)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 1 10
-    default 2
+    default 5
     help
-        If the first post-touch read is unchanged or settling, wait this long
-        before checking the scale again.
+        After an unstable first touch result, deep-sleep this long then fetch
+        once more. A stable unchanged result never retries. Timer checks do not
+        use this settling retry.
 
 endmenu
