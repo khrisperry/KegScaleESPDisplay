@@ -31,6 +31,13 @@ int epaper_font_text_width(
     const epaper_font_t *font);
 esp_err_t epaper_refresh(void);
 /*
+ * Refresh only the smallest byte-aligned rectangle that differs from the
+ * retained framebuffer. A full refresh is used when no retained frame is
+ * available or when the requested refresh interval is reached.
+ */
+esp_err_t epaper_refresh_changed(
+    unsigned full_refresh_interval);
+/*
  * Fast differential refresh for a small logical landscape rectangle.
  * The y coordinate and height must be aligned to eight pixels.
  */

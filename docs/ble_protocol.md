@@ -20,7 +20,8 @@ While unpaired, the display continuously scans. If exactly one scale advertises 
 | Display update offer | `8f7a0006-3f7b-4c61-a2b8-6d2f5b71c001` | Latest compatible display firmware |
 | Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
-| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Optional runtime touch threshold |
+| Display information | `8f7a0009-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted firmware and battery-voltage report |
+| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Runtime threshold and calibrated-result writeback |
 
 ## 20-byte snapshot
 
@@ -70,7 +71,6 @@ The display consumes the scale-owned appearance configuration:
 - flag bit 3: show serving size
 - flag bit 4: show total keg weight
 - flag bit 5: place the beer name at the top in layouts 1 and 2
-- flag bit 6: disable periodic display check-in (strict touch-only wake)
 - flag bit 7: configuration is explicitly present
 
 If bit 7 is absent, the display treats the payload as a legacy configuration
@@ -102,6 +102,32 @@ Serving size lets the display show both the configured size and a friendly remai
 
 For compatibility with older scale firmware that does not yet expose this characteristic, the display falls back to 16 oz / serving-focused layout.
 
+### Display information
+
+After measuring its battery, the display writes this 20-byte packet during each
+authenticated check-in:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | protocol version |
+| 1 | 17 | null-terminated display firmware version |
+| 18 | 2 | battery voltage in millivolts, little-endian; 0 when unavailable |
+
+The shortened on-wire version field preserves the original packet size. Existing
+semantic firmware versions fit within it, and zero-filled legacy packets are read
+as having no battery-voltage value.
+
+### Guided touch calibration
+
+The scale webpage can queue an authenticated control flag (bit 3) that starts
+the calibration wizard on the display's next wake. The scale webpage asks the
+user to unplug USB before queuing the command. The display then immediately
+measures the untouched battery-powered baseline, captures a held
+touch on the tap handle's outside edges, calculates a threshold from the
+signal-to-noise gap, and verifies three additional touches in the same area. A
+successful result is written back to the scale and becomes the new persisted
+touch threshold. A failed calibration leaves the previous value unchanged.
+
 ### Touch configuration
 
 The optional touch-configuration characteristic keeps the existing display
@@ -115,9 +141,10 @@ configuration packet unchanged for backward compatibility:
 | 1 | 1 | threshold percentage below the untouched baseline |
 | 2 | 1 | display/config revision |
 
-Valid thresholds are 1–50%. Lower values are more sensitive. If an older scale
-does not expose this characteristic, or a value is invalid, the display uses its
-3% firmware default.
+Valid thresholds are 1–50%. Lower values are more sensitive. Reads remain
+backward compatible; saving a calibration uses an authenticated encrypted write
+of the same 3-byte packet. If an older scale does not expose this characteristic,
+or a value is invalid, the display uses its 3% firmware default.
 
 ## Encrypted display OTA
 
@@ -125,4 +152,8 @@ The update offer is non-secret and may be read during the normal wake cycle. If 
 
 The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionally verifies that the connected peer is the specifically authorized bonded display. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
 
-The display-control characteristic is also restricted to the exact authorized bond. A remove/replace request sets an unpair flag; after reading it, the display clears its local bond and pairing identity.
+The display-control characteristic is also restricted to the exact authorized
+bond. Flag bit 0 requests unpair, bit 1 identifies replacement, bit 2 requests
+an immediate full-screen refresh, and bit 3 starts guided touch calibration. A
+full refresh redraws the current keg screen and resets the changed-region
+partial-refresh counter.

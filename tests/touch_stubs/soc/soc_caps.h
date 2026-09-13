@@ -1,0 +1,3 @@
+#pragma once
+#define SOC_TOUCH_SENSOR_VERSION 1
+#define SOC_TOUCH_SUPPORT_BENCHMARK 0

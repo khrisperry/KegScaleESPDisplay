@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,7 +34,8 @@ esp_err_t display_ui_show_candidates(
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
-    uint8_t battery_percent);
+    uint8_t battery_percent,
+    bool force_full_refresh);
 
 #ifdef __cplusplus
 }

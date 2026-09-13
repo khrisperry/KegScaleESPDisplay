@@ -5,6 +5,7 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -29,10 +30,128 @@ static const char *TAG = "epaper";
 #define NATIVE_HEIGHT 250
 #define NATIVE_STRIDE 16
 #define FRAMEBUFFER_SIZE (NATIVE_STRIDE * NATIVE_HEIGHT)
+#define RETAINED_FRAME_MAGIC 0x4B534650U
 
 static spi_device_handle_t s_spi;
 static bool s_initialized;
 static uint8_t s_framebuffer[FRAMEBUFFER_SIZE];
+
+typedef struct {
+    uint32_t magic;
+    unsigned partial_updates_since_full;
+    uint8_t framebuffer[FRAMEBUFFER_SIZE];
+} retained_frame_t;
+
+RTC_DATA_ATTR static retained_frame_t s_retained_frame;
+
+static bool retained_frame_is_valid(void)
+{
+    return
+        s_retained_frame.magic ==
+            RETAINED_FRAME_MAGIC;
+}
+
+static void remember_full_frame(void)
+{
+    memcpy(
+        s_retained_frame.framebuffer,
+        s_framebuffer,
+        sizeof(s_framebuffer));
+
+    s_retained_frame.partial_updates_since_full = 0;
+    s_retained_frame.magic = RETAINED_FRAME_MAGIC;
+}
+
+static void remember_partial_frame(
+    uint8_t native_x_start,
+    uint8_t native_x_end,
+    uint16_t native_y_start,
+    uint16_t native_y_end)
+{
+    if (!retained_frame_is_valid()) {
+        return;
+    }
+
+    const size_t row_bytes =
+        (size_t)(native_x_end - native_x_start + 1U);
+
+    for (uint16_t native_y = native_y_start;
+         native_y <= native_y_end;
+         ++native_y) {
+        const size_t offset =
+            (size_t)native_y *
+                NATIVE_STRIDE +
+            native_x_start;
+
+        memcpy(
+            &s_retained_frame.framebuffer[offset],
+            &s_framebuffer[offset],
+            row_bytes);
+    }
+}
+
+static bool find_changed_area(
+    int *x,
+    int *y,
+    int *width,
+    int *height)
+{
+    if (!retained_frame_is_valid() ||
+        x == NULL ||
+        y == NULL ||
+        width == NULL ||
+        height == NULL) {
+        return false;
+    }
+
+    int native_x_min = NATIVE_STRIDE;
+    int native_x_max = -1;
+    int native_y_min = NATIVE_HEIGHT;
+    int native_y_max = -1;
+
+    for (int native_y = 0;
+         native_y < NATIVE_HEIGHT;
+         ++native_y) {
+        for (int native_x = 0;
+             native_x < NATIVE_STRIDE;
+             ++native_x) {
+            const size_t offset =
+                (size_t)native_y *
+                    NATIVE_STRIDE +
+                (size_t)native_x;
+
+            if (s_framebuffer[offset] ==
+                s_retained_frame.framebuffer[offset]) {
+                continue;
+            }
+
+            if (native_x < native_x_min) {
+                native_x_min = native_x;
+            }
+            if (native_x > native_x_max) {
+                native_x_max = native_x;
+            }
+            if (native_y < native_y_min) {
+                native_y_min = native_y;
+            }
+            if (native_y > native_y_max) {
+                native_y_max = native_y;
+            }
+        }
+    }
+
+    if (native_x_max < native_x_min ||
+        native_y_max < native_y_min) {
+        return false;
+    }
+
+    *x = NATIVE_HEIGHT - 1 - native_y_max;
+    *width = native_y_max - native_y_min + 1;
+    *y = native_x_min * 8;
+    *height = (native_x_max - native_x_min + 1) * 8;
+
+    return true;
+}
 
 /* DEPG0213BN fast partial-update waveform from LILYGO's GxEPD2 driver. */
 static const uint8_t s_depg0213bn_partial_lut[] = {
@@ -855,6 +974,8 @@ esp_err_t epaper_refresh(void)
         return ESP_ERR_TIMEOUT;
     }
 
+    remember_full_frame();
+
     ESP_LOGI(TAG, "E-paper refresh complete");
     return ESP_OK;
 }
@@ -1034,6 +1155,12 @@ esp_err_t epaper_refresh_partial(
         return ESP_ERR_TIMEOUT;
     }
 
+    remember_partial_frame(
+        native_x_start,
+        native_x_end,
+        native_y_start,
+        native_y_end);
+
     ESP_LOGI(
         TAG,
         "Partial refresh complete (DEPG0213BN): x=%d y=%d w=%d h=%d",
@@ -1041,6 +1168,83 @@ esp_err_t epaper_refresh_partial(
         y,
         width,
         height);
+
+    return ESP_OK;
+}
+
+esp_err_t epaper_refresh_changed(
+    unsigned full_refresh_interval)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!retained_frame_is_valid()) {
+        ESP_LOGI(
+            TAG,
+            "No retained framebuffer; using full refresh");
+        return epaper_refresh();
+    }
+
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+
+    if (!find_changed_area(
+            &x,
+            &y,
+            &width,
+            &height)) {
+        ESP_LOGI(
+            TAG,
+            "Rendered framebuffer is unchanged; skipping refresh");
+        return ESP_OK;
+    }
+
+    const unsigned partial_limit =
+        full_refresh_interval > 0 ?
+            full_refresh_interval - 1U :
+            0U;
+
+    if (full_refresh_interval > 0 &&
+        s_retained_frame.partial_updates_since_full >=
+            partial_limit) {
+        ESP_LOGI(
+            TAG,
+            "Refresh interval %u reached; using full refresh",
+            full_refresh_interval);
+        return epaper_refresh();
+    }
+
+    /*
+     * The final native byte represents landscape rows 120-127, while the
+     * visible logical panel ends at row 121. The partial API cannot address a
+     * non-eight-pixel-high tail, so use a full refresh if it ever changes.
+     */
+    if (y + height > EPAPER_HEIGHT) {
+        ESP_LOGI(
+            TAG,
+            "Changed area reaches the unaligned panel edge; using full refresh");
+        return epaper_refresh();
+    }
+
+    ESP_RETURN_ON_ERROR(
+        epaper_refresh_partial(
+            x,
+            y,
+            width,
+            height),
+        TAG,
+        "Changed-area partial refresh failed");
+
+    ++s_retained_frame.partial_updates_since_full;
+
+    ESP_LOGI(
+        TAG,
+        "Changed-area refresh %u/%u complete",
+        s_retained_frame.partial_updates_since_full,
+        full_refresh_interval);
 
     return ESP_OK;
 }

@@ -4,16 +4,17 @@ ESP-IDF firmware for the LILYGO T5 V2.3.1 2.13-inch e-paper companion display fo
 
 The display is a low-power BLE client. It wakes, connects to one paired Keg Scale, reads the current scale snapshot, refreshes e-paper only when useful display data changed, disconnects, and returns to deep sleep.
 
-Supported hardware:
+Initial hardware target:
 
 - LILYGO T5 V2.3.1_2.13
 - ESP32
 - 4 MB flash
 - 2.13-inch monochrome e-paper (122x250 native / 250x122 landscape, SSD1680-class panel)
+- Timer wake every 180 seconds
 - Native capacitive touch wake on GPIO12 (ESP32 touch channel 5)
-- Optional periodic wake every 180 seconds
+- Timer wake every 180 seconds
 
-The scale remains the source of truth. This display does not perform tare, calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA.
+The scale remains the source of truth. This display does not perform tare, load-cell calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA. Touch sensitivity can be calibrated with the guided on-display procedure started from the scale webpage.
 
 ## Pairing model
 
@@ -65,17 +66,16 @@ LILYGO's published V2.3.1 pin map:
 
 V2.3.1 does **not** have the GPIO12 display-power switch added in V2.4.
 
-## Release channels
+## Development workflow
 
-Display firmware is built and published by GitHub Actions. `main` publishes the
-production OTA channel, `beta` publishes beta, and `dev` publishes development
-builds. Every release uses the semantic version in `version.txt`.
+Changes are developed on feature branches, compiled in GitHub Actions, hardware-tested, and merged after validation.
 
-## Production behavior
 
-Version 1.0.0 provides the complete low-power companion-display workflow:
+## Current bring-up behavior
 
-- optional periodic wake every 3 minutes
+The initial firmware is already structured around the final low-power workflow:
+
+- timer wake every 3 minutes
 - native GPIO12 capacitive-touch wake
 - direct reconnect to one saved scale
 - exact-ID recovery scan if the BLE address changes
@@ -83,14 +83,19 @@ Version 1.0.0 provides the complete low-power companion-display workflow:
 - e-paper refresh only for meaningful changes
 - deep sleep after each successful check
 - no persistent Wi-Fi connection
-- six-level battery indicator in the top-right corner
-- immediate touch acknowledgement in the top-left corner
 
 The display keeps the last image visible while sleeping.
 
 When GPIO12 wakes the display, a small check-mark badge appears in the top-left corner using the panel's fast partial-refresh path before the pour wait or BLE check begins. A normal full refresh clears it; if the scale data does not require a full refresh, the firmware removes the badge with a second partial update before returning to sleep.
 
 The partial-refresh path uses LILYGO's default DEPG0213BN waveform and minimum settling intervals so an unreliable BUSY transition cannot cut the update short.
+
+Normal keg screens retain the last 4 KB framebuffer in RTC memory across deep
+sleep. When the next rendered screen changes, firmware compares the two frames
+and partially refreshes the smallest byte-aligned rectangle containing the
+changed pixels. Setup, pairing, and status screens continue to use full
+refreshes. To control e-paper ghosting, every 50th changed keg-screen update is
+also forced to a full refresh.
 
 All setup, pairing, connection-status, QR, keg, and diagnostics screens use the bundled Keg Display Sans font. Full e-paper refreshes initialize both SSD1680 RAM planes and the display-update control register, preventing random controller RAM from appearing as a dotted line along the panel edge after a cold boot.
 
@@ -112,24 +117,25 @@ idf.py -p COMx flash monitor
 
 The GitHub Actions build also targets classic ESP32.
 
-## Release validation
+## Hardware validation order
 
-Before promoting a release, confirm:
-
-1. The ESP-IDF build and OTA publishing workflows succeed.
-2. Initial setup shows the scale webpage QR code and completes authenticated pairing.
-3. Keg values, the selected layout, fonts, and battery icon render correctly.
-4. A meaningful stable scale change refreshes the display and an unchanged reading does not.
-5. Touch wake logs `wake=touch` and immediately shows the top-left acknowledgement.
-6. Touch-only mode returns to deep sleep with no timer wake armed.
-7. A display OTA update downloads, validates, boots, and is confirmed successfully.
+1. Confirm firmware boots and scans BLE.
+2. Confirm it discovers the existing scale and reads protocol version 1.
+3. Confirm one-scale automatic pairing or explicit serial pairing.
+4. Confirm current keg values decode correctly.
+5. Confirm the e-paper panel initializes and orientation is correct.
+6. Confirm a meaningful scale change updates e-paper.
+7. Confirm a no-change 3-minute wake does not refresh e-paper.
+8. Confirm touching the GPIO12 electrode wakes from deep sleep and logs `wake=touch`.
+9. Tune the touch threshold percentage if needed.
+10. Measure actual V2.3.1 deep-sleep battery current.
 
 
 ## Capacitive touch wake
 
-The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive.
+The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive. After the user disconnects USB and queues guided calibration from the scale webpage, the display begins immediately with the untouched baseline step, then asks the user to touch and hold the tap handle's outside edges, release it, and verify three more touches before saving the measured threshold back to the scale. The e-paper panel is not a touchscreen.
 
-Periodic check-in can be enabled alongside touch wake or disabled for strict touch-only operation. Before deep sleep, firmware clears all previously armed wake sources and enables only the selected timer and/or touch source. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
+Periodic check-in can be enabled alongside touch wake. When the normal three-minute check-in is disabled, a one-hour safety timer remains armed so the display can still receive data, settings, firmware updates, removal requests, and manual full-refresh commands if the touch sensor fails. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
 
 For a direct touch electrode, connect the electrode to GPIO12. A 470 ohm to 2 kohm series resistor near the ESP32 is recommended for noise/ESD protection; 510 ohms is a good starting value.
 
@@ -138,8 +144,12 @@ If an active 3-pin capacitive-touch module is used instead of a passive electrod
 
 ### Touch wake waits for the pour
 
-A timer wake performs the normal quick BLE check. When periodic check-in is enabled, a GPIO12 capacitive-touch wake assumes a pour may be starting: it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 30 seconds total have elapsed. In touch-only mode, it performs one scale read after the 10-second delay and returns to sleep. The e-paper keeps showing the previous valid keg state during the observation window and is refreshed only once when the scale reports a real change.
+A timer wake performs the normal quick BLE check. When frequent periodic check-in is enabled, a GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 30 seconds total have elapsed. In reduced-check-in mode, it performs one scale read after the 10-second delay and returns to sleep. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
 The scale also coordinates display firmware updates. The display reads a version offer over BLE, retrieves home Wi-Fi credentials and update metadata only through an authenticated encrypted BLE session, performs an HTTPS A/B OTA download, validates the image size and SHA-256 digest, and turns Wi-Fi back off before rebooting.
 
 
-When periodic check-in is disabled, the display clears every stale wake source before deep sleep and then arms only GPIO12 capacitive touch.
+Before deep sleep, the display clears every stale wake source and arms GPIO12 capacitive touch plus either the selected periodic timer or the one-hour safety timer.
+
+The scale webpage can queue an authenticated full-screen refresh. The display
+receives it on its next touch or timer wake, redraws the complete current keg
+screen, and resets the changed-region refresh counter.

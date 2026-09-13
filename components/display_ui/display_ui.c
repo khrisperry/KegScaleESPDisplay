@@ -4,11 +4,17 @@
 #include <string.h>
 
 #include "epaper.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "qrcode.h"
 
 static const char *TAG = "display_ui";
+
+#define SCALE_SCREEN_MAGIC 0x4B535343U
+#define SCALE_FULL_REFRESH_INTERVAL 50U
+
+RTC_DATA_ATTR static uint32_t s_scale_screen_magic;
 
 /*
  * The controller exposes 250x122 pixels, but the V2.3.1 board's physical
@@ -30,8 +36,8 @@ enum {
     BATTERY_RESERVED_WIDTH = 30,
     TOUCH_ACK_X = 13,
     TOUCH_ACK_Y = 16,
-    TOUCH_ACK_WIDTH = 18,
-    TOUCH_ACK_HEIGHT = 16,
+    TOUCH_ACK_WIDTH = 32,
+    TOUCH_ACK_HEIGHT = 32,
 };
 
 static void draw_font_centered_at(
@@ -77,30 +83,52 @@ static void draw_touch_acknowledged(void)
 {
     clear_touch_ack_area();
 
-    epaper_draw_rect(
-        TOUCH_ACK_X,
-        TOUCH_ACK_Y,
-        TOUCH_ACK_WIDTH,
-        TOUCH_ACK_HEIGHT,
-        true);
+    /* Detailed borderless 32x32 fingerprint for touch acknowledgement. */
+    static const uint32_t fingerprint_rows[] = {
+        0x00000000U,
+        0x000FF000U,
+        0x00300C00U,
+        0x00C00300U,
+        0x0107F080U,
+        0x02180C40U,
+        0x04600320U,
+        0x0883E090U,
+        0x110C1848U,
+        0x11100448U,
+        0x2221E224U,
+        0x24461914U,
+        0x2488049CU,
+        0x4488E492U,
+        0x4891128AU,
+        0x41120A4AU,
+        0x4802484AU,
+        0x4904A44AU,
+        0x4925154AU,
+        0x4925054AU,
+        0x4925054CU,
+        0x2925054CU,
+        0x29250548U,
+        0x25250590U,
+        0x14A50590U,
+        0x14950A90U,
+        0x0A928A80U,
+        0x0A528B00U,
+        0x01490900U,
+        0x01289000U,
+        0x00241000U,
+        0x00000000U,
+    };
 
-    /* Compact check mark: immediately recognizable without another font. */
-    for (int i = 0; i < 4; ++i) {
-        epaper_fill_rect(
-            TOUCH_ACK_X + 3 + i,
-            TOUCH_ACK_Y + 7 + i,
-            2,
-            2,
-            true);
-    }
-
-    for (int i = 0; i < 7; ++i) {
-        epaper_fill_rect(
-            TOUCH_ACK_X + 6 + i,
-            TOUCH_ACK_Y + 10 - i,
-            2,
-            2,
-            true);
+    for (int y = 0; y < TOUCH_ACK_HEIGHT; ++y) {
+        for (int x = 0; x < TOUCH_ACK_WIDTH; ++x) {
+            if ((fingerprint_rows[y] &
+                 (1U << (TOUCH_ACK_WIDTH - 1 - x))) != 0) {
+                epaper_set_pixel(
+                    TOUCH_ACK_X + x,
+                    TOUCH_ACK_Y + y,
+                    true);
+            }
+        }
     }
 }
 
@@ -157,9 +185,41 @@ static esp_err_t present(void)
     /* Every full screen restores the transient touch area's blank baseline. */
     clear_touch_ack_area();
 
+    /* Setup/status screens must not be used as a scale-screen diff baseline. */
+    s_scale_screen_magic = 0;
+
     esp_err_t err = epaper_refresh();
 
     if (err == ESP_OK) {
+        err = epaper_sleep();
+    }
+
+    return err;
+}
+
+static esp_err_t present_scale(
+    bool force_full_refresh)
+{
+    clear_touch_ack_area();
+
+    esp_err_t err;
+
+    if (!force_full_refresh &&
+        s_scale_screen_magic ==
+        SCALE_SCREEN_MAGIC) {
+        err = epaper_refresh_changed(
+            SCALE_FULL_REFRESH_INTERVAL);
+    } else {
+        if (force_full_refresh) {
+            ESP_LOGI(
+                TAG,
+                "Full scale-screen refresh requested");
+        }
+        err = epaper_refresh();
+    }
+
+    if (err == ESP_OK) {
+        s_scale_screen_magic = SCALE_SCREEN_MAGIC;
         err = epaper_sleep();
     }
 
@@ -254,12 +314,6 @@ esp_err_t display_ui_show_message(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
     if (title != NULL) {
         draw_font_centered_at(
@@ -298,12 +352,6 @@ esp_err_t display_ui_show_pairing_code(
         "E-paper init failed");
 
     epaper_clear(false);
-    epaper_draw_rect(
-        DISPLAY_SAFE_LEFT,
-        DISPLAY_SAFE_TOP,
-        DISPLAY_SAFE_WIDTH,
-        DISPLAY_SAFE_HEIGHT,
-        true);
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
@@ -546,6 +594,12 @@ static const char *serving_count_label(
 
     if (serving_size_near(
             serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS LEFT";
+    }
+    
+    if (serving_size_near(
+            serving_size_oz,
             32.0f)) {
         return "CROWLERS LEFT";
     }
@@ -649,6 +703,12 @@ static const char *serving_unit_label(
             serving_size_oz,
             16.0f)) {
         return "PINTS";
+    }
+
+    if (serving_size_near(
+            serving_size_oz,
+            20.0f)) {
+        return "SOLO CUPS";
     }
 
     if (serving_size_near(
@@ -1171,7 +1231,8 @@ static void draw_diagnostics_layout(
 esp_err_t display_ui_show_scale(
     const ble_client_peer_t *peer,
     const ble_client_scale_state_t *state,
-    uint8_t battery_percent)
+    uint8_t battery_percent,
+    bool force_full_refresh)
 {
     if (peer == NULL ||
         state == NULL) {
@@ -1213,5 +1274,6 @@ esp_err_t display_ui_show_scale(
     }
 
     draw_battery_indicator(battery_percent);
-    return present();
+    return present_scale(
+        force_full_refresh);
 }
