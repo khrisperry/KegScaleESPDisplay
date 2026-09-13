@@ -737,13 +737,11 @@ esp_err_t touch_wake_calibrate(
         }
 
         if (err == ESP_OK) {
-            result->verified_touches =
-                (uint8_t)(tap + 1U);
             err =
                 report_progress(
                     progress,
-                    TOUCH_CALIBRATION_STAGE_VERIFY,
-                    result->verified_touches,
+                    TOUCH_CALIBRATION_STAGE_VERIFY_RELEASE,
+                    tap,
                     TOUCH_CALIBRATION_VERIFY_TAPS,
                     progress_context);
         }
@@ -766,6 +764,8 @@ esp_err_t touch_wake_calibrate(
             touch_context_destroy(&context);
             return err;
         }
+        /* Count only a complete hold/release pair. */
+        result->verified_touches = (uint8_t)(tap + 1U);
     }
 
     result->failure =

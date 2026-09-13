@@ -795,51 +795,45 @@ static bool render_if_needed(
     return false;
 }
 
+typedef struct {
+    touch_calibration_stage_t stage;
+} calibration_ui_context_t;
+
 static esp_err_t show_touch_calibration_progress(
     touch_calibration_stage_t stage,
     uint8_t completed,
     uint8_t total,
     void *context)
 {
-    (void)context;
-
+    calibration_ui_context_t *ui = context;
+    ui->stage = stage;
+    ESP_LOGI(TAG, "Touch setup stage=%u completed=%u/%u",
+             (unsigned)stage, (unsigned)completed, (unsigned)total);
     switch (stage) {
         case TOUCH_CALIBRATION_STAGE_BASELINE:
-            return display_ui_show_message(
-                "STEP 1 OF 4",
-                "PLEASE DO NOT TOUCH",
-                "THE TAP HANDLE");
-
+            return display_ui_show_calibration(
+                "TOUCH SETUP - 1 OF 4", "DO NOT TOUCH",
+                "THE TAP HANDLE", "MEASURING - PLEASE WAIT", 1, false);
         case TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD:
-            return display_ui_show_message(
-                "STEP 2 OF 4",
-                "TOUCH AND HOLD",
-                "TAP HANDLE - OUTSIDE EDGES");
-
+            return display_ui_show_calibration(
+                "TOUCH SETUP - 2 OF 4", "TOUCH AND HOLD",
+                "OUTSIDE EDGES", "HOLD UNTIL ASKED TO RELEASE", 2, false);
         case TOUCH_CALIBRATION_STAGE_RELEASE:
-            return display_ui_show_message(
-                "STEP 3 OF 4",
-                "RELEASE TOUCH",
-                "WAIT FOR NEXT STEP");
-
-        case TOUCH_CALIBRATION_STAGE_VERIFY: {
-            char title[32] = "STEP 4 OF 4";
-
-            if (completed > 0) {
-                snprintf(
-                    title,
-                    sizeof(title),
-                    "%u OF %u DETECTED",
-                    (unsigned)completed,
-                    (unsigned)total);
-            }
-
-            return display_ui_show_message(
-                title,
-                "TOUCH AND HOLD",
-                "TAP HANDLE - OUTSIDE EDGES");
+            return display_ui_show_calibration(
+                "TOUCH SETUP - 3 OF 4", "RELEASE NOW",
+                "LET GO OF THE HANDLE", "WAIT FOR THE TOUCH CHECK", 3, false);
+        case TOUCH_CALIBRATION_STAGE_VERIFY:
+        case TOUCH_CALIBRATION_STAGE_VERIFY_RELEASE: {
+            char heading[32];
+            snprintf(heading, sizeof(heading), "TOUCH CHECK %u OF %u",
+                     (unsigned)completed + 1U, (unsigned)total);
+            const bool release = stage == TOUCH_CALIBRATION_STAGE_VERIFY_RELEASE;
+            return display_ui_show_calibration(
+                heading, release ? "RELEASE NOW" : "TOUCH AND HOLD",
+                release ? "TOUCH DETECTED" : "OUTSIDE EDGES",
+                release ? "LET GO TO FINISH THIS CHECK" : "HOLD UNTIL ASKED TO RELEASE",
+                4, false);
         }
-
         default:
             return ESP_ERR_INVALID_ARG;
     }
@@ -869,6 +863,7 @@ static void run_touch_calibration(
     bool resume_interrupted)
 {
     touch_calibration_result_t result = {0};
+    calibration_ui_context_t ui = { .stage = TOUCH_CALIBRATION_STAGE_BASELINE };
 
     ESP_LOGI(
         TAG,
@@ -887,10 +882,9 @@ static void run_touch_calibration(
                 TAG,
                 "Could not persist touch calibration state: %s",
                 esp_err_to_name(err));
-            display_ui_show_message(
-                "CALIBRATION FAILED",
-                "STATE SAVE ERROR",
-                "START AGAIN ON SCALE");
+            display_ui_show_calibration(
+                "TOUCH SETUP", "COULD NOT START", "STATE SAVE ERROR",
+                "START AGAIN ON SCALE PAGE", 0, true);
             vTaskDelay(pdMS_TO_TICKS(4000));
             state->force_refresh_requested = true;
             render_if_needed(
@@ -901,11 +895,18 @@ static void run_touch_calibration(
         }
     }
 
-    err =
-        touch_wake_calibrate(
-            show_touch_calibration_progress,
-            NULL,
-            &result);
+    /* USB presence is not measured on this board. Give the user explicit
+     * preparation time, including when a USB-disconnect reset resumes setup. */
+    err = display_ui_show_calibration(
+        "TOUCH SETUP", "UNPLUG USB", "USE BATTERY POWER",
+        "SET DOWN - STARTS IN 10 SEC", 0, true);
+    if (err == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        err = touch_wake_calibrate(
+            show_touch_calibration_progress, &ui, &result);
+    } else {
+        result.failure = TOUCH_CALIBRATION_FAILURE_HARDWARE;
+    }
 
     if (err == ESP_OK) {
         err =
@@ -932,17 +933,9 @@ static void run_touch_calibration(
         state->touch_threshold_percent =
             result.threshold_percent;
 
-        char saved_text[32];
-        snprintf(
-            saved_text,
-            sizeof(saved_text),
-            "SAVED: %u%% BELOW",
-            (unsigned)result.threshold_percent);
-
-        display_ui_show_message(
-            "CALIBRATION PASSED",
-            saved_text,
-            "3 TOUCHES VERIFIED");
+        display_ui_show_calibration(
+            "TOUCH SETUP COMPLETE", "TOUCH READY", "3 CHECKS PASSED",
+            "SAVED - RETURNING TO SCALE", 4, false);
 
         ESP_LOGI(
             TAG,
@@ -954,11 +947,16 @@ static void run_touch_calibration(
             result.noise_span,
             (unsigned)result.threshold_percent);
     } else {
-        esp_err_t screen_err = display_ui_show_message(
-            "CALIBRATION FAILED",
-            touch_calibration_error_text(
-                result.failure),
-            esp_err_to_name(err));
+        const char *reason = touch_calibration_error_text(result.failure);
+        if (result.failure == TOUCH_CALIBRATION_FAILURE_NONE)
+            reason = "COULD NOT SAVE TO SCALE";
+        else if (result.failure == TOUCH_CALIBRATION_FAILURE_TIMEOUT &&
+                 (ui.stage == TOUCH_CALIBRATION_STAGE_RELEASE ||
+                  ui.stage == TOUCH_CALIBRATION_STAGE_VERIFY_RELEASE))
+            reason = "RELEASE NOT DETECTED";
+        esp_err_t screen_err = display_ui_show_calibration(
+            "TOUCH SETUP NOT SAVED", "TRY AGAIN", reason,
+            "RESTART FROM SCALE PAGE", 0, false);
         if (screen_err != ESP_OK) {
             ESP_LOGE(TAG, "Calibration failure screen failed: %s",
                      esp_err_to_name(screen_err));

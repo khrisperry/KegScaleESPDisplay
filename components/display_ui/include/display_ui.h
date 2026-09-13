@@ -16,6 +16,12 @@ esp_err_t display_ui_show_message(
     const char *line1,
     const char *line2);
 
+/* A dedicated calibration card. Begin with full_refresh=true once, then use
+ * aligned partial updates until the final result has been shown. */
+esp_err_t display_ui_show_calibration(
+    const char *heading, const char *action, const char *detail,
+    const char *hint, unsigned step, bool full_refresh);
+
 esp_err_t display_ui_show_touch_acknowledged(void);
 esp_err_t display_ui_clear_touch_acknowledged(void);
 
