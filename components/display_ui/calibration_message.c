@@ -25,6 +25,18 @@ enum {
     CAL_SAFE_BOTTOM = 112,
     CAL_SAFE_WIDTH = CAL_SAFE_RIGHT - CAL_SAFE_LEFT,
     CAL_SAFE_HEIGHT = CAL_SAFE_BOTTOM - CAL_SAFE_TOP,
+
+    /*
+     * The SSD1680 partial-refresh API requires the logical Y origin and
+     * height to be 8-pixel aligned. Keep text inside the 10..112 safe area,
+     * but refresh the slightly larger aligned 8..112 window.
+     */
+    CAL_PARTIAL_LEFT = CAL_SAFE_LEFT,
+    CAL_PARTIAL_TOP = 8,
+    CAL_PARTIAL_RIGHT = CAL_SAFE_RIGHT,
+    CAL_PARTIAL_BOTTOM = 112,
+    CAL_PARTIAL_WIDTH = CAL_PARTIAL_RIGHT - CAL_PARTIAL_LEFT,
+    CAL_PARTIAL_HEIGHT = CAL_PARTIAL_BOTTOM - CAL_PARTIAL_TOP,
 };
 
 static bool s_calibration_active;
@@ -147,10 +159,10 @@ esp_err_t display_ui_show_message(
 
     if (partial_refresh) {
         epaper_fill_rect(
-            CAL_SAFE_LEFT,
-            CAL_SAFE_TOP,
-            CAL_SAFE_WIDTH,
-            CAL_SAFE_HEIGHT,
+            CAL_PARTIAL_LEFT,
+            CAL_PARTIAL_TOP,
+            CAL_PARTIAL_WIDTH,
+            CAL_PARTIAL_HEIGHT,
             false);
     } else {
         /* One full refresh at calibration entry gives partials a clean base. */
@@ -174,10 +186,10 @@ esp_err_t display_ui_show_message(
 
     if (partial_refresh) {
         err = epaper_refresh_partial(
-            CAL_SAFE_LEFT,
-            CAL_SAFE_TOP,
-            CAL_SAFE_WIDTH,
-            CAL_SAFE_HEIGHT);
+            CAL_PARTIAL_LEFT,
+            CAL_PARTIAL_TOP,
+            CAL_PARTIAL_WIDTH,
+            CAL_PARTIAL_HEIGHT);
     } else {
         err = epaper_refresh();
     }
