@@ -12,6 +12,12 @@ concurrency:
   group: touchscreen-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  protocol-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev
+      - run: bash touchscreen/tests/run_host_tests.sh
   build:
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +39,7 @@ jobs:
             touchscreen/build/flasher_args.json
   publish:
     if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
-    needs: build
+    needs: [build, protocol-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

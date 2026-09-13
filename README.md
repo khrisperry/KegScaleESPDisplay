@@ -160,3 +160,7 @@ Before deep sleep, the display clears every stale wake source and arms GPIO12 ca
 The scale webpage can queue an authenticated full-screen refresh. The display
 receives it on its next touch or timer wake, redraws the complete current keg
 screen, and resets the changed-region refresh counter.
+
+## Waveshare Wi-Fi touchscreen
+
+The separate [touchscreen application](touchscreen/README.md) targets the ESP32-S3-Touch-LCD-4B. It uses Wi-Fi only, supports keg editing and scale calibration, and has its own build/OTA feed. The repository root continues to build this BLE e-paper application.
