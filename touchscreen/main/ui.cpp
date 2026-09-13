@@ -226,10 +226,9 @@ void dashboard() {
     lv_label_set_text(headline,
                       current.name[0] ? current.name : "Set up your keg");
     if (current.ready)
-      lv_label_set_text_fmt(detail, "%.0f\nServings left",
-                            (double)floorf(current.servings));
+      lv_label_set_text_fmt(detail, "%.0f", (double)floorf(current.servings));
     else
-      lv_label_set_text(detail, "--\nServings left");
+      lv_label_set_text(detail, "--");
     lv_arc_set_value(arc, current.ready ? (int)current.percent : 0);
     char status[80];
     if (current.online)
@@ -257,6 +256,8 @@ void build(int page) {
   memset(fields, 0, sizeof(fields));
   if (page == 0) {
     headline = label(content, current.name, 8, 0, 424, &lv_font_montserrat_24);
+    lv_label_set_long_mode(headline, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(headline, 30);
     arc = lv_arc_create(content);
     lv_obj_set_size(arc, 200, 200);
     lv_obj_set_pos(arc, 120, 36);
@@ -266,11 +267,13 @@ void build(int page) {
     lv_obj_remove_style(arc, nullptr, LV_PART_KNOB);
     lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_color(arc, lv_color_hex(ACCENT), LV_PART_INDICATOR);
-    detail = label(content, "--\nServings left", 140, 104, 160,
-                   &lv_font_montserrat_28);
+    detail = label(content, "--", 140, 88, 160, &lv_font_montserrat_48);
+    auto caption =
+        label(content, "Servings left", 130, 149, 180, &lv_font_montserrat_18);
+    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
     connection = label(content, "", 8, 240, 424, &lv_font_montserrat_16);
-    button(content, "Replace keg", 8, 286, 424, replace_keg);
+    button(content, "Replace keg", 8, 276, 424, replace_keg);
     dashboard();
   } else if (page == 1) {
     edit_revision = current.revision;
@@ -307,13 +310,13 @@ void build(int page) {
         "its weight below and keep it still."};
     label(content, instructions[cal_step], 8, 40, 424);
     if (cal_step == 2)
-      fields[0] = field("Known weight (lb)", "30", 175, true);
+      fields[0] = field("Known weight (lb)", "30", 145, true);
     button(content,
            cal_step == 0   ? "Start calibration"
            : cal_step == 1 ? "Save empty tare"
                            : "Calibrate with known weight",
-           8, cal_step == 2 ? 260 : 230, 424, calibration);
-    button(content, "Cancel / release scale", 8, cal_step == 2 ? 320 : 290, 424,
+           8, cal_step == 2 ? 225 : 210, 424, calibration);
+    button(content, "Cancel / release scale", 8, cal_step == 2 ? 275 : 265, 424,
            cancel_calibration);
   } else if (page == 3) {
     label(content, "Connection & display", 8, 0, 424, &lv_font_montserrat_24);
