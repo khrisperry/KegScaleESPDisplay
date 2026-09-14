@@ -8,6 +8,7 @@ namespace {
 enum class OtaView {
   Idle,
   Checking,
+  Preparing,
   Current,
   Available,
   Stale,
@@ -31,6 +32,16 @@ void copy_text(char *dest, size_t size, const char *source) {
   snprintf(dest, size, "%s", source ? source : "");
 }
 
+void clear_ota_overlay() {
+  if (ota_overlay)
+    lv_obj_delete(ota_overlay);
+  ota_overlay = nullptr;
+  ota_overlay_title = nullptr;
+  ota_overlay_percent = nullptr;
+  ota_overlay_status = nullptr;
+  ota_overlay_bar = nullptr;
+}
+
 void render_update_page();
 
 void check_update(lv_event_t *) {
@@ -46,22 +57,14 @@ void check_update(lv_event_t *) {
 }
 
 void close_ota_overlay(lv_event_t *) {
-  if (ota_overlay) {
-    lv_obj_delete(ota_overlay);
-    ota_overlay = nullptr;
-    ota_overlay_title = nullptr;
-    ota_overlay_percent = nullptr;
-    ota_overlay_status = nullptr;
-    ota_overlay_bar = nullptr;
-  }
+  clear_ota_overlay();
   ota_view = OtaView::Idle;
   update_page_customized = false;
   build(4);
 }
 
 void create_install_overlay(const char *version) {
-  if (ota_overlay)
-    lv_obj_delete(ota_overlay);
+  clear_ota_overlay();
 
   ota_overlay = lv_obj_create(lv_screen_active());
   lv_obj_set_pos(ota_overlay, 0, 0);
@@ -76,7 +79,7 @@ void create_install_overlay(const char *version) {
 
   ota_overlay_title =
       label(ota_overlay, "Updating Firmware", 24, 42, 432,
-            &lv_font_montserrat_32);
+            &lv_font_montserrat_24);
   auto version_label =
       label(ota_overlay, version && version[0] ? version : "Preparing update",
             24, 96, 432, &lv_font_montserrat_20);
@@ -113,11 +116,15 @@ void create_install_overlay(const char *version) {
 }
 
 void install_update(lv_event_t *) {
+  ota_view = OtaView::Preparing;
+  render_update_page();
   touchscreen_set_ota_install_mode(true);
-  create_install_overlay(ota_latest);
-  if (!submit("ota", nullptr))
-    ui_update_error("Could not start the firmware update. Please try again.",
-                    true);
+  if (!submit("ota", nullptr)) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              "Could not start the firmware update. Please try again.");
+    render_update_page();
+  }
 }
 
 void render_update_page() {
@@ -139,7 +146,8 @@ void render_update_page() {
   if (ota_view == OtaView::Idle) {
     label(content,
           "Check the development channel for touchscreen firmware. Checking "
-          "does not interrupt the scale or install anything.",
+          "only reads the published update information; it does not install "
+          "firmware.",
           8, 88, 424, &lv_font_montserrat_16);
     button(content, "Check for update", 8, 220, 424, check_update);
   } else if (ota_view == OtaView::Checking) {
@@ -148,6 +156,12 @@ void render_update_page() {
     label(content,
           "Contacting the update service and validating the firmware manifest.",
           8, 150, 424, &lv_font_montserrat_16);
+  } else if (ota_view == OtaView::Preparing) {
+    label(content, "Preparing update…", 8, 100, 424,
+          &lv_font_montserrat_24);
+    label(content,
+          "Revalidating the update before installation begins.",
+          8, 150, 424, &lv_font_montserrat_16);
   } else if (ota_view == OtaView::Current) {
     label(content, "Your firmware is current", 8, 94, 424,
           &lv_font_montserrat_24);
@@ -155,7 +169,7 @@ void render_update_page() {
     label(content, versions, 8, 145, 424, &lv_font_montserrat_18);
     button(content, "Check again", 8, 230, 424, check_update);
   } else if (ota_view == OtaView::Available) {
-    label(content, "Update available", 8, 86, 424, &lv_font_montserrat_28);
+    label(content, "Update available", 8, 86, 424, &lv_font_montserrat_24);
     snprintf(versions, sizeof(versions), "%s  →  %s", ota_current, ota_latest);
     auto versions_label =
         label(content, versions, 8, 135, 424, &lv_font_montserrat_20);
@@ -230,6 +244,7 @@ void ui_update_status(const char *current_version, const char *latest_version,
                       bool update_available, bool feed_stale) {
   if (!bsp_display_lock(1000))
     return;
+  clear_ota_overlay();
   copy_text(ota_current, sizeof(ota_current), current_version);
   copy_text(ota_latest, sizeof(ota_latest), latest_version);
   ota_view = feed_stale ? OtaView::Stale
@@ -297,7 +312,7 @@ void ui_update_error(const char *error, bool installing) {
     lv_obj_clean(ota_overlay);
     ota_overlay_title =
         label(ota_overlay, "Update Failed", 24, 68, 432,
-              &lv_font_montserrat_32);
+              &lv_font_montserrat_24);
     label(ota_overlay, ota_error_text, 36, 145, 408, &lv_font_montserrat_18);
     label(ota_overlay,
           "No firmware change was activated. Check Wi-Fi and try again.",
