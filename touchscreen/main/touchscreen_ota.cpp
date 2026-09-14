@@ -5,6 +5,7 @@
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 namespace {
+const char *TAG = "touchscreen_ota";
 constexpr const char *base = "https://raw.githubusercontent.com/khrisperry/"
                              "KegScaleFirmware/main/touchscreen/dev/esp32s3/";
 const char *text(cJSON *o, const char *key) {
@@ -39,9 +41,12 @@ esp_http_client_handle_t open_url(const char *url) {
 esp_err_t touchscreen_ota() {
   char url[300];
   snprintf(url, sizeof(url), "%smanifest.json", base);
+  ESP_LOGI(TAG, "Checking touchscreen dev feed: %s", url);
   auto h = open_url(url);
-  if (!h)
+  if (!h) {
+    ESP_LOGW(TAG, "Could not open touchscreen OTA manifest");
     return ESP_ERR_NOT_FOUND;
+  }
   char manifest[4096];
   size_t used = 0;
   int n;
@@ -51,8 +56,10 @@ esp_err_t touchscreen_ota() {
     used += n;
   bool complete = esp_http_client_is_complete_data_received(h);
   esp_http_client_cleanup(h);
-  if (!complete)
+  if (!complete) {
+    ESP_LOGW(TAG, "Touchscreen OTA manifest download was incomplete");
     return ESP_ERR_INVALID_RESPONSE;
+  }
   manifest[used] = 0;
   auto o = cJSON_Parse(manifest);
   if (!o)
@@ -80,15 +87,25 @@ esp_err_t touchscreen_ota() {
           cJSON_IsNumber(maximum) && maximum->valuedouble >= 1;
   snprintf(url, sizeof(url), "%s", text(o, "url"));
   cJSON_Delete(o);
-  if (!valid)
+  if (!valid) {
+    ESP_LOGW(TAG, "Touchscreen OTA manifest failed identity/protocol validation");
     return ESP_ERR_INVALID_RESPONSE;
+  }
+  ESP_LOGI(TAG,
+           "Touchscreen OTA feed: current=%s latest=%s size=%u target_partition=%s",
+           esp_app_get_description()->version, version, (unsigned)size,
+           partition->label);
   if (!strcmp(version, esp_app_get_description()->version)) {
     ui_message("Touchscreen firmware is already current");
+    ESP_LOGI(TAG, "Touchscreen firmware is already current");
     return ESP_OK;
   }
   h = open_url(url);
-  if (!h)
+  if (!h) {
+    ESP_LOGW(TAG, "Could not open touchscreen firmware image: %s", url);
     return ESP_ERR_NOT_FOUND;
+  }
+  ui_message("Downloading touchscreen update — keep power connected");
   esp_ota_handle_t ota = 0;
   esp_err_t result = esp_ota_begin(partition, (size_t)size, &ota);
   psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
@@ -130,6 +147,8 @@ esp_err_t touchscreen_ota() {
           result = ESP_ERR_INVALID_VERSION;
           break;
         }
+        ESP_LOGI(TAG, "OTA image identity verified: project=%s version=%s",
+                 desc.project_name, desc.version);
       }
     }
     if (psa_hash_update(&hash, buffer, n) != PSA_SUCCESS) {
@@ -150,6 +169,8 @@ esp_err_t touchscreen_ota() {
   psa_hash_abort(&hash);
   esp_http_client_cleanup(h);
   if (result == ESP_OK) {
+    ESP_LOGI(TAG, "OTA download complete; SHA-256 verified (%u bytes)",
+             (unsigned)total);
     result = esp_ota_end(ota);
     ota = 0;
   }
@@ -158,9 +179,13 @@ esp_err_t touchscreen_ota() {
   if (ota)
     esp_ota_abort(ota);
   if (result == ESP_OK) {
-    ui_message("Update verified — restarting");
+    ESP_LOGI(TAG, "Touchscreen OTA staged successfully; rebooting into %s",
+             version);
+    ui_message("Update verified — restarting into new firmware");
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
+  } else {
+    ESP_LOGW(TAG, "Touchscreen OTA failed: %s", esp_err_to_name(result));
   }
   return result;
 }
