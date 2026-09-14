@@ -4,6 +4,7 @@
 #include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -16,6 +17,16 @@ namespace {
 const char *TAG = "touchscreen_ota";
 constexpr const char *base = "https://raw.githubusercontent.com/khrisperry/"
                              "KegScaleFirmware/main/touchscreen/dev/esp32s3/";
+constexpr size_t kManifestBytes = 4096;
+constexpr size_t kTransferBytes = 2048;
+
+void *ota_alloc(size_t bytes) {
+  void *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (p)
+    return p;
+  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+}
+
 const char *text(cJSON *o, const char *key) {
   auto v = cJSON_GetObjectItemCaseSensitive(o, key);
   return cJSON_IsString(v) ? v->valuestring : "";
@@ -39,6 +50,12 @@ esp_http_client_handle_t open_url(const char *url) {
 }
 } // namespace
 esp_err_t touchscreen_ota() {
+  ESP_LOGI(TAG,
+           "OTA memory before check: internal_free=%u largest_internal=%u psram_free=%u",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
   char url[300];
   snprintf(url, sizeof(url), "%smanifest.json", base);
   ESP_LOGI(TAG, "Checking touchscreen dev feed: %s", url);
@@ -47,21 +64,31 @@ esp_err_t touchscreen_ota() {
     ESP_LOGW(TAG, "Could not open touchscreen OTA manifest");
     return ESP_ERR_NOT_FOUND;
   }
-  char manifest[4096];
+
+  char *manifest = static_cast<char *>(ota_alloc(kManifestBytes));
+  if (!manifest) {
+    esp_http_client_cleanup(h);
+    ESP_LOGE(TAG, "Could not allocate %u-byte OTA manifest buffer",
+             (unsigned)kManifestBytes);
+    return ESP_ERR_NO_MEM;
+  }
+
   size_t used = 0;
   int n;
-  while (used < sizeof(manifest) - 1 &&
+  while (used < kManifestBytes - 1 &&
          (n = esp_http_client_read(h, manifest + used,
-                                   sizeof(manifest) - 1 - used)) > 0)
+                                   kManifestBytes - 1 - used)) > 0)
     used += n;
   bool complete = esp_http_client_is_complete_data_received(h);
   esp_http_client_cleanup(h);
   if (!complete) {
+    heap_caps_free(manifest);
     ESP_LOGW(TAG, "Touchscreen OTA manifest download was incomplete");
     return ESP_ERR_INVALID_RESPONSE;
   }
   manifest[used] = 0;
   auto o = cJSON_Parse(manifest);
+  heap_caps_free(manifest);
   if (!o)
     return ESP_ERR_INVALID_RESPONSE;
   const esp_partition_t *partition = esp_ota_get_next_update_partition(nullptr);
@@ -111,13 +138,23 @@ esp_err_t touchscreen_ota() {
   psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
   if (result == ESP_OK && psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS)
     result = ESP_FAIL;
-  uint8_t buffer[2048];
+
+  uint8_t *buffer = nullptr;
+  if (result == ESP_OK) {
+    buffer = static_cast<uint8_t *>(ota_alloc(kTransferBytes));
+    if (!buffer) {
+      ESP_LOGE(TAG, "Could not allocate %u-byte OTA transfer buffer",
+               (unsigned)kTransferBytes);
+      result = ESP_ERR_NO_MEM;
+    }
+  }
+
   size_t total = 0, header_used = 0;
   uint8_t header[sizeof(esp_image_header_t) +
                  sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)];
   bool identity_checked = false;
   while (result == ESP_OK && total < (size_t)size) {
-    n = esp_http_client_read(h, (char *)buffer, sizeof(buffer));
+    n = esp_http_client_read(h, (char *)buffer, kTransferBytes);
     if (n <= 0) {
       result = ESP_ERR_INVALID_RESPONSE;
       break;
@@ -159,6 +196,9 @@ esp_err_t touchscreen_ota() {
     total += n;
     ui_update_progress((int)(total * 100 / (size_t)size));
   }
+  if (buffer)
+    heap_caps_free(buffer);
+
   uint8_t actual[32];
   size_t digest_len = 0;
   if (result == ESP_OK &&
