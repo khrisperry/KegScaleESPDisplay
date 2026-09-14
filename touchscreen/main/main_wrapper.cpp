@@ -1,4 +1,5 @@
 #include "app.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -11,8 +12,8 @@ extern "C" void touchscreen_request_auto_discovery();
 
 /* Keep OTA's real esp_restart() in touchscreen_ota.cpp. Only the settings-save
  * restart inside main.cpp is redirected to a live reconfiguration routine.
- * OTA itself is redirected to a dedicated larger-stack task so HTTPS/TLS and
- * flash writes never run on the long-lived touchscreen application stack. */
+ * OTA itself is redirected to a dedicated task so HTTPS/TLS and flash writes
+ * never run on the long-lived touchscreen application stack. */
 static void touchscreen_apply_settings_live();
 static void touchscreen_ui_message(const char *message);
 static esp_err_t touchscreen_start_ota_task();
@@ -30,7 +31,10 @@ static esp_err_t touchscreen_start_ota_task();
 namespace {
 std::atomic<bool> discovery_running{false};
 std::atomic<bool> ota_running{false};
-constexpr uint32_t kOtaTaskStackBytes = 32 * 1024;
+/* ESP32-S3 task stacks must come from internal RAM. The previous 32 KB worker
+ * could not be created once Wi-Fi/LVGL were running. OTA's large transfer
+ * buffers now live in PSRAM, so a 12 KB internal stack is sufficient. */
+constexpr uint32_t kOtaTaskStackBytes = 12 * 1024;
 constexpr UBaseType_t kOtaTaskPriority = 4;
 
 bool wifi_settings_changed() {
@@ -51,9 +55,7 @@ bool scale_host_changed() {
 }
 
 void ota_task(void *) {
-  /* Let the caller finish its short WebSocket stop/reconnect sequence before
-   * the HTTPS client starts allocating TLS state and performing flash I/O. */
-  vTaskDelay(pdMS_TO_TICKS(500));
+  vTaskDelay(pdMS_TO_TICKS(250));
   ESP_LOGI(TAG,
            "Touchscreen OTA worker started; stack high-water=%u bytes",
            (unsigned)uxTaskGetStackHighWaterMark(nullptr));
@@ -125,15 +127,26 @@ static esp_err_t touchscreen_start_ota_task() {
     return ESP_ERR_INVALID_STATE;
   }
 
+  const size_t internal_free =
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t internal_largest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t psram_free =
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   ESP_LOGI(TAG,
-           "Scheduling touchscreen OTA worker; caller stack high-water=%u bytes",
-           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+           "Scheduling touchscreen OTA worker; caller stack high-water=%u bytes; internal_free=%u largest_internal=%u psram_free=%u requested_stack=%u",
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+           (unsigned)internal_free, (unsigned)internal_largest,
+           (unsigned)psram_free, (unsigned)kOtaTaskStackBytes);
+
   BaseType_t created = xTaskCreate(ota_task, "touchscreen_ota",
                                    kOtaTaskStackBytes, nullptr,
                                    kOtaTaskPriority, nullptr);
   if (created != pdPASS) {
     ota_running = false;
-    ESP_LOGE(TAG, "Could not create touchscreen OTA worker task");
+    ESP_LOGE(TAG,
+             "Could not create touchscreen OTA worker task: largest_internal=%u requested_stack=%u",
+             (unsigned)internal_largest, (unsigned)kOtaTaskStackBytes);
     return ESP_ERR_NO_MEM;
   }
   return ESP_OK;
