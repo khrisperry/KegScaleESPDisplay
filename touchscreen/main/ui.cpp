@@ -200,6 +200,10 @@ void forget_yes(lv_event_t *) {
 }
 void forget(lv_event_t *) {
   dismiss_keyboard();
+  // A Wi-Fi scan/discovery may complete while this confirmation is visible.
+  // Do not let its result write into deleted setup widgets.
+  memset(fields, 0, sizeof(fields));
+  networks = nullptr;
   lv_obj_clean(content);
   label(content, "Replace the paired scale?", 8, 12, 424,
         &lv_font_montserrat_24);
