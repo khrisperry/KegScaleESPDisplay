@@ -28,6 +28,7 @@ void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
 void ui_update_progress(int percent);
+void ui_settings_applied(const Settings &settings);
 esp_err_t touchscreen_ota(void);
 
 void ui_networks(const char *options);
