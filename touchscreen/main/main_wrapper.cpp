@@ -10,20 +10,28 @@
 extern "C" void touchscreen_request_auto_discovery();
 
 /* Keep OTA's real esp_restart() in touchscreen_ota.cpp. Only the settings-save
- * restart inside main.cpp is redirected to a live reconfiguration routine. */
+ * restart inside main.cpp is redirected to a live reconfiguration routine.
+ * OTA itself is redirected to a dedicated larger-stack task so HTTPS/TLS and
+ * flash writes never run on the long-lived touchscreen application stack. */
 static void touchscreen_apply_settings_live();
 static void touchscreen_ui_message(const char *message);
+static esp_err_t touchscreen_start_ota_task();
 
 #define app_main touchscreen_app_main
 #define esp_restart touchscreen_apply_settings_live
 #define ui_message touchscreen_ui_message
+#define touchscreen_ota touchscreen_start_ota_task
 #include "main.cpp"
+#undef touchscreen_ota
 #undef ui_message
 #undef esp_restart
 #undef app_main
 
 namespace {
 std::atomic<bool> discovery_running{false};
+std::atomic<bool> ota_running{false};
+constexpr uint32_t kOtaTaskStackBytes = 32 * 1024;
+constexpr UBaseType_t kOtaTaskPriority = 4;
 
 bool wifi_settings_changed() {
   wifi_config_t active = {};
@@ -40,6 +48,28 @@ bool scale_host_changed() {
   if (settings.host[0])
     snprintf(desired, sizeof(desired), "ws://%s/ws/controller", settings.host);
   return strcmp(uri, desired) != 0;
+}
+
+void ota_task(void *) {
+  /* Let the caller finish its short WebSocket stop/reconnect sequence before
+   * the HTTPS client starts allocating TLS state and performing flash I/O. */
+  vTaskDelay(pdMS_TO_TICKS(500));
+  ESP_LOGI(TAG,
+           "Touchscreen OTA worker started; stack high-water=%u bytes",
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  ::ui_message("Checking for touchscreen update…");
+
+  esp_err_t result = ::touchscreen_ota();
+
+  ESP_LOGI(TAG,
+           "Touchscreen OTA worker finished: %s; stack high-water=%u bytes",
+           esp_err_to_name(result),
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  if (result != ESP_OK)
+    ::ui_message(esp_err_to_name(result));
+
+  ota_running = false;
+  vTaskDelete(nullptr);
 }
 
 void auto_discovery_task(void *) {
@@ -88,6 +118,26 @@ void auto_discovery_task(void *) {
   vTaskDelete(nullptr);
 }
 } // namespace
+
+static esp_err_t touchscreen_start_ota_task() {
+  if (ota_running.exchange(true)) {
+    ESP_LOGW(TAG, "Touchscreen OTA request ignored because an update is already running");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  ESP_LOGI(TAG,
+           "Scheduling touchscreen OTA worker; caller stack high-water=%u bytes",
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  BaseType_t created = xTaskCreate(ota_task, "touchscreen_ota",
+                                   kOtaTaskStackBytes, nullptr,
+                                   kOtaTaskPriority, nullptr);
+  if (created != pdPASS) {
+    ota_running = false;
+    ESP_LOGE(TAG, "Could not create touchscreen OTA worker task");
+    return ESP_ERR_NO_MEM;
+  }
+  return ESP_OK;
+}
 
 static void touchscreen_ui_message(const char *message) {
   if (message && !strcmp(message, "Settings saved — restarting"))
