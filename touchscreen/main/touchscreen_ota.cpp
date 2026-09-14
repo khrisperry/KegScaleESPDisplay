@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -24,14 +25,30 @@ const char *text(cJSON *o, const char *key) {
 }
 
 esp_http_client_handle_t open_url(const char *url) {
+  char request_url[420];
+  const char separator = strchr(url, '?') ? '&' : '?';
+  const int request_len =
+      snprintf(request_url, sizeof(request_url), "%s%ccache_bust=%llu", url,
+               separator, (unsigned long long)esp_timer_get_time());
+  if (request_len <= 0 || (size_t)request_len >= sizeof(request_url)) {
+    ESP_LOGW(TAG, "OTA request URL too long after cache busting");
+    return nullptr;
+  }
+
   esp_http_client_config_t cfg = {};
-  cfg.url = url;
+  cfg.url = request_url;
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.timeout_ms = 15000;
   cfg.disable_auto_redirect = true;
   auto h = esp_http_client_init(&cfg);
   if (!h)
     return nullptr;
+
+  esp_http_client_set_header(h, "Cache-Control",
+                             "no-cache, no-store, max-age=0");
+  esp_http_client_set_header(h, "Pragma", "no-cache");
+  ESP_LOGI(TAG, "OTA cache-busted request: %s", request_url);
+
   if (esp_http_client_open(h, 0) != ESP_OK ||
       esp_http_client_fetch_headers(h) < 0 ||
       esp_http_client_get_status_code(h) != 200) {
