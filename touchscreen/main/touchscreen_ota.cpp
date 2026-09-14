@@ -14,10 +14,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
 namespace {
 const char *TAG = "touchscreen_ota";
-constexpr const char *base = "https://raw.githubusercontent.com/khrisperry/"
-                             "KegScaleFirmware/main/touchscreen/dev/esp32s3/";
+constexpr const char *feed_root =
+    "https://raw.githubusercontent.com/khrisperry/KegScaleFirmware/main/touchscreen";
 
 const char *text(cJSON *o, const char *key) {
   auto v = cJSON_GetObjectItemCaseSensitive(o, key);
@@ -25,7 +26,7 @@ const char *text(cJSON *o, const char *key) {
 }
 
 esp_http_client_handle_t open_url(const char *url) {
-  char request_url[420];
+  char request_url[480];
   const char separator = strchr(url, '?') ? '&' : '?';
   const int request_len =
       snprintf(request_url, sizeof(request_url), "%s%ccache_bust=%llu", url,
@@ -49,9 +50,17 @@ esp_http_client_handle_t open_url(const char *url) {
   esp_http_client_set_header(h, "Pragma", "no-cache");
   ESP_LOGI(TAG, "OTA cache-busted request: %s", request_url);
 
-  if (esp_http_client_open(h, 0) != ESP_OK ||
-      esp_http_client_fetch_headers(h) < 0 ||
-      esp_http_client_get_status_code(h) != 200) {
+  esp_err_t e = esp_http_client_open(h, 0);
+  int64_t headers = -1;
+  int status = 0;
+  if (e == ESP_OK) {
+    headers = esp_http_client_fetch_headers(h);
+    if (headers >= 0)
+      status = esp_http_client_get_status_code(h);
+  }
+  if (e != ESP_OK || headers < 0 || status != 200) {
+    ESP_LOGW(TAG, "OTA HTTP request failed: open=%s headers=%lld status=%d",
+             esp_err_to_name(e), (long long)headers, status);
     esp_http_client_cleanup(h);
     return nullptr;
   }
@@ -97,12 +106,18 @@ esp_err_t touchscreen_ota(bool install) {
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
-  char url[300];
+  char channel[16] = {};
+  touchscreen_ota_get_channel(channel, sizeof(channel));
+  char base[300];
+  snprintf(base, sizeof(base), "%s/%s/esp32s3/", feed_root, channel);
+
+  char url[360];
   snprintf(url, sizeof(url), "%smanifest.json", base);
-  ESP_LOGI(TAG, "Checking touchscreen dev feed: %s", url);
+  ESP_LOGI(TAG, "Checking touchscreen %s feed: %s", channel, url);
   auto h = open_url(url);
   if (!h) {
-    ESP_LOGW(TAG, "Could not open touchscreen OTA manifest");
+    ESP_LOGW(TAG, "Could not open touchscreen OTA manifest for channel=%s",
+             channel);
     return ESP_ERR_NOT_FOUND;
   }
 
@@ -143,6 +158,7 @@ esp_err_t touchscreen_ota(bool install) {
       partition && size > 0 && size <= partition->size && floor(size) == size &&
       !strcmp(text(o, "hardware"), "waveshare_esp32_s3_touch_lcd_4b") &&
       !strcmp(text(o, "target"), "esp32s3") &&
+      !strcmp(text(o, "channel"), channel) &&
       !strncmp(text(o, "url"), base, strlen(base)) &&
       strlen(text(o, "url")) < sizeof(url) &&
       cl_unhex(text(o, "sha256"), expected, 32);
@@ -157,14 +173,15 @@ esp_err_t touchscreen_ota(bool install) {
   snprintf(url, sizeof(url), "%s", text(o, "url"));
   cJSON_Delete(o);
   if (!valid) {
-    ESP_LOGW(TAG, "Touchscreen OTA manifest failed identity/protocol validation");
+    ESP_LOGW(TAG,
+             "Touchscreen OTA manifest failed identity/protocol/channel validation");
     return ESP_ERR_INVALID_RESPONSE;
   }
 
   const char *current = esp_app_get_description()->version;
   ESP_LOGI(TAG,
-           "Touchscreen OTA feed: current=%s latest=%s size=%u target_partition=%s mode=%s",
-           current, version, (unsigned)size, partition->label,
+           "Touchscreen OTA feed: channel=%s current=%s latest=%s size=%u target_partition=%s mode=%s",
+           channel, current, version, (unsigned)size, partition->label,
            install ? "install" : "check");
 
   unsigned current_major = 0, current_minor = 0, current_patch = 0;
@@ -193,7 +210,8 @@ esp_err_t touchscreen_ota(bool install) {
 
   ui_update_status(current, version, true, false);
   if (!install) {
-    ESP_LOGI(TAG, "Touchscreen update is available; waiting for user install confirmation");
+    ESP_LOGI(TAG,
+             "Touchscreen update is available; waiting for user install confirmation");
     return ESP_OK;
   }
 
