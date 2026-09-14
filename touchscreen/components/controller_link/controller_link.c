@@ -77,8 +77,11 @@ esp_err_t cl_agree(cl_session_t *s, const char *peer, const char *server,
   if (e != ESP_OK)
     return e;
   e = hash(s->master, 32, digest);
+  /* Six hexadecimal characters (24 bits) are enough for this local,
+   * time-limited, five-attempt user-verification step. The ECDH master key
+   * remains 256 bits; only the human comparison string is shortened. */
   if (e == ESP_OK)
-    cl_hex(digest, 6, code);
+    cl_hex(digest, 3, code);
   return e;
 }
 esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32],
