@@ -31,9 +31,9 @@ static esp_err_t touchscreen_start_ota_task();
 namespace {
 std::atomic<bool> discovery_running{false};
 std::atomic<bool> ota_running{false};
-/* ESP32-S3 task stacks must come from internal RAM. The previous 32 KB worker
- * could not be created once Wi-Fi/LVGL were running. OTA's large transfer
- * buffers now live in PSRAM, so a 12 KB internal stack is sufficient. */
+std::atomic<bool> ota_install_requested{false};
+/* ESP32-S3 task stacks must come from internal RAM. OTA's large transfer
+ * buffers live in PSRAM, so a 12 KB internal stack is sufficient. */
 constexpr uint32_t kOtaTaskStackBytes = 12 * 1024;
 constexpr UBaseType_t kOtaTaskPriority = 4;
 
@@ -55,20 +55,26 @@ bool scale_host_changed() {
 }
 
 void ota_task(void *) {
+  const bool install = ota_install_requested.load();
   vTaskDelay(pdMS_TO_TICKS(250));
   ESP_LOGI(TAG,
-           "Touchscreen OTA worker started; stack high-water=%u bytes",
+           "Touchscreen OTA worker started: mode=%s stack high-water=%u bytes",
+           install ? "install" : "check",
            (unsigned)uxTaskGetStackHighWaterMark(nullptr));
-  ::ui_message("Checking for touchscreen update…");
 
-  esp_err_t result = ::touchscreen_ota();
+  if (!install)
+    ui_update_checking();
+
+  esp_err_t result = ::touchscreen_ota(install);
 
   ESP_LOGI(TAG,
-           "Touchscreen OTA worker finished: %s; stack high-water=%u bytes",
-           esp_err_to_name(result),
+           "Touchscreen OTA worker finished: mode=%s result=%s stack high-water=%u bytes",
+           install ? "install" : "check", esp_err_to_name(result),
            (unsigned)uxTaskGetStackHighWaterMark(nullptr));
   if (result != ESP_OK)
-    ::ui_message(esp_err_to_name(result));
+    ui_update_error(install ? "Firmware update failed. Check Wi-Fi and try again."
+                            : "Could not check for updates. Check Wi-Fi and try again.",
+                    install);
 
   ota_running = false;
   vTaskDelete(nullptr);
@@ -121,20 +127,27 @@ void auto_discovery_task(void *) {
 }
 } // namespace
 
+void touchscreen_set_ota_install_mode(bool install) {
+  ota_install_requested = install;
+}
+
 static esp_err_t touchscreen_start_ota_task() {
   if (ota_running.exchange(true)) {
-    ESP_LOGW(TAG, "Touchscreen OTA request ignored because an update is already running");
+    ESP_LOGW(TAG,
+             "Touchscreen OTA request ignored because an update is already running");
     return ESP_ERR_INVALID_STATE;
   }
 
+  const bool install = ota_install_requested.load();
   const size_t internal_free =
       heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  const size_t internal_largest =
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t internal_largest = heap_caps_get_largest_free_block(
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   const size_t psram_free =
       heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   ESP_LOGI(TAG,
-           "Scheduling touchscreen OTA worker; caller stack high-water=%u bytes; internal_free=%u largest_internal=%u psram_free=%u requested_stack=%u",
+           "Scheduling touchscreen OTA worker: mode=%s caller stack high-water=%u bytes; internal_free=%u largest_internal=%u psram_free=%u requested_stack=%u",
+           install ? "install" : "check",
            (unsigned)uxTaskGetStackHighWaterMark(nullptr),
            (unsigned)internal_free, (unsigned)internal_largest,
            (unsigned)psram_free, (unsigned)kOtaTaskStackBytes);
@@ -147,6 +160,9 @@ static esp_err_t touchscreen_start_ota_task() {
     ESP_LOGE(TAG,
              "Could not create touchscreen OTA worker task: largest_internal=%u requested_stack=%u",
              (unsigned)internal_largest, (unsigned)kOtaTaskStackBytes);
+    ui_update_error(install ? "Not enough memory to start the firmware update."
+                            : "Not enough memory to check for updates.",
+                    install);
     return ESP_ERR_NO_MEM;
   }
   return ESP_OK;
