@@ -1,4 +1,5 @@
 #include "app.h"
+#include "esp_lcd_touch.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
 #include "bsp/touch.h"
 #include "esp_log.h"
