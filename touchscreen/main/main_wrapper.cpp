@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+extern "C" void touchscreen_request_auto_discovery();
+
 /* Keep OTA's real esp_restart() in touchscreen_ota.cpp. Only the settings-save
  * restart inside main.cpp is redirected to a live reconfiguration routine. */
 static void touchscreen_apply_settings_live();
