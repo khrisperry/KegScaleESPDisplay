@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include <atomic>
+#include <cstdint>
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -41,6 +42,7 @@ uint32_t request_id, pending_id;
 int64_t last_state, pending_since, last_ping, last_reading, last_age_update;
 bool authenticated, traffic_ready;
 std::atomic<bool> wifi_ready{false};
+std::atomic<uint32_t> ws_generation{0};
 bool retry_connection = true;
 int64_t next_connection_attempt;
 const char *str(cJSON *o, const char *k) {
@@ -95,22 +97,37 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
     next_connection_attempt = now();
   }
 }
-void socket_event(void *, esp_event_base_t, int32_t event, void *data) {
+void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
+  const uint32_t event_generation =
+      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(arg));
+  const uint32_t current_generation = ws_generation.load();
+  if (event_generation != current_generation) {
+    ESP_LOGD(TAG,
+             "Ignoring stale WebSocket event=%ld generation=%lu current=%lu",
+             (long)event, (unsigned long)event_generation,
+             (unsigned long)current_generation);
+    return;
+  }
+
   static Frame assembly{};
   Frame f{};
   if (event == WEBSOCKET_EVENT_CONNECTED) {
-    ESP_LOGI(TAG, "WebSocket transport connected to %s", uri);
+    ESP_LOGI(TAG, "WebSocket transport connected to %s generation=%lu", uri,
+             (unsigned long)event_generation);
     f.kind = 1;
     if (xQueueSend(frames, &f, 0) != pdTRUE)
       ESP_LOGW(TAG, "Frame queue full while reporting WebSocket connection");
   } else if (event == WEBSOCKET_EVENT_DISCONNECTED) {
-    ESP_LOGW(TAG, "WebSocket transport disconnected from %s", uri);
+    ESP_LOGW(TAG,
+             "WebSocket transport disconnected from %s generation=%lu", uri,
+             (unsigned long)event_generation);
     f.kind = 2;
     if (xQueueSend(frames, &f, 0) != pdTRUE)
       ESP_LOGW(TAG, "Frame queue full while reporting WebSocket disconnect");
     assembly = {};
   } else if (event == WEBSOCKET_EVENT_ERROR) {
-    ESP_LOGW(TAG, "WebSocket transport error while connecting to %s", uri);
+    ESP_LOGW(TAG, "WebSocket transport error while connecting to %s generation=%lu",
+             uri, (unsigned long)event_generation);
   } else if (event == WEBSOCKET_EVENT_DATA) {
     auto *d = (esp_websocket_event_data_t *)data;
     if (d->op_code != 1 && d->op_code != 2)
@@ -242,14 +259,17 @@ bool scale_accepting_connection() {
   return ready;
 }
 void connect_scale() {
+  const uint32_t generation = ws_generation.fetch_add(1) + 1;
   retry_connection = true;
   next_connection_attempt = now() + 3000000;
   ESP_LOGI(TAG,
-           "Scale connection attempt: host='%s' wifi_ready=%d display_paired=%d",
+           "Scale connection attempt: host='%s' wifi_ready=%d display_paired=%d generation=%lu",
            settings.host[0] ? settings.host : "<none>", (bool)wifi_ready,
-           settings.paired);
+           settings.paired, (unsigned long)generation);
   if (ws) {
-    ESP_LOGI(TAG, "Stopping previous WebSocket client before reconnect");
+    ESP_LOGI(TAG,
+             "Stopping previous WebSocket client before reconnect; invalidated generation=%lu",
+             (unsigned long)(generation - 1));
     esp_websocket_client_stop(ws);
     esp_websocket_client_destroy(ws);
     ws = nullptr;
@@ -271,8 +291,9 @@ void connect_scale() {
     return;
   }
   snprintf(uri, sizeof(uri), "ws://%s/ws/controller", settings.host);
-  ESP_LOGI(TAG, "Starting WebSocket connection: uri='%s' paired=%d", uri,
-           settings.paired);
+  ESP_LOGI(TAG,
+           "Starting WebSocket connection: uri='%s' paired=%d generation=%lu",
+           uri, settings.paired, (unsigned long)generation);
   esp_websocket_client_config_t config = {};
   config.uri = uri;
   config.buffer_size = CL_MAX_FRAME + 1;
@@ -286,11 +307,14 @@ void connect_scale() {
     ui_message("Could not start connection");
     return;
   }
-  esp_websocket_register_events(ws, WEBSOCKET_EVENT_ANY, socket_event, nullptr);
+  esp_websocket_register_events(
+      ws, WEBSOCKET_EVENT_ANY, socket_event,
+      reinterpret_cast<void *>(static_cast<uintptr_t>(generation)));
   esp_err_t e = esp_websocket_client_start(ws);
   retry_connection = e != ESP_OK;
-  ESP_LOGI(TAG, "WebSocket start returned %s; retry_connection=%d",
-           esp_err_to_name(e), retry_connection);
+  ESP_LOGI(TAG,
+           "WebSocket start returned %s; retry_connection=%d generation=%lu",
+           esp_err_to_name(e), retry_connection, (unsigned long)generation);
   if (e != ESP_OK)
     ui_message("Could not start scale WebSocket connection");
 }
@@ -603,6 +627,7 @@ void action(const Action &a) {
 extern "C" void app_main() {
   ESP_LOGI(TAG, "Starting Wi-Fi touchscreen firmware %s",
            esp_app_get_description()->version);
+  ESP_LOGI(TAG, "Reset reason=%d", (int)esp_reset_reason());
   esp_err_t e = nvs_flash_init();
   if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     ESP_LOGW(TAG, "NVS requires erase/reinitialize: %s", esp_err_to_name(e));
