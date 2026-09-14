@@ -162,10 +162,11 @@ static void touchscreen_apply_settings_live() {
 
   if (wifi_changed) {
     wifi_config_t desired = {};
-    snprintf((char *)desired.sta.ssid, sizeof(desired.sta.ssid), "%s",
-             settings.ssid);
-    snprintf((char *)desired.sta.password, sizeof(desired.sta.password), "%s",
-             settings.password);
+    const size_t ssid_len = strnlen(settings.ssid, sizeof(desired.sta.ssid));
+    const size_t password_len =
+        strnlen(settings.password, sizeof(desired.sta.password));
+    memcpy(desired.sta.ssid, settings.ssid, ssid_len);
+    memcpy(desired.sta.password, settings.password, password_len);
 
     esp_err_t e = esp_wifi_set_config(WIFI_IF_STA, &desired);
     if (e != ESP_OK) {
