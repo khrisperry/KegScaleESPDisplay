@@ -1,5 +1,7 @@
 #include "app.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
+#include "bsp/touch.h"
+#include "esp_log.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "lvgl.h"
@@ -58,6 +60,7 @@ void button(lv_obj_t *parent, const char *s, int x, int y, int width,
 }
 void dismiss_keyboard() {
   if (keyboard) {
+    lv_keyboard_set_textarea(keyboard, nullptr);
     lv_obj_delete_async(keyboard);
     keyboard = nullptr;
     lv_obj_set_height(content, 334);
@@ -75,7 +78,7 @@ void focus(lv_event_t *e) {
   auto field = (lv_obj_t *)lv_event_get_target(e);
   lv_keyboard_set_textarea(keyboard, field);
   lv_obj_set_height(content, 222);
-  lv_obj_scroll_to_view(field, LV_ANIM_ON);
+  lv_obj_scroll_to_view(field, LV_ANIM_OFF);
 }
 lv_obj_t *field(const char *title, const char *value, int y,
                 bool numeric = false, int limit = 32) {
@@ -88,8 +91,9 @@ lv_obj_t *field(const char *title, const char *value, int y,
   lv_textarea_set_text(o, value);
   if (numeric)
     lv_textarea_set_accepted_chars(o, "0123456789.");
-  lv_obj_add_event_cb(o, focus, LV_EVENT_FOCUSED, nullptr);
-  lv_obj_add_event_cb(o, focus, LV_EVENT_CLICKED, nullptr);
+  // Open the editor after a tap, not the press that begins a scroll.
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+  lv_obj_add_event_cb(o, focus, LV_EVENT_SHORT_CLICKED, nullptr);
   return o;
 }
 void command(const char *op) {
@@ -194,6 +198,7 @@ void forget_yes(lv_event_t *) {
   build(3);
 }
 void forget(lv_event_t *) {
+  dismiss_keyboard();
   lv_obj_clean(content);
   label(content, "Replace the paired scale?", 8, 12, 424,
         &lv_font_montserrat_24);
@@ -209,6 +214,7 @@ void update_yes(lv_event_t *) {
   message("Checking touchscreen firmware…");
 }
 void update(lv_event_t *) {
+  dismiss_keyboard();
   lv_obj_clean(content);
   label(content, "Install development firmware?", 8, 12, 424,
         &lv_font_montserrat_24);
@@ -371,18 +377,51 @@ void build(int page) {
 } // namespace
 void ui_start(const Settings &s) {
   initial = s;
-  auto display = bsp_display_start();
+  // Use driver-owned frames and wait for bounce-frame completion before reuse.
+  static_assert(CONFIG_BSP_LCD_RGB_BUFFER_NUMS >= 2,
+                "Set BSP_LCD_RGB_BUFFER_NUMS=2 in menuconfig (Board Support Package)");
+  lvgl_port_cfg_t port = ESP_LVGL_PORT_INIT_CONFIG();
+  ESP_ERROR_CHECK(lvgl_port_init(&port));
+  bsp_display_config_t panel_config = {};
+  esp_lcd_panel_handle_t panel = nullptr;
+  esp_lcd_panel_io_handle_t io = nullptr;
+  ESP_ERROR_CHECK(bsp_display_new(&panel_config, &panel, &io));
+  lvgl_port_display_cfg_t cfg = {};
+  cfg.io_handle = io;
+  cfg.panel_handle = panel;
+  cfg.buffer_size = BSP_LCD_H_RES * BSP_LCD_V_RES;
+  cfg.double_buffer = true;
+  cfg.hres = BSP_LCD_H_RES;
+  cfg.vres = BSP_LCD_V_RES;
+  cfg.color_format = LV_COLOR_FORMAT_RGB565;
+  cfg.flags.full_refresh = true;
+  lvgl_port_display_rgb_cfg_t rgb = {};
+  rgb.flags.bb_mode = CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT > 0;
+  rgb.flags.avoid_tearing = true;
+  auto display = lvgl_port_add_disp_rgb(&cfg, &rgb);
+  configASSERT(display);
+  esp_lcd_touch_handle_t touch = nullptr;
+  ESP_ERROR_CHECK(bsp_touch_new(nullptr, &touch));
+  lvgl_port_touch_cfg_t input = {};
+  input.disp = display;
+  input.handle = touch;
+  configASSERT(lvgl_port_add_touch(&input));
+  ESP_LOGI("display", "RGB synchronized double framebuffer, bounce height %d",
+           CONFIG_BSP_LCD_RGB_BOUNCE_BUFFER_HEIGHT);
   configASSERT(display);
   ESP_ERROR_CHECK(
       bsp_display_brightness_set(s.brightness >= 10 ? s.brightness : 85));
   configASSERT(bsp_display_lock(0));
   auto root = lv_screen_active();
+  lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(root, lv_color_hex(BG), 0);
   lv_obj_set_style_text_font(root, &lv_font_montserrat_16, 0);
   label(root, "KEG SCALE", 20, 12, 440, &lv_font_montserrat_24);
   content = lv_obj_create(root);
   lv_obj_set_pos(content, 12, 50);
   lv_obj_set_size(content, 456, 334);
+  lv_obj_set_scroll_dir(content, LV_DIR_VER);
+  lv_obj_remove_flag(content, LV_OBJ_FLAG_SCROLL_ELASTIC);
   lv_obj_set_style_bg_color(content, lv_color_hex(CARD), 0);
   lv_obj_set_style_border_width(content, 0, 0);
   lv_obj_set_style_pad_all(content, 6, 0);

@@ -3,6 +3,8 @@
 #include "controller_link.h"
 #include "esp_app_desc.h"
 #include "esp_event.h"
+#include "esp_http_client.h"
+#include <atomic>
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -37,6 +39,9 @@ uint8_t client_nonce[32];
 uint32_t request_id, pending_id;
 int64_t last_state, pending_since, last_ping, last_reading, last_age_update;
 bool authenticated, traffic_ready;
+std::atomic<bool> wifi_ready{false};
+bool retry_connection = true;
+int64_t next_connection_attempt;
 const char *str(cJSON *o, const char *k) {
   auto v = cJSON_GetObjectItemCaseSensitive(o, k);
   return cJSON_IsString(v) ? v->valuestring : "";
@@ -61,8 +66,13 @@ esp_err_t persist() {
   return e;
 }
 void wifi_event(void *, esp_event_base_t base, int32_t id, void *) {
-  if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+  if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    wifi_ready = false;
     esp_wifi_connect();
+  } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    wifi_ready = true;
+    ESP_LOGI("controller", "Wi-Fi has an IP address");
+  }
 }
 void socket_event(void *, esp_event_base_t, int32_t event, void *data) {
   static Frame assembly{};
@@ -114,7 +124,52 @@ bool send_secure(const char *plain) {
   return esp_websocket_client_send_bin(ws, (char *)out, len,
                                        pdMS_TO_TICKS(1000)) == (int)len;
 }
+// Public setup status contains no credentials and cannot authorize a controller.
+bool scale_accepting_connection() {
+  char url[180], body[512] = {};
+  snprintf(url, sizeof(url), "http://%s/api/controller", settings.host);
+  esp_http_client_config_t cfg = {};
+  cfg.url = url;
+  cfg.timeout_ms = 2000;
+  auto client = esp_http_client_init(&cfg);
+  if (!client)
+    return false;
+  esp_err_t err = esp_http_client_open(client, 0);
+  int status = 0, received = -1;
+  if (err == ESP_OK && esp_http_client_fetch_headers(client) >= 0) {
+    status = esp_http_client_get_status_code(client);
+    received = esp_http_client_read_response(client, body, sizeof(body) - 1);
+  }
+  esp_http_client_close(client);
+  esp_http_client_cleanup(client);
+  if (status != 200 || received <= 0) {
+    ui_message(status == 404
+      ? "Update scale firmware to enable Wi-Fi touchscreen setup."
+      : "Scale unreachable. Check its address and Wi-Fi network.");
+    ESP_LOGW("controller", "Scale %s setup HTTP status %d: %s",
+             settings.host, status, esp_err_to_name(err));
+    return false;
+  }
+  auto o = cJSON_Parse(body);
+  if (!o || !cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(o, "paired"))) {
+    cJSON_Delete(o);
+    ui_message("Address did not return scale setup. Check the scale address.");
+    return false;
+  }
+  bool paired = yes(o, "paired");
+  bool ready = paired == settings.paired && (paired || num(o, "seconds") > 0);
+  if (paired && !settings.paired)
+    ui_message("On scale: remove old Wi-Fi touchscreen, then Add touchscreen.");
+  else if (!paired && settings.paired)
+    ui_message("In Setup: Remove pairing, then Add touchscreen on the scale.");
+  else if (!ready)
+    ui_message("On scale: Wi-Fi touchscreen setup > Add touchscreen.");
+  cJSON_Delete(o);
+  return ready;
+}
 void connect_scale() {
+  retry_connection = true;
+  next_connection_attempt = now() + 3000000;
   if (ws) {
     esp_websocket_client_stop(ws);
     esp_websocket_client_destroy(ws);
@@ -124,11 +179,20 @@ void connect_scale() {
   xQueueReset(frames);
   if (!settings.host[0])
     return;
+  if (!wifi_ready) {
+    ui_message("Waiting for Wi-Fi. Check SSID and password in Setup.");
+    return;
+  }
+  if (!scale_accepting_connection())
+    return;
   snprintf(uri, sizeof(uri), "ws://%s/ws/controller", settings.host);
+  ESP_LOGI("controller", "Connecting to scale %s (paired=%d)",
+           settings.host, settings.paired);
   esp_websocket_client_config_t config = {};
   config.uri = uri;
   config.buffer_size = CL_MAX_FRAME + 1;
   config.task_stack = 6144;
+  config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
   config.network_timeout_ms = 5000;
   ws = esp_websocket_client_init(&config);
@@ -137,10 +201,12 @@ void connect_scale() {
     return;
   }
   esp_websocket_register_events(ws, WEBSOCKET_EVENT_ANY, socket_event, nullptr);
-  esp_websocket_client_start(ws);
+  retry_connection = esp_websocket_client_start(ws) != ESP_OK;
 }
 void on_frame(const Frame &f) {
   if (f.kind == 2) {
+    retry_connection = true;
+    next_connection_attempt = now() + 3000000;
     disconnected();
     ui_message("Disconnected — reconnecting to scale");
     return;
@@ -402,6 +468,8 @@ extern "C" void app_main() {
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                              wifi_event, nullptr));
+  ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                             wifi_event, nullptr));
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
   wifi_config_t wifi = {};
@@ -425,6 +493,8 @@ extern "C" void app_main() {
       on_frame(f);
     if (xQueueReceive(actions, &a, pdMS_TO_TICKS(30)) == pdTRUE)
       action(a);
+    if (retry_connection && settings.host[0] && now() >= next_connection_attempt)
+      connect_scale();
     if (ws && esp_websocket_client_is_connected(ws) &&
         now() - last_ping > 3000000) {
       last_ping = now();
