@@ -3,6 +3,7 @@
 #include "esp_log.h"
 
 extern "C" void touchscreen_app_main();
+extern "C" void touchscreen_request_auto_discovery();
 
 namespace {
 constexpr uint32_t kTouchscreenTaskStackBytes = 16 * 1024;
@@ -21,4 +22,5 @@ extern "C" void app_main() {
                   kTouchscreenTaskStackBytes, nullptr,
                   kTouchscreenTaskPriority, nullptr);
   configASSERT(created == pdPASS);
+  touchscreen_request_auto_discovery();
 }
