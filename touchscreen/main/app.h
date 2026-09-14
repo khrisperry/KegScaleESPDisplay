@@ -27,9 +27,16 @@ void ui_message(const char *message);
 void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
+void ui_update_checking(void);
+void ui_update_status(const char *current_version, const char *latest_version,
+                      bool update_available, bool feed_stale);
+void ui_update_installing(const char *version);
 void ui_update_progress(int percent);
+void ui_update_complete(const char *version);
+void ui_update_error(const char *message, bool installing);
 void ui_settings_applied(const Settings &settings);
-esp_err_t touchscreen_ota(void);
+void touchscreen_set_ota_install_mode(bool install);
+esp_err_t touchscreen_ota(bool install);
 
 void ui_networks(const char *options);
 
