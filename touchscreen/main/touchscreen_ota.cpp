@@ -17,20 +17,12 @@ namespace {
 const char *TAG = "touchscreen_ota";
 constexpr const char *base = "https://raw.githubusercontent.com/khrisperry/"
                              "KegScaleFirmware/main/touchscreen/dev/esp32s3/";
-constexpr size_t kManifestBytes = 4096;
-constexpr size_t kTransferBytes = 2048;
-
-void *ota_alloc(size_t bytes) {
-  void *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (p)
-    return p;
-  return heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
-}
 
 const char *text(cJSON *o, const char *key) {
   auto v = cJSON_GetObjectItemCaseSensitive(o, key);
   return cJSON_IsString(v) ? v->valuestring : "";
 }
+
 esp_http_client_handle_t open_url(const char *url) {
   esp_http_client_config_t cfg = {};
   cfg.url = url;
@@ -48,7 +40,38 @@ esp_http_client_handle_t open_url(const char *url) {
   }
   return h;
 }
+
+bool parse_version(const char *s, unsigned *major, unsigned *minor,
+                   unsigned *patch) {
+  if (!s || !major || !minor || !patch)
+    return false;
+  char extra = 0;
+  return sscanf(s, "V%u.%u.%u%c", major, minor, patch, &extra) == 3;
+}
+
+int compare_versions(const char *a, const char *b) {
+  unsigned amaj = 0, amin = 0, apat = 0;
+  unsigned bmaj = 0, bmin = 0, bpat = 0;
+  if (!parse_version(a, &amaj, &amin, &apat) ||
+      !parse_version(b, &bmaj, &bmin, &bpat))
+    return 0;
+  if (amaj != bmaj)
+    return amaj < bmaj ? -1 : 1;
+  if (amin != bmin)
+    return amin < bmin ? -1 : 1;
+  if (apat != bpat)
+    return apat < bpat ? -1 : 1;
+  return 0;
+}
+
+void *ota_alloc(size_t size) {
+  void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!p)
+    p = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+  return p;
+}
 } // namespace
+
 esp_err_t touchscreen_ota() {
   ESP_LOGI(TAG,
            "OTA memory before check: internal_free=%u largest_internal=%u psram_free=%u",
@@ -65,32 +88,33 @@ esp_err_t touchscreen_ota() {
     return ESP_ERR_NOT_FOUND;
   }
 
-  char *manifest = static_cast<char *>(ota_alloc(kManifestBytes));
+  constexpr size_t kManifestSize = 4096;
+  char *manifest = static_cast<char *>(ota_alloc(kManifestSize));
   if (!manifest) {
     esp_http_client_cleanup(h);
-    ESP_LOGE(TAG, "Could not allocate %u-byte OTA manifest buffer",
-             (unsigned)kManifestBytes);
+    ESP_LOGE(TAG, "Could not allocate OTA manifest buffer");
     return ESP_ERR_NO_MEM;
   }
 
   size_t used = 0;
   int n;
-  while (used < kManifestBytes - 1 &&
+  while (used < kManifestSize - 1 &&
          (n = esp_http_client_read(h, manifest + used,
-                                   kManifestBytes - 1 - used)) > 0)
+                                   kManifestSize - 1 - used)) > 0)
     used += n;
   bool complete = esp_http_client_is_complete_data_received(h);
   esp_http_client_cleanup(h);
   if (!complete) {
-    heap_caps_free(manifest);
+    free(manifest);
     ESP_LOGW(TAG, "Touchscreen OTA manifest download was incomplete");
     return ESP_ERR_INVALID_RESPONSE;
   }
   manifest[used] = 0;
   auto o = cJSON_Parse(manifest);
-  heap_caps_free(manifest);
+  free(manifest);
   if (!o)
     return ESP_ERR_INVALID_RESPONSE;
+
   const esp_partition_t *partition = esp_ota_get_next_update_partition(nullptr);
   auto size_item = cJSON_GetObjectItemCaseSensitive(o, "size");
   double size = cJSON_IsNumber(size_item) ? size_item->valuedouble : 0;
@@ -118,15 +142,36 @@ esp_err_t touchscreen_ota() {
     ESP_LOGW(TAG, "Touchscreen OTA manifest failed identity/protocol validation");
     return ESP_ERR_INVALID_RESPONSE;
   }
+
+  const char *current = esp_app_get_description()->version;
   ESP_LOGI(TAG,
            "Touchscreen OTA feed: current=%s latest=%s size=%u target_partition=%s",
-           esp_app_get_description()->version, version, (unsigned)size,
-           partition->label);
-  if (!strcmp(version, esp_app_get_description()->version)) {
-    ui_message("Touchscreen firmware is already current");
-    ESP_LOGI(TAG, "Touchscreen firmware is already current");
+           current, version, (unsigned)size, partition->label);
+
+  unsigned current_major = 0, current_minor = 0, current_patch = 0;
+  unsigned latest_major = 0, latest_minor = 0, latest_patch = 0;
+  if (!parse_version(current, &current_major, &current_minor, &current_patch) ||
+      !parse_version(version, &latest_major, &latest_minor, &latest_patch)) {
+    ESP_LOGW(TAG, "Refusing OTA because firmware version format is invalid: current=%s latest=%s",
+             current, version);
+    ui_message("Update feed version is invalid");
+    return ESP_ERR_INVALID_VERSION;
+  }
+
+  const int version_cmp = compare_versions(version, current);
+  if (version_cmp <= 0) {
+    if (version_cmp < 0) {
+      ESP_LOGW(TAG,
+               "Ignoring stale OTA feed to prevent downgrade: current=%s feed=%s",
+               current, version);
+      ui_message("No newer firmware available — update feed is still publishing");
+    } else {
+      ESP_LOGI(TAG, "Touchscreen firmware is already current");
+      ui_message("Touchscreen firmware is already current");
+    }
     return ESP_OK;
   }
+
   h = open_url(url);
   if (!h) {
     ESP_LOGW(TAG, "Could not open touchscreen firmware image: %s", url);
@@ -139,22 +184,17 @@ esp_err_t touchscreen_ota() {
   if (result == ESP_OK && psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS)
     result = ESP_FAIL;
 
-  uint8_t *buffer = nullptr;
-  if (result == ESP_OK) {
-    buffer = static_cast<uint8_t *>(ota_alloc(kTransferBytes));
-    if (!buffer) {
-      ESP_LOGE(TAG, "Could not allocate %u-byte OTA transfer buffer",
-               (unsigned)kTransferBytes);
-      result = ESP_ERR_NO_MEM;
-    }
-  }
+  constexpr size_t kBufferSize = 2048;
+  uint8_t *buffer = static_cast<uint8_t *>(ota_alloc(kBufferSize));
+  if (!buffer && result == ESP_OK)
+    result = ESP_ERR_NO_MEM;
 
   size_t total = 0, header_used = 0;
   uint8_t header[sizeof(esp_image_header_t) +
                  sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)];
   bool identity_checked = false;
   while (result == ESP_OK && total < (size_t)size) {
-    n = esp_http_client_read(h, (char *)buffer, kTransferBytes);
+    n = esp_http_client_read(h, (char *)buffer, kBufferSize);
     if (n <= 0) {
       result = ESP_ERR_INVALID_RESPONSE;
       break;
@@ -196,8 +236,9 @@ esp_err_t touchscreen_ota() {
     total += n;
     ui_update_progress((int)(total * 100 / (size_t)size));
   }
+
   if (buffer)
-    heap_caps_free(buffer);
+    free(buffer);
 
   uint8_t actual[32];
   size_t digest_len = 0;
