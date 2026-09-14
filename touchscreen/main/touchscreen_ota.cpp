@@ -72,9 +72,10 @@ void *ota_alloc(size_t size) {
 }
 } // namespace
 
-esp_err_t touchscreen_ota() {
+esp_err_t touchscreen_ota(bool install) {
   ESP_LOGI(TAG,
-           "OTA memory before check: internal_free=%u largest_internal=%u psram_free=%u",
+           "OTA memory before %s: internal_free=%u largest_internal=%u psram_free=%u",
+           install ? "install" : "check",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -145,16 +146,17 @@ esp_err_t touchscreen_ota() {
 
   const char *current = esp_app_get_description()->version;
   ESP_LOGI(TAG,
-           "Touchscreen OTA feed: current=%s latest=%s size=%u target_partition=%s",
-           current, version, (unsigned)size, partition->label);
+           "Touchscreen OTA feed: current=%s latest=%s size=%u target_partition=%s mode=%s",
+           current, version, (unsigned)size, partition->label,
+           install ? "install" : "check");
 
   unsigned current_major = 0, current_minor = 0, current_patch = 0;
   unsigned latest_major = 0, latest_minor = 0, latest_patch = 0;
   if (!parse_version(current, &current_major, &current_minor, &current_patch) ||
       !parse_version(version, &latest_major, &latest_minor, &latest_patch)) {
-    ESP_LOGW(TAG, "Refusing OTA because firmware version format is invalid: current=%s latest=%s",
+    ESP_LOGW(TAG,
+             "Refusing OTA because firmware version format is invalid: current=%s latest=%s",
              current, version);
-    ui_message("Update feed version is invalid");
     return ESP_ERR_INVALID_VERSION;
   }
 
@@ -164,20 +166,29 @@ esp_err_t touchscreen_ota() {
       ESP_LOGW(TAG,
                "Ignoring stale OTA feed to prevent downgrade: current=%s feed=%s",
                current, version);
-      ui_message("No newer firmware available — update feed is still publishing");
+      ui_update_status(current, version, false, true);
     } else {
       ESP_LOGI(TAG, "Touchscreen firmware is already current");
-      ui_message("Touchscreen firmware is already current");
+      ui_update_status(current, version, false, false);
     }
     return ESP_OK;
   }
+
+  ui_update_status(current, version, true, false);
+  if (!install) {
+    ESP_LOGI(TAG, "Touchscreen update is available; waiting for user install confirmation");
+    return ESP_OK;
+  }
+
+  ui_update_installing(version);
+  ui_update_progress(0);
 
   h = open_url(url);
   if (!h) {
     ESP_LOGW(TAG, "Could not open touchscreen firmware image: %s", url);
     return ESP_ERR_NOT_FOUND;
   }
-  ui_message("Downloading touchscreen update — keep power connected");
+
   esp_ota_handle_t ota = 0;
   esp_err_t result = esp_ota_begin(partition, (size_t)size, &ota);
   psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
@@ -262,8 +273,8 @@ esp_err_t touchscreen_ota() {
   if (result == ESP_OK) {
     ESP_LOGI(TAG, "Touchscreen OTA staged successfully; rebooting into %s",
              version);
-    ui_message("Update verified — restarting into new firmware");
-    vTaskDelay(pdMS_TO_TICKS(500));
+    ui_update_complete(version);
+    vTaskDelay(pdMS_TO_TICKS(900));
     esp_restart();
   } else {
     ESP_LOGW(TAG, "Touchscreen OTA failed: %s", esp_err_to_name(result));
