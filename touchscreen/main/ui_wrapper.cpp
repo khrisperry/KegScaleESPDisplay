@@ -20,16 +20,65 @@ char ota_current[32] = {};
 char ota_latest[32] = {};
 char ota_error_text[120] = {};
 bool update_page_customized = false;
+lv_obj_t *ota_channel_dropdown = nullptr;
+lv_obj_t *ota_auto_install_switch = nullptr;
+lv_obj_t *ota_warning_label = nullptr;
+lv_obj_t *ota_last_check_value = nullptr;
 lv_obj_t *ota_overlay = nullptr;
 lv_obj_t *ota_overlay_title = nullptr;
 lv_obj_t *ota_overlay_percent = nullptr;
 lv_obj_t *ota_overlay_status = nullptr;
 lv_obj_t *ota_overlay_bar = nullptr;
+const uint32_t WARNING = 0xffb347;
 
 void copy_text(char *dest, size_t size, const char *source) {
   if (!dest || !size)
     return;
   snprintf(dest, size, "%s", source ? source : "");
+}
+
+const char *channel_from_selection(uint16_t selected) {
+  if (selected == 0)
+    return "production";
+  if (selected == 1)
+    return "beta";
+  return "dev";
+}
+
+uint16_t selection_from_channel(const char *channel) {
+  if (channel && !strcmp(channel, "production"))
+    return 0;
+  if (channel && !strcmp(channel, "beta"))
+    return 1;
+  return 2;
+}
+
+const char *channel_display_name(const char *channel) {
+  if (channel && !strcmp(channel, "production"))
+    return "Production";
+  if (channel && !strcmp(channel, "beta"))
+    return "Beta";
+  return "Development";
+}
+
+void format_last_check(char *buffer, size_t size) {
+  if (!touchscreen_ota_has_checked()) {
+    snprintf(buffer, size, "Not checked yet");
+    return;
+  }
+  uint64_t seconds = touchscreen_ota_last_check_age_seconds();
+  if (seconds < 60)
+    snprintf(buffer, size, "Just now");
+  else if (seconds < 3600)
+    snprintf(buffer, size, "%llu min ago",
+             (unsigned long long)(seconds / 60));
+  else if (seconds < 86400)
+    snprintf(buffer, size, "%llu hr ago",
+             (unsigned long long)(seconds / 3600));
+  else
+    snprintf(buffer, size, "%llu day%s ago",
+             (unsigned long long)(seconds / 86400),
+             seconds / 86400 == 1 ? "" : "s");
 }
 
 void clear_ota_overlay() {
@@ -42,23 +91,95 @@ void clear_ota_overlay() {
   ota_overlay_bar = nullptr;
 }
 
+void update_channel_warning() {
+  if (!ota_channel_dropdown || !ota_warning_label)
+    return;
+  const uint16_t selected = lv_dropdown_get_selected(ota_channel_dropdown);
+  if (selected == 0) {
+    lv_label_set_text(
+        ota_warning_label,
+        "Production is recommended for normal use. Only stable releases are "
+        "published to this channel.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(ACCENT), 0);
+  } else if (selected == 1) {
+    lv_label_set_text(
+        ota_warning_label,
+        "Beta firmware is pre-release software. It may contain unfinished "
+        "changes and should be used for validation only.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
+  } else {
+    lv_label_set_text(
+        ota_warning_label,
+        "Development firmware is experimental and may contain unfinished "
+        "features or bugs. Only use Development when instructed.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
+  }
+}
+
+void channel_changed(lv_event_t *) { update_channel_warning(); }
+
 void render_update_page();
 
 void check_update(lv_event_t *) {
   ota_view = OtaView::Checking;
+  ota_error_text[0] = 0;
   render_update_page();
-  touchscreen_set_ota_install_mode(false);
-  if (!submit("ota", nullptr)) {
+  esp_err_t e = touchscreen_ota_request(false, true);
+  if (e != ESP_OK) {
     ota_view = OtaView::Error;
     copy_text(ota_error_text, sizeof(ota_error_text),
-              "Could not start the update check. Please try again.");
+              e == ESP_ERR_INVALID_STATE
+                  ? "An update check is already running."
+                  : "Could not start the update check. Please try again.");
+    render_update_page();
+  }
+}
+
+void install_update(lv_event_t *) {
+  ota_view = OtaView::Preparing;
+  render_update_page();
+  esp_err_t e = touchscreen_ota_request(true, true);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              e == ESP_ERR_INVALID_STATE
+                  ? "An update operation is already running."
+                  : "Could not start the firmware update. Please try again.");
+    render_update_page();
+  }
+}
+
+void save_update_settings(lv_event_t *) {
+  if (!ota_channel_dropdown || !ota_auto_install_switch)
+    return;
+  const char *channel =
+      channel_from_selection(lv_dropdown_get_selected(ota_channel_dropdown));
+  const bool auto_install =
+      lv_obj_has_state(ota_auto_install_switch, LV_STATE_CHECKED);
+  esp_err_t e = touchscreen_ota_save_preferences(channel, auto_install);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              "Could not save update settings.");
+    render_update_page();
+    return;
+  }
+
+  ota_view = OtaView::Checking;
+  ota_latest[0] = 0;
+  message("Update settings saved");
+  render_update_page();
+  e = touchscreen_ota_request(false, true);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              "Settings saved, but the update check could not start.");
     render_update_page();
   }
 }
 
 void close_ota_overlay(lv_event_t *) {
   clear_ota_overlay();
-  ota_view = OtaView::Idle;
   update_page_customized = false;
   build(4);
 }
@@ -101,7 +222,7 @@ void create_install_overlay(const char *version) {
   lv_obj_set_style_radius(ota_overlay_bar, 12, LV_PART_INDICATOR);
 
   ota_overlay_status =
-      label(ota_overlay, "Preparing secure download…", 36, 285, 408,
+      label(ota_overlay, "Preparing secure download...", 36, 285, 408,
             &lv_font_montserrat_18);
   lv_obj_set_style_text_align(ota_overlay_status, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -115,15 +236,22 @@ void create_install_overlay(const char *version) {
   lv_obj_move_foreground(ota_overlay);
 }
 
-void install_update(lv_event_t *) {
-  ota_view = OtaView::Preparing;
-  render_update_page();
-  touchscreen_set_ota_install_mode(true);
-  if (!submit("ota", nullptr)) {
-    ota_view = OtaView::Error;
-    copy_text(ota_error_text, sizeof(ota_error_text),
-              "Could not start the firmware update. Please try again.");
-    render_update_page();
+const char *status_text() {
+  switch (ota_view) {
+  case OtaView::Checking:
+    return "Checking...";
+  case OtaView::Preparing:
+    return "Preparing update...";
+  case OtaView::Current:
+    return "Up to date";
+  case OtaView::Available:
+    return "Update available";
+  case OtaView::Stale:
+    return "Feed syncing";
+  case OtaView::Error:
+    return "Check failed";
+  default:
+    return touchscreen_ota_has_checked() ? "Checked" : "Not checked";
   }
 }
 
@@ -135,73 +263,99 @@ void render_update_page() {
   lv_obj_clean(content);
   headline = detail = connection = arc = networks = nullptr;
   memset(fields, 0, sizeof(fields));
+  ota_channel_dropdown = nullptr;
+  ota_auto_install_switch = nullptr;
+  ota_warning_label = nullptr;
+  ota_last_check_value = nullptr;
 
-  label(content, "Firmware Update", 8, 0, 424, &lv_font_montserrat_24);
-
-  char versions[120];
+  OtaPreferences preferences{};
+  touchscreen_ota_get_preferences(&preferences);
   const char *running = esp_app_get_description()->version;
-  snprintf(versions, sizeof(versions), "Current version   %s", running);
-  label(content, versions, 8, 42, 424, &lv_font_montserrat_18);
 
-  if (ota_view == OtaView::Idle) {
-    label(content,
-          "Check the development channel for touchscreen firmware. Checking "
-          "only reads the published update information; it does not install "
-          "firmware.",
-          8, 88, 424, &lv_font_montserrat_16);
-    button(content, "Check for update", 8, 220, 424, check_update);
-  } else if (ota_view == OtaView::Checking) {
-    label(content, "Checking for updates…", 8, 100, 424,
-          &lv_font_montserrat_24);
-    label(content,
-          "Contacting the update service and validating the firmware manifest.",
-          8, 150, 424, &lv_font_montserrat_16);
-  } else if (ota_view == OtaView::Preparing) {
-    label(content, "Preparing update…", 8, 100, 424,
-          &lv_font_montserrat_24);
-    label(content,
-          "Revalidating the update before installation begins.",
-          8, 150, 424, &lv_font_montserrat_16);
-  } else if (ota_view == OtaView::Current) {
-    label(content, "Your firmware is current", 8, 94, 424,
-          &lv_font_montserrat_24);
-    snprintf(versions, sizeof(versions), "Latest version    %s", ota_latest);
-    label(content, versions, 8, 145, 424, &lv_font_montserrat_18);
-    button(content, "Check again", 8, 230, 424, check_update);
-  } else if (ota_view == OtaView::Available) {
-    label(content, "Update available", 8, 86, 424, &lv_font_montserrat_24);
-    snprintf(versions, sizeof(versions), "%s  →  %s", ota_current, ota_latest);
-    auto versions_label =
-        label(content, versions, 8, 135, 424, &lv_font_montserrat_20);
-    lv_obj_set_style_text_color(versions_label, lv_color_hex(ACCENT), 0);
-    label(content,
-          "Keep the touchscreen connected to power. Installation will take "
-          "over the display until the device restarts.",
-          8, 178, 424, &lv_font_montserrat_16);
-    char button_text[64];
-    snprintf(button_text, sizeof(button_text), "Install %s", ota_latest);
-    button(content, button_text, 8, 258, 424, install_update);
-  } else if (ota_view == OtaView::Stale) {
-    label(content, "Update service is syncing", 8, 88, 424,
-          &lv_font_montserrat_24);
-    snprintf(versions, sizeof(versions), "Published version  %s", ota_latest);
-    label(content, versions, 8, 140, 424, &lv_font_montserrat_18);
-    label(content,
-          "The published firmware is older than this touchscreen, so it will "
-          "not be installed. Try again after publishing finishes.",
-          8, 180, 424, &lv_font_montserrat_16);
-    button(content, "Check again", 8, 270, 424, check_update);
-  } else {
-    label(content, "Could not check for updates", 8, 88, 424,
-          &lv_font_montserrat_24);
-    label(content, ota_error_text, 8, 145, 424, &lv_font_montserrat_16);
-    button(content, "Try again", 8, 250, 424, check_update);
+  label(content, "Firmware updates", 8, 0, 424, &lv_font_montserrat_24);
+
+  label(content, "Current", 8, 45, 145, &lv_font_montserrat_16);
+  auto current_value = label(content, running, 190, 45, 230,
+                             &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(current_value, LV_TEXT_ALIGN_RIGHT, 0);
+
+  label(content, "Latest", 8, 78, 145, &lv_font_montserrat_16);
+  auto latest_value = label(content, ota_latest[0] ? ota_latest : "--", 190, 78,
+                            230, &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(latest_value, LV_TEXT_ALIGN_RIGHT, 0);
+
+  label(content, "Status", 8, 111, 145, &lv_font_montserrat_16);
+  auto status_value =
+      label(content, status_text(), 170, 111, 250, &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(status_value, LV_TEXT_ALIGN_RIGHT, 0);
+  if (ota_view == OtaView::Current || ota_view == OtaView::Available)
+    lv_obj_set_style_text_color(status_value, lv_color_hex(ACCENT), 0);
+  else if (ota_view == OtaView::Error || ota_view == OtaView::Stale)
+    lv_obj_set_style_text_color(status_value, lv_color_hex(WARNING), 0);
+
+  label(content, "Update channel", 8, 154, 424, &lv_font_montserrat_16);
+  ota_channel_dropdown = lv_dropdown_create(content);
+  lv_obj_set_pos(ota_channel_dropdown, 8, 181);
+  lv_obj_set_size(ota_channel_dropdown, 424, 46);
+  lv_dropdown_set_options(ota_channel_dropdown,
+                          "Production\nBeta\nDevelopment - Experimental");
+  lv_dropdown_set_selected(ota_channel_dropdown,
+                           selection_from_channel(preferences.channel));
+  lv_obj_add_event_cb(ota_channel_dropdown, channel_changed,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  ota_warning_label =
+      label(content, "", 8, 240, 424, &lv_font_montserrat_14);
+  lv_obj_set_height(ota_warning_label, 72);
+  update_channel_warning();
+
+  label(content, "Automatically install updates", 8, 322, 330,
+        &lv_font_montserrat_16);
+  ota_auto_install_switch = lv_switch_create(content);
+  lv_obj_set_pos(ota_auto_install_switch, 365, 315);
+  lv_obj_set_size(ota_auto_install_switch, 60, 32);
+  if (preferences.auto_install)
+    lv_obj_add_state(ota_auto_install_switch, LV_STATE_CHECKED);
+
+  label(content,
+        "Automatic checks run after Wi-Fi starts and then every 24 hours.",
+        8, 360, 424, &lv_font_montserrat_14);
+
+  button(content, "Save update settings", 8, 405, 424,
+         save_update_settings);
+  button(content, "Check Now", 8, 463, 424, check_update);
+
+  int next_y = 521;
+  if (ota_view == OtaView::Available) {
+    char install_text[64];
+    snprintf(install_text, sizeof(install_text), "Install %s",
+             ota_latest[0] ? ota_latest : "update");
+    button(content, install_text, 8, next_y, 424, install_update);
+    next_y += 58;
   }
 
-  char footer[96];
-  snprintf(footer, sizeof(footer), "Scale firmware: %s   |   Wi-Fi protocol: 1",
-           current.firmware[0] ? current.firmware : "unknown");
-  label(content, footer, 8, 305, 424, &lv_font_montserrat_14);
+  label(content, "Last update check", 8, next_y + 4, 200,
+        &lv_font_montserrat_14);
+  char last_check[48];
+  format_last_check(last_check, sizeof(last_check));
+  ota_last_check_value = label(content, last_check, 220, next_y + 4, 200,
+                               &lv_font_montserrat_14);
+  lv_obj_set_style_text_align(ota_last_check_value, LV_TEXT_ALIGN_RIGHT, 0);
+  next_y += 42;
+
+  if (ota_view == OtaView::Error && ota_error_text[0]) {
+    auto error = label(content, ota_error_text, 8, next_y, 424,
+                       &lv_font_montserrat_14);
+    lv_obj_set_style_text_color(error, lv_color_hex(WARNING), 0);
+    next_y += 58;
+  }
+
+  char compatibility[160];
+  snprintf(compatibility, sizeof(compatibility),
+           "Compatibility: scale protocol 1; touchscreen protocol 1.\nScale firmware: %s | Channel: %s",
+           current.firmware[0] ? current.firmware : "unknown",
+           channel_display_name(preferences.channel));
+  label(content, compatibility, 8, next_y, 424, &lv_font_montserrat_14);
 }
 
 void update_page_watch(lv_timer_t *) {
@@ -209,16 +363,27 @@ void update_page_watch(lv_timer_t *) {
     return;
   if (page_id != 4) {
     update_page_customized = false;
+    ota_channel_dropdown = nullptr;
+    ota_auto_install_switch = nullptr;
+    ota_warning_label = nullptr;
+    ota_last_check_value = nullptr;
     return;
   }
-  if (!update_page_customized)
+  if (!update_page_customized) {
     render_update_page();
+    return;
+  }
+  if (ota_last_check_value) {
+    char last_check[48];
+    format_last_check(last_check, sizeof(last_check));
+    lv_label_set_text(ota_last_check_value, last_check);
+  }
 }
 } // namespace
 
 void ui_start(const Settings &settings) {
   ui_start_legacy(settings);
-  lv_timer_create(update_page_watch, 20, nullptr);
+  lv_timer_create(update_page_watch, 1000, nullptr);
 }
 
 void ui_settings_applied(const Settings &settings) {
@@ -234,9 +399,9 @@ void ui_update_checking(void) {
   if (!bsp_display_lock(1000))
     return;
   ota_view = OtaView::Checking;
-  if (page_id != 4)
-    page_id = 4;
-  render_update_page();
+  ota_error_text[0] = 0;
+  if (page_id == 4)
+    render_update_page();
   bsp_display_unlock();
 }
 
@@ -244,15 +409,14 @@ void ui_update_status(const char *current_version, const char *latest_version,
                       bool update_available, bool feed_stale) {
   if (!bsp_display_lock(1000))
     return;
-  clear_ota_overlay();
   copy_text(ota_current, sizeof(ota_current), current_version);
   copy_text(ota_latest, sizeof(ota_latest), latest_version);
+  ota_error_text[0] = 0;
   ota_view = feed_stale ? OtaView::Stale
                         : (update_available ? OtaView::Available
                                             : OtaView::Current);
-  if (page_id != 4)
-    page_id = 4;
-  render_update_page();
+  if (page_id == 4 && !ota_overlay)
+    render_update_page();
   bsp_display_unlock();
 }
 
@@ -278,8 +442,8 @@ void ui_update_progress(int percent) {
     lv_bar_set_value(ota_overlay_bar, percent, LV_ANIM_OFF);
   if (ota_overlay_status)
     lv_label_set_text(ota_overlay_status,
-                      percent < 100 ? "Downloading and verifying firmware…"
-                                    : "Finalizing update…");
+                      percent < 100 ? "Downloading and verifying firmware..."
+                                    : "Finalizing update...");
   bsp_display_unlock();
 }
 
@@ -296,7 +460,7 @@ void ui_update_complete(const char *version) {
     lv_bar_set_value(ota_overlay_bar, 100, LV_ANIM_OFF);
   if (ota_overlay_status)
     lv_label_set_text(ota_overlay_status,
-                      "Firmware verified. Restarting touchscreen…");
+                      "Firmware verified. Restarting touchscreen...");
   bsp_display_unlock();
 }
 
@@ -320,9 +484,8 @@ void ui_update_error(const char *error, bool installing) {
     button(ota_overlay, "Back to Firmware", 36, 340, 408, close_ota_overlay);
   } else {
     ota_view = OtaView::Error;
-    if (page_id != 4)
-      page_id = 4;
-    render_update_page();
+    if (page_id == 4)
+      render_update_page();
   }
   bsp_display_unlock();
 }
