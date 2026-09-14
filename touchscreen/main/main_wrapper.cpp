@@ -68,7 +68,7 @@ void auto_discovery_task(void *) {
   if (e == ESP_OK && count == 1 && only) {
     snprintf(settings.host, sizeof(settings.host), "%s.local", only->hostname);
     if (persist() == ESP_OK) {
-      ui_discovered(settings.host);
+      ui_settings_applied(settings);
       touchscreen_ui_message("Scale found automatically — connecting…");
       retry_connection = true;
       next_connection_attempt = now();
@@ -99,6 +99,11 @@ static void touchscreen_ui_message(const char *message) {
 static void touchscreen_apply_settings_live() {
   const bool wifi_changed = wifi_settings_changed();
   const bool host_changed = scale_host_changed();
+
+  /* The settings were already persisted by main.cpp before this hook runs.
+   * Mirror them into the Setup UI immediately instead of relying on a reboot to
+   * reload NVS. */
+  ui_settings_applied(settings);
 
   if (!wifi_changed && !host_changed) {
     touchscreen_ui_message("Settings saved");
