@@ -31,6 +31,7 @@ lv_obj_t *scale_slot_dropdown = nullptr;
 lv_obj_t *scale_host_dropdown = nullptr;
 lv_obj_t *scale_manual_label = nullptr;
 lv_obj_t *scale_manual_host = nullptr;
+lv_obj_t *capacity_dropdown = nullptr;
 lv_obj_t *home_nav_button = nullptr;
 char discovered_scale_options[800] = "Manual IP / hostname...";
 bool ui_initialized = false;
@@ -242,6 +243,53 @@ void nav(lv_event_t *e) {
   }
   build(target);
 }
+uint16_t capacity_preset_index(float gallons) {
+  if (fabsf(gallons - 15.5f) < 0.005f)
+    return 1;
+  if (fabsf(gallons - 7.75f) < 0.005f)
+    return 2;
+  if (fabsf(gallons - 5.17f) < 0.005f)
+    return 3;
+  if (fabsf(gallons - 5.0f) < 0.005f)
+    return 4;
+  return 0;
+}
+
+float capacity_preset_value(uint16_t index) {
+  switch (index) {
+  case 1:
+    return 15.5f;
+  case 2:
+    return 7.75f;
+  case 3:
+    return 5.17f;
+  case 4:
+    return 5.0f;
+  default:
+    return 0.0f;
+  }
+}
+
+void capacity_preset_changed(lv_event_t *event) {
+  if (!fields[1])
+    return;
+
+  const uint16_t selected =
+      lv_dropdown_get_selected((lv_obj_t *)lv_event_get_target(event));
+
+  if (selected == 0) {
+    lv_obj_remove_state(fields[1], LV_STATE_DISABLED);
+    return;
+  }
+
+  char value[16];
+  snprintf(value, sizeof(value), "%.2f",
+           (double)capacity_preset_value(selected));
+  lv_obj_remove_state(fields[1], LV_STATE_DISABLED);
+  lv_textarea_set_text(fields[1], value);
+  lv_obj_add_state(fields[1], LV_STATE_DISABLED);
+}
+
 void save_keg(lv_event_t *) {
   if (!editor_valid) {
     message("Connection changed. Reload from scale before saving.");
@@ -417,11 +465,13 @@ void build(int page) {
   page_id = page;
   update_home_nav_button();
   lv_obj_clean(content);
+  lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
   headline = detail = connection = arc = networks = nullptr;
   scale_slot_dropdown = nullptr;
   scale_host_dropdown = nullptr;
   scale_manual_label = nullptr;
   scale_manual_host = nullptr;
+  capacity_dropdown = nullptr;
   memset(fields, 0, sizeof(fields));
   if (page == 0) {
     // Identify the shared content container as Home without building the old
@@ -442,24 +492,76 @@ void build(int page) {
             8, 105, 424, &lv_font_montserrat_18);
       return;
     }
-    fields[0] = field("Beer / beverage name", current.name, 42);
-    const char *names[] = {"Keg capacity (gallons)", "Empty keg weight (lb)",
-                           "Beverage density (lb / gallon)",
-                           "Serving size (oz)"};
-    float values[] = {current.capacity, current.empty,
-                      current.density > 0 ? current.density : 8.34f,
-                      current.serving > 0 ? current.serving : 16};
-    for (int i = 0; i < 4; i++) {
-      char b[24];
-      snprintf(b, sizeof(b), "%.2f", (double)values[i]);
-      fields[i + 1] = field(names[i], b, 125 + i * 85, true);
-    }
-    label(content,
-          "Examples: pint 16 oz • can 12 oz\nGrowler 64 oz. Capacity is the "
-          "keg's nominal full volume.",
-          8, 470, 424, &lv_font_montserrat_16);
-    button(content, "Save to scale", 8, 530, 424, save_keg);
-    button(content, "Reload from scale", 8, 590, 424, nav, (void *)1);
+
+    auto compact_field =
+        [&](const char *title, const char *value, int x, int y, int width,
+            bool numeric = false, int limit = 32) -> lv_obj_t * {
+      label(content, title, x, y, width, &lv_font_montserrat_14);
+      auto o = lv_textarea_create(content);
+      lv_obj_set_pos(o, x, y + 18);
+      lv_obj_set_size(o, width, 40);
+      lv_textarea_set_one_line(o, true);
+      lv_textarea_set_max_length(o, limit);
+      lv_textarea_set_text(o, value);
+      if (numeric)
+        lv_textarea_set_accepted_chars(o, "0123456789.");
+      lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+      lv_obj_add_event_cb(o, focus, LV_EVENT_SHORT_CLICKED, nullptr);
+      return o;
+    };
+
+    fields[0] =
+        compact_field("Beer / Beverage", current.name, 8, 34, 424, false);
+
+    label(content, "Capacity (gal)", 8, 98, 207, &lv_font_montserrat_14);
+
+    capacity_dropdown = lv_dropdown_create(content);
+    lv_obj_set_pos(capacity_dropdown, 8, 116);
+    lv_obj_set_size(capacity_dropdown, 128, 40);
+    lv_dropdown_set_options(
+        capacity_dropdown,
+        "Custom\n1/2 barrel\n1/4 barrel\n1/6 barrel\nCorny keg");
+
+    char capacity_value[16];
+    snprintf(capacity_value, sizeof(capacity_value), "%.2f",
+             (double)current.capacity);
+    fields[1] = lv_textarea_create(content);
+    lv_obj_set_pos(fields[1], 142, 116);
+    lv_obj_set_size(fields[1], 73, 40);
+    lv_textarea_set_one_line(fields[1], true);
+    lv_textarea_set_max_length(fields[1], 8);
+    lv_textarea_set_accepted_chars(fields[1], "0123456789.");
+    lv_textarea_set_text(fields[1], capacity_value);
+    lv_obj_remove_flag(fields[1], LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_add_event_cb(fields[1], focus, LV_EVENT_SHORT_CLICKED, nullptr);
+
+    const uint16_t capacity_selection =
+        capacity_preset_index(current.capacity);
+    lv_dropdown_set_selected(capacity_dropdown, capacity_selection);
+    if (capacity_selection != 0)
+      lv_obj_add_state(fields[1], LV_STATE_DISABLED);
+    lv_obj_add_event_cb(capacity_dropdown, capacity_preset_changed,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+
+    char b[24];
+    snprintf(b, sizeof(b), "%.2f", (double)current.empty);
+    fields[2] =
+        compact_field("Empty Keg (lb)", b, 225, 98, 207, true);
+
+    snprintf(b, sizeof(b), "%.2f",
+             (double)(current.density > 0 ? current.density : 8.34f));
+    fields[3] =
+        compact_field("Density (lb/gal)", b, 8, 160, 207, true);
+
+    snprintf(b, sizeof(b), "%.2f",
+             (double)(current.serving > 0 ? current.serving : 16));
+    fields[4] =
+        compact_field("Serving (oz)", b, 225, 160, 207, true);
+
+    label(content, "Serving examples: 12 oz can • 16 oz pint • 64 oz growler",
+          8, 224, 424, &lv_font_montserrat_14);
+    button(content, "Save to scale", 8, 252, 207, save_keg);
+    button(content, "Reload", 225, 252, 207, nav, (void *)1);
   } else if (page == 2) {
     headline = label(content, "", 8, 0, 424, &lv_font_montserrat_20);
     dashboard();
@@ -482,22 +584,38 @@ void build(int page) {
     button(content, "Cancel / release scale", 8, cal_step == 2 ? 275 : 265, 424,
            cancel_calibration);
   } else if (page == 3) {
-    label(content, "Connection & display", 8, 0, 424, &lv_font_montserrat_24);
+    label(content, "Setup", 8, 0, 190, &lv_font_montserrat_24);
     if (pair_code[0]) {
-      char b[140];
-      snprintf(b, sizeof(b),
-               "Pairing code: %s\nEnter this on the scale's Wi-Fi touchscreen "
-               "setup page.",
-               pair_code);
-      label(content, b, 8, 38, 424, &lv_font_montserrat_20);
+      char pair_label[48];
+      snprintf(pair_label, sizeof(pair_label), "Pair: %s", pair_code);
+      label(content, pair_label, 205, 5, 227, &lv_font_montserrat_16);
     }
 
     setup_scale_slot = active_scale_ui;
-    int y = pair_code[0] ? 135 : 45;
-    label(content, "Scale connection", 8, y, 424, &lv_font_montserrat_16);
+
+    auto compact_setup_field =
+        [&](const char *title, const char *value, int x, int y, int width,
+            bool password = false, int limit = 64) -> lv_obj_t * {
+      label(content, title, x, y, width, &lv_font_montserrat_14);
+      auto o = lv_textarea_create(content);
+      lv_obj_set_pos(o, x, y + 17);
+      lv_obj_set_size(o, width, 40);
+      lv_textarea_set_one_line(o, true);
+      lv_textarea_set_max_length(o, limit);
+      lv_textarea_set_text(o, value);
+      if (password)
+        lv_textarea_set_password_mode(o, true);
+      lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+      lv_obj_add_event_cb(o, focus, LV_EVENT_SHORT_CLICKED, nullptr);
+      return o;
+    };
+
+    label(content, "Scale", 8, 30, 195, &lv_font_montserrat_14);
+    label(content, "Scale host", 211, 30, 221, &lv_font_montserrat_14);
+
     scale_slot_dropdown = lv_dropdown_create(content);
-    lv_obj_set_pos(scale_slot_dropdown, 8, y + 25);
-    lv_obj_set_size(scale_slot_dropdown, 424, 46);
+    lv_obj_set_pos(scale_slot_dropdown, 8, 46);
+    lv_obj_set_size(scale_slot_dropdown, 195, 40);
     char scale_options[128];
     snprintf(scale_options, sizeof(scale_options),
              "Scale 1%s\nScale 2%s",
@@ -512,37 +630,23 @@ void build(int page) {
     lv_obj_add_event_cb(scale_slot_dropdown, scale_slot_changed,
                         LV_EVENT_VALUE_CHANGED, nullptr);
 
-    y += 82;
-    button(content, "Scan Wi-Fi", 8, y, 205, scan);
-    button(content, "Find scale", 230, y, 200, discover);
-
-    networks = lv_dropdown_create(content);
-    lv_obj_set_pos(networks, 8, y + 56);
-    lv_obj_set_size(networks, 424, 45);
-    lv_dropdown_set_options(networks, "Select Wi-Fi network");
-    lv_obj_add_event_cb(networks, select_network, LV_EVENT_VALUE_CHANGED,
-                        nullptr);
-
-    fields[0] = field("Wi-Fi name (SSID)", initial.ssid, y + 115, false, 32);
-    fields[1] = field("Wi-Fi password", initial.password, y + 200, false, 64);
-    lv_textarea_set_password_mode(fields[1], true);
-
-    label(content, "Scale hostname or IP", 8, y + 285, 424,
-          &lv_font_montserrat_16);
     scale_host_dropdown = lv_dropdown_create(content);
-    lv_obj_set_pos(scale_host_dropdown, 8, y + 310);
-    lv_obj_set_size(scale_host_dropdown, 424, 46);
+    lv_obj_set_pos(scale_host_dropdown, 211, 46);
+    lv_obj_set_size(scale_host_dropdown, 221, 40);
     lv_obj_add_event_cb(scale_host_dropdown, scale_host_selection_changed,
                         LV_EVENT_VALUE_CHANGED, nullptr);
 
+    button(content, "Scan Wi-Fi", 8, 94, 120, scan);
+    button(content, "Find scale", 136, 94, 120, discover);
+
     scale_manual_label =
-        label(content, "Manual IP / hostname", 8, y + 365, 424,
-              &lv_font_montserrat_16);
+        label(content, "", 0, 0, 1, &lv_font_montserrat_14);
     scale_manual_host = lv_textarea_create(content);
-    lv_obj_set_pos(scale_manual_host, 8, y + 390);
-    lv_obj_set_size(scale_manual_host, 424, 46);
+    lv_obj_set_pos(scale_manual_host, 264, 97);
+    lv_obj_set_size(scale_manual_host, 168, 40);
     lv_textarea_set_one_line(scale_manual_host, true);
     lv_textarea_set_max_length(scale_manual_host, 127);
+    lv_textarea_set_placeholder_text(scale_manual_host, "Manual host");
     lv_textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
     lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(scale_manual_host, focus, LV_EVENT_SHORT_CLICKED,
@@ -550,22 +654,28 @@ void build(int page) {
 
     load_saved_host_options();
 
-    label(content,
-          "Use Find scale to discover every scale on this Wi-Fi network, or "
-          "choose Manual IP / hostname. Open Add touchscreen on the selected "
-          "scale before first pairing.",
-          8, y + 455, 424, &lv_font_montserrat_16);
+    networks = lv_dropdown_create(content);
+    lv_obj_set_pos(networks, 8, 144);
+    lv_obj_set_size(networks, 424, 36);
+    lv_dropdown_set_options(networks, "Select Wi-Fi network");
+    lv_obj_add_event_cb(networks, select_network, LV_EVENT_VALUE_CHANGED,
+                        nullptr);
 
-    label(content, "Brightness", 8, y + 535, 424);
+    fields[0] =
+        compact_setup_field("SSID", initial.ssid, 8, 186, 207, false, 32);
+    fields[1] =
+        compact_setup_field("Password", initial.password, 225, 186, 207, true, 64);
+
+    label(content, "Brightness", 8, 250, 92, &lv_font_montserrat_14);
     fields[3] = lv_slider_create(content);
-    lv_obj_set_pos(fields[3], 18, y + 578);
-    lv_obj_set_size(fields[3], 404, 15);
+    lv_obj_set_pos(fields[3], 108, 258);
+    lv_obj_set_size(fields[3], 324, 15);
     lv_slider_set_range(fields[3], 10, 100);
     lv_slider_set_value(fields[3], initial.brightness, LV_ANIM_OFF);
     lv_obj_add_event_cb(fields[3], brightness, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    button(content, "Save and connect", 8, y + 615, 424, save_settings);
-    button(content, "Remove selected scale pairing", 8, y + 675, 424, forget);
+    button(content, "Save & connect", 8, 284, 207, save_settings);
+    button(content, "Remove pairing", 225, 284, 207, forget);
   } else {
     label(content, "Firmware & diagnostics", 8, 0, 424, &lv_font_montserrat_24);
     char b[300];

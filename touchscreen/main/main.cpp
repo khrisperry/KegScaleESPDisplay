@@ -171,8 +171,12 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
     for (uint8_t slot = 0; slot < 2; ++slot) {
       auto &c = connection_for(slot);
       if (scale_host_const(slot)[0]) {
-        c.retry_connection = true;
-        c.next_connection_attempt = now() + kReconnectRetryUs;
+        // Paired scales stay connected in the background. An unpaired scale
+        // only needs setup probing when it is the scale the user selected.
+        c.retry_connection =
+            scale_paired(slot) || slot == active_scale_index;
+        c.next_connection_attempt =
+            c.retry_connection ? now() + kReconnectRetryUs : 0;
       }
     }
     esp_err_t e = esp_wifi_connect();
@@ -184,8 +188,9 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
     for (uint8_t slot = 0; slot < 2; ++slot) {
       auto &c = connection_for(slot);
       if (scale_host_const(slot)[0]) {
-        c.retry_connection = true;
-        c.next_connection_attempt = now();
+        c.retry_connection =
+            scale_paired(slot) || slot == active_scale_index;
+        c.next_connection_attempt = c.retry_connection ? now() : 0;
       }
     }
   }
@@ -440,6 +445,17 @@ void connect_scale(uint8_t slot) {
     return;
   }
   if (!scale_paired(slot)) {
+    if (slot != active_scale_index) {
+      // Do not run the blocking HTTP setup probe for an unused/unpaired
+      // secondary scale. The probe can spend seconds in DNS/HTTP timeouts,
+      // starving the frame consumer and overflowing the Scale 1 frame queue.
+      c.retry_connection = false;
+      c.next_connection_attempt = 0;
+      ESP_LOGI(TAG,
+               "Scale %u is configured but inactive/unpaired; deferring setup probe until selected",
+               (unsigned)(slot + 1));
+      return;
+    }
     if (!scale_accepting_connection(slot)) {
       ESP_LOGW(TAG,
                "Scale %u connection stopped before WebSocket: setup endpoint is not accepting this display",

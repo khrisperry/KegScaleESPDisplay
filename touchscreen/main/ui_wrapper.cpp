@@ -238,20 +238,17 @@ void update_channel_warning() {
   if (selected == 0) {
     lv_label_set_text(
         ota_warning_label,
-        "Production is recommended for normal use. Only stable releases are "
-        "published to this channel.");
+        "Stable releases. Recommended for normal use.");
     lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(ACCENT), 0);
   } else if (selected == 1) {
     lv_label_set_text(
         ota_warning_label,
-        "Beta firmware is pre-release software. It may contain unfinished "
-        "changes and should be used for validation only.");
+        "Pre-release validation builds. May contain unfinished changes.");
     lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
   } else {
     lv_label_set_text(
         ota_warning_label,
-        "Development firmware is experimental and may contain unfinished "
-        "features or bugs. Only use Development when instructed.");
+        "Experimental builds. Use Development only when instructed.");
     lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
   }
 }
@@ -400,6 +397,7 @@ void render_update_page() {
 
   update_page_customized = true;
   lv_obj_clean(content);
+  lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
   headline = detail = connection = arc = networks = nullptr;
   memset(fields, 0, sizeof(fields));
   ota_channel_dropdown = nullptr;
@@ -411,90 +409,80 @@ void render_update_page() {
   touchscreen_ota_get_preferences(&preferences);
   const char *running = esp_app_get_description()->version;
 
+  // Everything on this page stays inside the normal 334-pixel content area.
   label(content, "Firmware updates", 8, 0, 424, &lv_font_montserrat_24);
 
-  label(content, "Current", 8, 45, 145, &lv_font_montserrat_16);
-  auto current_value = label(content, running, 190, 45, 230,
-                             &lv_font_montserrat_18);
-  lv_obj_set_style_text_align(current_value, LV_TEXT_ALIGN_RIGHT, 0);
+  // Current / Latest / Status summary.
+  label(content, "CURRENT", 8, 37, 128, &lv_font_montserrat_14);
+  auto current_value =
+      label(content, running, 8, 55, 128, &lv_font_montserrat_18);
 
-  label(content, "Latest", 8, 78, 145, &lv_font_montserrat_16);
-  auto latest_value = label(content, ota_latest[0] ? ota_latest : "--", 190, 78,
-                            230, &lv_font_montserrat_18);
-  lv_obj_set_style_text_align(latest_value, LV_TEXT_ALIGN_RIGHT, 0);
+  label(content, "LATEST", 148, 37, 128, &lv_font_montserrat_14);
+  auto latest_value =
+      label(content, ota_latest[0] ? ota_latest : "--", 148, 55, 128,
+            &lv_font_montserrat_18);
 
-  label(content, "Status", 8, 111, 145, &lv_font_montserrat_16);
+  label(content, "STATUS", 288, 37, 136, &lv_font_montserrat_14);
   auto status_value =
-      label(content, status_text(), 170, 111, 250, &lv_font_montserrat_18);
-  lv_obj_set_style_text_align(status_value, LV_TEXT_ALIGN_RIGHT, 0);
+      label(content, status_text(), 288, 55, 136, &lv_font_montserrat_16);
+
+  lv_obj_set_style_text_color(current_value, lv_color_hex(TEXT), 0);
+  lv_obj_set_style_text_color(latest_value, lv_color_hex(TEXT), 0);
   if (ota_view == OtaView::Current || ota_view == OtaView::Available)
     lv_obj_set_style_text_color(status_value, lv_color_hex(ACCENT), 0);
   else if (ota_view == OtaView::Error || ota_view == OtaView::Stale)
     lv_obj_set_style_text_color(status_value, lv_color_hex(WARNING), 0);
 
-  label(content, "Update channel", 8, 154, 424, &lv_font_montserrat_16);
+  // Channel and automatic-install preference share one row.
+  label(content, "Channel", 8, 91, 72, &lv_font_montserrat_14);
   ota_channel_dropdown = lv_dropdown_create(content);
-  lv_obj_set_pos(ota_channel_dropdown, 8, 181);
-  lv_obj_set_size(ota_channel_dropdown, 424, 46);
+  lv_obj_set_pos(ota_channel_dropdown, 78, 82);
+  lv_obj_set_size(ota_channel_dropdown, 205, 38);
   lv_dropdown_set_options(ota_channel_dropdown,
-                          "Production\nBeta\nDevelopment - Experimental");
+                          "Production\nBeta\nDevelopment");
   lv_dropdown_set_selected(ota_channel_dropdown,
                            selection_from_channel(preferences.channel));
   lv_obj_add_event_cb(ota_channel_dropdown, channel_changed,
                       LV_EVENT_VALUE_CHANGED, nullptr);
 
-  ota_warning_label =
-      label(content, "", 8, 240, 424, &lv_font_montserrat_14);
-  lv_obj_set_height(ota_warning_label, 72);
-  update_channel_warning();
-
-  label(content, "Automatically install updates", 8, 322, 330,
-        &lv_font_montserrat_16);
+  label(content, "Auto install", 294, 91, 80, &lv_font_montserrat_14);
   ota_auto_install_switch = lv_switch_create(content);
-  lv_obj_set_pos(ota_auto_install_switch, 365, 315);
-  lv_obj_set_size(ota_auto_install_switch, 60, 32);
+  lv_obj_set_pos(ota_auto_install_switch, 374, 85);
+  lv_obj_set_size(ota_auto_install_switch, 58, 30);
   if (preferences.auto_install)
     lv_obj_add_state(ota_auto_install_switch, LV_STATE_CHECKED);
 
-  label(content,
-        "Automatic checks run after Wi-Fi starts and then every 24 hours.",
-        8, 360, 424, &lv_font_montserrat_14);
+  ota_warning_label =
+      label(content, "", 8, 127, 424, &lv_font_montserrat_14);
+  lv_obj_set_height(ota_warning_label, 38);
+  update_channel_warning();
 
-  button(content, "Save update settings", 8, 405, 424,
-         save_update_settings);
-  button(content, "Check Now", 8, 463, 424, check_update);
+  label(content, "Auto checks: after Wi-Fi starts, then every 24 hours.",
+        8, 165, 424, &lv_font_montserrat_14);
 
-  int next_y = 521;
+  button(content, "Save settings", 8, 188, 205, save_update_settings);
+  button(content, "Check now", 227, 188, 205, check_update);
+
   if (ota_view == OtaView::Available) {
     char install_text[64];
     snprintf(install_text, sizeof(install_text), "Install %s",
              ota_latest[0] ? ota_latest : "update");
-    button(content, install_text, 8, next_y, 424, install_update);
-    next_y += 58;
+    button(content, install_text, 8, 240, 424, install_update);
   }
 
-  label(content, "Last update check", 8, next_y + 4, 200,
-        &lv_font_montserrat_14);
+  // Keep the operational details visible even when an install button appears.
   char last_check[48];
   format_last_check(last_check, sizeof(last_check));
-  ota_last_check_value = label(content, last_check, 220, next_y + 4, 200,
-                               &lv_font_montserrat_14);
-  lv_obj_set_style_text_align(ota_last_check_value, LV_TEXT_ALIGN_RIGHT, 0);
-  next_y += 42;
+  label(content, "Last check", 8, 291, 88, &lv_font_montserrat_14);
+  ota_last_check_value =
+      label(content, last_check, 98, 291, 128, &lv_font_montserrat_14);
 
-  if (ota_view == OtaView::Error && ota_error_text[0]) {
-    auto error = label(content, ota_error_text, 8, next_y, 424,
-                       &lv_font_montserrat_14);
-    lv_obj_set_style_text_color(error, lv_color_hex(WARNING), 0);
-    next_y += 58;
-  }
-
-  char compatibility[160];
-  snprintf(compatibility, sizeof(compatibility),
-           "Compatibility: scale protocol 1; touchscreen protocol 1.\nScale firmware: %s | Channel: %s",
+  char footer[192];
+  snprintf(footer, sizeof(footer),
+           "Scale %s  |  %s  |  Protocol 1/1",
            current.firmware[0] ? current.firmware : "unknown",
            channel_display_name(preferences.channel));
-  label(content, compatibility, 8, next_y, 424, &lv_font_montserrat_14);
+  label(content, footer, 8, 312, 424, &lv_font_montserrat_14);
 }
 void update_page_watch(lv_timer_t *) {
   if (ota_overlay)
