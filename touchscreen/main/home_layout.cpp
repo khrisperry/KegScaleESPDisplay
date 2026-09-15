@@ -20,10 +20,14 @@ constexpr uint32_t COLOR_GREEN = 0x2bc48a;
 constexpr uint32_t COLOR_AMBER = 0xd58b12;
 constexpr uint32_t COLOR_WARNING = 0xf2ad45;
 constexpr uint32_t COLOR_GLASS = 0x98a8b0;
-constexpr uint32_t COLOR_CREAM = 0xfff5dc;
-constexpr uint32_t COLOR_DARK_TEXT = 0x17120b;
 constexpr uint32_t COLOR_HEADER_BUTTON = 0x203441;
 constexpr uint32_t COLOR_HEADER_ACCENT = 0x54d6bf;
+constexpr uint32_t COLOR_METRIC_CARD = 0x202020;
+constexpr uint32_t COLOR_METRIC_BORDER = 0x343434;
+constexpr int GLASS_BAND_COUNT = 24;
+
+static lv_point_precise_t glass_outline_points[] = {
+    {0, 0}, {158, 0}, {138, 236}, {20, 236}, {0, 0}};
 
 State latest_state{};
 int active_page = 0;
@@ -38,7 +42,7 @@ lv_obj_t *home_gallons = nullptr;
 lv_obj_t *home_beer_weight = nullptr;
 lv_obj_t *home_scale_weight = nullptr;
 lv_obj_t *home_arc = nullptr;
-lv_obj_t *glass_fill = nullptr;
+lv_obj_t *glass_bands[GLASS_BAND_COUNT] = {};
 lv_obj_t *view_button = nullptr;
 lv_obj_t *view_button_label = nullptr;
 lv_timer_t *customization_timer = nullptr;
@@ -52,7 +56,8 @@ void reset_home_child_refs() {
   home_beer_weight = nullptr;
   home_scale_weight = nullptr;
   home_arc = nullptr;
-  glass_fill = nullptr;
+  for (auto &band : glass_bands)
+    band = nullptr;
 }
 
 void ascii_safe(const char *source, char *dest, size_t size) {
@@ -280,17 +285,17 @@ void build_dashboard(lv_obj_t *overlay) {
                                  &lv_font_montserrat_20);
 }
 
-lv_obj_t *metric_card(lv_obj_t *overlay, int y, const char *subtext) {
+lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title) {
   lv_obj_t *card = lv_obj_create(overlay);
-  lv_obj_set_pos(card, 104, y);
-  lv_obj_set_size(card, 244, 54);
+  lv_obj_set_pos(card, 214, y);
+  lv_obj_set_size(card, 212, 68);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_CREAM), 0);
-  lv_obj_set_style_border_width(card, 0, 0);
-  lv_obj_set_style_radius(card, 13, 0);
-  lv_obj_t *sub = make_label(card, subtext, 8, 32, 228,
-                             &lv_font_montserrat_14, 0x7c4d08);
-  lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_METRIC_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_METRIC_BORDER), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 12, 0);
+  lv_obj_set_style_pad_all(card, 0, 0);
+  make_label(card, title, 12, 7, 188, &lv_font_montserrat_14, COLOR_MUTED);
   return card;
 }
 
@@ -303,51 +308,58 @@ void build_glass(lv_obj_t *overlay) {
                            &lv_font_montserrat_14, COLOR_GREEN);
   lv_obj_set_style_text_align(home_status, LV_TEXT_ALIGN_RIGHT, 0);
 
-  lv_obj_t *handle = lv_obj_create(overlay);
-  lv_obj_set_pos(handle, 300, 78);
-  lv_obj_set_size(handle, 105, 184);
-  lv_obj_remove_flag(handle, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_opa(handle, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_color(handle, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_border_width(handle, 16, 0);
-  lv_obj_set_style_radius(handle, 30, 0);
+  // A tapered pint glass: wider at the rim, narrower at the base. The beer is
+  // rendered as narrow horizontal bands so the liquid follows the taper at
+  // every fill level instead of appearing as a rectangular block.
+  constexpr int glass_center_x = 103;
+  constexpr int liquid_top_y = 70;
+  constexpr int band_step = 9;
+  constexpr int top_inner_width = 144;
+  constexpr int bottom_inner_width = 106;
+  for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
+    const int width = top_inner_width -
+                      ((top_inner_width - bottom_inner_width) * i) /
+                          (GLASS_BAND_COUNT - 1);
+    const int x = glass_center_x - width / 2;
+    const int y = liquid_top_y + i * band_step;
+    lv_obj_t *band = lv_obj_create(overlay);
+    glass_bands[i] = band;
+    lv_obj_set_pos(band, x, y);
+    lv_obj_set_size(band, width, band_step + 1);
+    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
+    lv_obj_set_style_border_width(band, 0, 0);
+    lv_obj_set_style_radius(band, 0, 0);
+    lv_obj_set_style_pad_all(band, 0, 0);
+  }
 
-  glass_fill = lv_obj_create(overlay);
-  lv_obj_set_pos(glass_fill, 71, 154);
-  lv_obj_set_size(glass_fill, 253, 144);
-  lv_obj_remove_flag(glass_fill, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(glass_fill, lv_color_hex(COLOR_AMBER), 0);
-  lv_obj_set_style_border_width(glass_fill, 0, 0);
-  lv_obj_set_style_radius(glass_fill, 0, 0);
+  lv_obj_t *outline = lv_line_create(overlay);
+  lv_line_set_points(outline, glass_outline_points,
+                     sizeof(glass_outline_points) /
+                         sizeof(glass_outline_points[0]));
+  lv_obj_set_pos(outline, 24, 60);
+  lv_obj_set_style_line_color(outline, lv_color_hex(COLOR_GLASS), 0);
+  lv_obj_set_style_line_width(outline, 6, 0);
+  lv_obj_set_style_line_rounded(outline, true, 0);
 
-  lv_obj_t *outline = lv_obj_create(overlay);
-  lv_obj_set_pos(outline, 63, 36);
-  lv_obj_set_size(outline, 270, 270);
-  lv_obj_remove_flag(outline, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_opa(outline, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_color(outline, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_border_width(outline, 7, 0);
-  lv_obj_set_style_radius(outline, 8, 0);
-
-  lv_obj_t *card = metric_card(overlay, 45, "REMAINING");
-  home_percent = make_label(card, "--", 8, 2, 228, &lv_font_montserrat_28,
-                            COLOR_DARK_TEXT);
+  home_percent = make_label(overlay, "--", 32, 132, 142,
+                            &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t *remaining = make_label(overlay, "REMAINING", 52, 187, 102,
+                                   &lv_font_montserrat_14, COLOR_TEXT);
+  lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
-  card = metric_card(overlay, 107, "SERVINGS LEFT");
-  home_servings = make_label(card, "--", 8, 4, 228, &lv_font_montserrat_24,
-                             COLOR_DARK_TEXT);
-  lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t *card = glass_metric_card(overlay, 66, "SERVINGS LEFT");
+  home_servings = make_label(card, "--", 12, 28, 188,
+                             &lv_font_montserrat_28);
 
-  card = metric_card(overlay, 169, "GALLONS REMAINING");
-  home_gallons = make_label(card, "--", 8, 4, 228, &lv_font_montserrat_24,
-                            COLOR_DARK_TEXT);
-  lv_obj_set_style_text_align(home_gallons, LV_TEXT_ALIGN_CENTER, 0);
+  card = glass_metric_card(overlay, 148, "GALLONS REMAINING");
+  home_gallons = make_label(card, "--", 12, 29, 188,
+                            &lv_font_montserrat_24);
 
-  card = metric_card(overlay, 231, "BEER WEIGHT");
-  home_beer_weight = make_label(card, "--", 8, 4, 228,
-                                &lv_font_montserrat_24, COLOR_DARK_TEXT);
-  lv_obj_set_style_text_align(home_beer_weight, LV_TEXT_ALIGN_CENTER, 0);
+  card = glass_metric_card(overlay, 230, "BEER WEIGHT");
+  home_beer_weight = make_label(card, "--", 12, 29, 188,
+                                &lv_font_montserrat_24);
 }
 
 void update_home_values();
@@ -472,6 +484,10 @@ void update_home_values() {
       lv_label_set_text(home_scale_weight, "--");
     if (home_arc)
       lv_arc_set_value(home_arc, 0);
+    for (auto *band : glass_bands) {
+      if (band)
+        lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
+    }
     return;
   }
 
@@ -490,13 +506,16 @@ void update_home_values() {
     lv_label_set_text(home_gallons, buffer);
     snprintf(buffer, sizeof(buffer), "%.1f lb", (double)beer_weight(latest_state));
     lv_label_set_text(home_beer_weight, buffer);
-    if (glass_fill) {
-      constexpr int top = 43;
-      constexpr int bottom = 299;
-      constexpr int height = bottom - top;
-      const int fill_height = std::clamp((height * percent) / 100, 0, height);
-      lv_obj_set_pos(glass_fill, 71, bottom - fill_height);
-      lv_obj_set_size(glass_fill, 253, fill_height);
+
+    const int visible_bands =
+        percent == 0 ? 0 : (percent * GLASS_BAND_COUNT + 99) / 100;
+    for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
+      if (!glass_bands[i])
+        continue;
+      if (i >= GLASS_BAND_COUNT - visible_bands)
+        lv_obj_remove_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
+      else
+        lv_obj_add_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
     }
   } else {
     snprintf(buffer, sizeof(buffer), "About %.2f gallons remaining",
