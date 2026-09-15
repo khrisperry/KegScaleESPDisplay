@@ -1,0 +1,134 @@
+name: Wi-Fi Touchscreen
+on:
+  push:
+    branches: [main, beta, dev, wifi-controller-validation]
+    paths: ['touchscreen/**', '.github/workflows/touchscreen.yml']
+  pull_request:
+    paths: ['touchscreen/**', '.github/workflows/touchscreen.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: touchscreen-${{ github.ref }}
+  # The dev OTA feed must always represent the newest source commit. Cancel
+  # stale builds instead of allowing an older queued run to publish later.
+  cancel-in-progress: true
+jobs:
+  protocol-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev
+      - run: bash touchscreen/tests/run_host_tests.sh
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: touchscreen
+      - uses: actions/upload-artifact@v4
+        with:
+          name: touchscreen-esp32s3
+          if-no-files-found: error
+          path: |
+            touchscreen/build/keg_scale_touchscreen.bin
+            touchscreen/build/bootloader/bootloader.bin
+            touchscreen/build/partition_table/partition-table.bin
+            touchscreen/build/ota_data_initial.bin
+            touchscreen/build/flasher_args.json
+  publish:
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request'
+    needs: [build, protocol-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+      - uses: actions/download-artifact@v4
+        with:
+          name: touchscreen-esp32s3
+          path: binaries
+      - uses: actions/checkout@v4
+        with:
+          repository: khrisperry/KegScaleFirmware
+          ref: main
+          token: ${{ secrets.FIRMWARE_REPO_TOKEN }}
+          path: firmware
+      - name: Publish isolated touchscreen feed
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+
+          branch = os.environ.get('GITHUB_REF_NAME', '')
+          channel = {
+              'main': 'production',
+              'beta': 'beta',
+              'dev': 'dev',
+          }.get(branch)
+          if channel is None:
+              raise SystemExit(f'Unsupported touchscreen publishing branch: {branch!r}')
+
+          def version_tuple(value):
+              match = re.fullmatch(r'V(\d+)\.(\d+)\.(\d+)', value or '')
+              if not match:
+                  raise SystemExit(f'Invalid touchscreen firmware version: {value!r}')
+              return tuple(int(part) for part in match.groups())
+
+          source = pathlib.Path('binaries/keg_scale_touchscreen.bin')
+          data = source.read_bytes()
+          folder = pathlib.Path(f'firmware/touchscreen/{channel}/esp32s3')
+          folder.mkdir(parents=True, exist_ok=True)
+          manifest_path = folder / 'manifest.json'
+          new_version = pathlib.Path('source/touchscreen/version.txt').read_text().strip()
+
+          previous_name = None
+
+          if manifest_path.exists():
+              current_manifest = json.loads(manifest_path.read_text())
+              current_version = current_manifest.get('version', '')
+              if version_tuple(current_version) >= version_tuple(new_version):
+                  print(f'Skipping stale/non-new touchscreen publish: feed={current_version} candidate={new_version}')
+                  raise SystemExit(0)
+              previous_url = current_manifest.get('url', '')
+              if previous_url:
+                  previous_name = previous_url.rsplit('/', 1)[-1]
+
+          name = 'keg_scale_touchscreen-' + os.environ['COMMIT'][:12] + '.bin'
+
+          # Commit-specific names prevent stale raw-GitHub/CDN firmware. Keep
+          # the currently published binary plus this new one, then remove all
+          # older binaries from the active channel directory.
+          keep = {name}
+          if previous_name:
+              keep.add(previous_name)
+          for old_binary in folder.glob('keg_scale_touchscreen-*.bin'):
+              if old_binary.name not in keep:
+                  print(f'Removing obsolete touchscreen firmware {old_binary.name}')
+                  old_binary.unlink()
+
+          (folder / name).write_bytes(data)
+          manifest = dict(version=new_version,
+              commit=os.environ['COMMIT'], channel=channel, target='esp32s3',
+              hardware='waveshare_esp32_s3_touch_lcd_4b', protocol_version=1,
+              requires_scale_wifi_protocol_min=1, requires_scale_wifi_protocol_max=1,
+              size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+              url=f'https://raw.githubusercontent.com/khrisperry/KegScaleFirmware/main/touchscreen/{channel}/esp32s3/' + name)
+          manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+          cd firmware
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add touchscreen
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Publish touchscreen ${COMMIT}"
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then exit 0; fi
+            git fetch origin main
+            git rebase origin/main
+          done
+          exit 1

@@ -133,7 +133,14 @@ The GitHub Actions build also targets classic ESP32.
 
 ## Capacitive touch wake
 
-The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive. After the user disconnects USB and queues guided calibration from the scale webpage, the display begins immediately with the untouched baseline step, then asks the user to touch and hold the tap handle's outside edges, release it, and verify three more touches before saving the measured threshold back to the scale. The e-paper panel is not a touchscreen.
+The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive. Start **touch calibration** from the scale webpage. The display shows a battery preparation screen for 10 seconds (USB presence is not automatically detected), then guides you through four steps:
+
+1. **Do not touch** the tap handle while its untouched signal is measured.
+2. **Touch and hold** the outside edges until the display says to release.
+3. **Release now** and leave the handle untouched until the next prompt.
+4. Complete **three touch checks**, each with a separate hold and release prompt. A check counts only after release is detected.
+
+The screen uses a small progress heading, a large action, and a short explanation. One full refresh prepares the screen; every following calibration screen uses an aligned partial refresh. **Touch ready** appears only after all checks pass and the scale saves the sensitivity. A failure explains the problem and asks you to restart from the scale page; detailed sensor values stay in the serial log. Failed checks do not submit a new sensitivity. The e-paper panel is not a touchscreen.
 
 Periodic check-in can be enabled alongside touch wake. When the normal three-minute check-in is disabled, a one-hour safety timer remains armed so the display can still receive data, settings, firmware updates, removal requests, and manual full-refresh commands if the touch sensor fails. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
 
@@ -153,3 +160,7 @@ Before deep sleep, the display clears every stale wake source and arms GPIO12 ca
 The scale webpage can queue an authenticated full-screen refresh. The display
 receives it on its next touch or timer wake, redraws the complete current keg
 screen, and resets the changed-region refresh counter.
+
+## Waveshare Wi-Fi touchscreen
+
+The separate [touchscreen application](touchscreen/README.md) targets the ESP32-S3-Touch-LCD-4B. It uses Wi-Fi only, supports keg editing and scale calibration, and has its own build/OTA feed. The repository root continues to build this BLE e-paper application.

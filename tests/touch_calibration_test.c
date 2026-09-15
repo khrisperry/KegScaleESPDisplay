@@ -41,21 +41,26 @@ esp_err_t touch_sensor_config_sleep_wakeup(touch_sensor_handle_t h, const touch_
 
 static esp_err_t progress(touch_calibration_stage_t stage, uint8_t done, uint8_t total, void *ctx)
 {
-    (void)total; (void)ctx;
-    static uint8_t previous;
-    if (stage == TOUCH_CALIBRATION_STAGE_BASELINE) { phase = 0; previous = 0; }
+    (void)ctx;
+    assert(total == 3);
+    if (stage == TOUCH_CALIBRATION_STAGE_BASELINE) phase = 0;
     if (stage == TOUCH_CALIBRATION_STAGE_TOUCH_AND_HOLD) phase = scenario == 3 ? 0 : 1;
     if (stage == TOUCH_CALIBRATION_STAGE_RELEASE) phase = 0;
     if (stage == TOUCH_CALIBRATION_STAGE_VERIFY) {
-        phase = done == previous ? 1 : 0;
-        previous = done;
+        assert(done < total);
+        phase = 1;
+        if (scenario == 5) return ESP_ERR_INVALID_ARG;
+    }
+    if (stage == TOUCH_CALIBRATION_STAGE_VERIFY_RELEASE) {
+        assert(done < total);
+        phase = scenario == 4 ? 1 : 0;
     }
     return ESP_OK;
 }
 
 int main(void)
 {
-    for (scenario = 0; scenario < 4; ++scenario) {
+    for (scenario = 0; scenario < 6; ++scenario) {
         ticks = scans = reads = deleted = starts = 0;
         touch_calibration_result_t result;
         esp_err_t err = touch_wake_calibrate(progress, NULL, &result);
@@ -70,7 +75,12 @@ int main(void)
             assert(result.failure == TOUCH_CALIBRATION_FAILURE_HARDWARE);
         } else if (scenario == 2) {
             assert(err == ESP_ERR_INVALID_STATE);
+        } else if (scenario == 5) {
+            assert(err == ESP_ERR_INVALID_ARG);
+            assert(result.failure == TOUCH_CALIBRATION_FAILURE_HARDWARE);
+            assert(result.verified_touches == 0);
         } else {
+            assert(result.verified_touches == 0);
             assert(err == ESP_ERR_TIMEOUT);
             assert(result.failure == TOUCH_CALIBRATION_FAILURE_TIMEOUT);
         }
