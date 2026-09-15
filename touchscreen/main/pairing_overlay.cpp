@@ -6,9 +6,9 @@ namespace {
 lv_obj_t *pairing_overlay = nullptr;
 
 constexpr uint32_t BG = 0x101c26;
-constexpr uint32_t CARD = 0x203441;
 constexpr uint32_t ACCENT = 0x54d6bf;
 constexpr uint32_t TEXT = 0xf2f6f8;
+constexpr uint32_t MUTED = 0xaec0ca;
 
 lv_obj_t *overlay_label(lv_obj_t *parent, const char *text, int x, int y,
                         int width, const lv_font_t *font) {
@@ -70,7 +70,7 @@ void show_pairing_overlay_locked(const char *code) {
       pairing_overlay,
       "Keep this screen open until the scale confirms the connection.", 38,
       405, 404, &lv_font_montserrat_14);
-  lv_obj_set_style_text_color(note, lv_color_hex(CARD), 0);
+  lv_obj_set_style_text_color(note, lv_color_hex(MUTED), 0);
 
   lv_obj_move_foreground(pairing_overlay);
 }
