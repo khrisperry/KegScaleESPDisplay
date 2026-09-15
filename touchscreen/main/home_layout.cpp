@@ -485,7 +485,7 @@ void ensure_setup_option() {
   if (!content)
     return;
 
-  int bottom = 0;
+  int32_t bottom = 0;
   const uint32_t count = lv_obj_get_child_count(content);
   for (uint32_t i = 0; i < count; ++i) {
     lv_obj_t *child = lv_obj_get_child(content, static_cast<int32_t>(i));
