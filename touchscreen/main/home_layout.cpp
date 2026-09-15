@@ -26,6 +26,7 @@ constexpr uint32_t COLOR_DARK_TEXT = 0x17120b;
 State latest_state{};
 int active_page = 0;
 bool glass_home = false;
+bool home_disconnected = false;
 lv_obj_t *home_overlay = nullptr;
 lv_obj_t *home_name = nullptr;
 lv_obj_t *home_status = nullptr;
@@ -38,6 +39,18 @@ lv_obj_t *home_arc = nullptr;
 lv_obj_t *glass_fill = nullptr;
 lv_obj_t *glass_switch = nullptr;
 lv_timer_t *customization_timer = nullptr;
+
+void reset_home_child_refs() {
+  home_name = nullptr;
+  home_status = nullptr;
+  home_percent = nullptr;
+  home_servings = nullptr;
+  home_gallons = nullptr;
+  home_beer_weight = nullptr;
+  home_scale_weight = nullptr;
+  home_arc = nullptr;
+  glass_fill = nullptr;
+}
 
 void ascii_safe(const char *source, char *dest, size_t size) {
   if (!dest || size == 0)
@@ -148,15 +161,8 @@ int detect_page() {
 
 void clear_home_refs(lv_event_t *) {
   home_overlay = nullptr;
-  home_name = nullptr;
-  home_status = nullptr;
-  home_percent = nullptr;
-  home_servings = nullptr;
-  home_gallons = nullptr;
-  home_beer_weight = nullptr;
-  home_scale_weight = nullptr;
-  home_arc = nullptr;
-  glass_fill = nullptr;
+  home_disconnected = false;
+  reset_home_child_refs();
 }
 
 void clear_switch_ref(lv_event_t *) { glass_switch = nullptr; }
@@ -195,7 +201,11 @@ float beer_weight(const State &state) {
 }
 
 void update_disconnected(lv_obj_t *overlay) {
+  if (home_disconnected)
+    return;
   lv_obj_clean(overlay);
+  reset_home_child_refs();
+  home_disconnected = true;
   home_name = make_label(overlay, "Keg Scale", 20, 28, 392,
                          &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_name, LV_TEXT_ALIGN_CENTER, 0);
@@ -208,6 +218,7 @@ void update_disconnected(lv_obj_t *overlay) {
 }
 
 void build_dashboard(lv_obj_t *overlay) {
+  home_disconnected = false;
   lv_obj_t *icon = lv_obj_create(overlay);
   lv_obj_set_pos(icon, 14, 12);
   lv_obj_set_size(icon, 43, 43);
@@ -293,6 +304,7 @@ lv_obj_t *metric_card(lv_obj_t *overlay, int y, const char *subtext) {
 }
 
 void build_glass(lv_obj_t *overlay) {
+  home_disconnected = false;
   home_name = make_label(overlay, "", 16, 6, 280, &lv_font_montserrat_20);
   lv_label_set_long_mode(home_name, LV_LABEL_LONG_DOT);
   lv_obj_set_height(home_name, 25);
@@ -365,6 +377,8 @@ void build_home_overlay() {
   lv_obj_set_style_pad_all(home_overlay, 0, 0);
   lv_obj_add_event_cb(home_overlay, clear_home_refs, LV_EVENT_DELETE, nullptr);
 
+  home_disconnected = false;
+  reset_home_child_refs();
   if (!latest_state.online)
     update_disconnected(home_overlay);
   else if (glass_home)
@@ -389,8 +403,10 @@ void update_home_values() {
     return;
   }
 
-  if (!home_percent || !home_name) {
+  if (home_disconnected || !home_percent || !home_name) {
     lv_obj_clean(home_overlay);
+    reset_home_child_refs();
+    home_disconnected = false;
     if (glass_home)
       build_glass(home_overlay);
     else
