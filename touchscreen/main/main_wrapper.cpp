@@ -1,5 +1,7 @@
 #include "app.h"
+#include "controller_link.h"
 #include "esp_heap_caps.h"
+#include "esp_http_client.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -16,16 +18,30 @@ extern "C" void touchscreen_request_auto_discovery();
  * restart inside main.cpp is redirected to a live reconfiguration routine.
  * Legacy OTA calls are redirected to a dedicated task; the new OTA UI calls
  * touchscreen_ota_request() directly so update checks never disturb the scale
- * WebSocket session. */
+ * WebSocket session.
+ *
+ * Pairing synchronization is layered around the legacy app as well. Clearing
+ * the saved master key first asks the scale to remove its matching pairing,
+ * and authenticated inbound traffic is inspected for the scale's final
+ * encrypted unpair notification. */
 static void touchscreen_apply_settings_live();
 static void touchscreen_ui_message(const char *message);
 static esp_err_t touchscreen_start_ota_task_legacy();
+static bool touchscreen_remove_scale_pairing(const char *host);
+static void *touchscreen_pairing_memset(void *dest, int value, size_t count);
+static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
+                                             const uint8_t *in, size_t len,
+                                             char *out);
 
 #define app_main touchscreen_app_main
 #define esp_restart touchscreen_apply_settings_live
 #define ui_message touchscreen_ui_message
 #define touchscreen_ota touchscreen_start_ota_task_legacy
+#define memset touchscreen_pairing_memset
+#define cl_open touchscreen_pairing_cl_open
 #include "main.cpp"
+#undef cl_open
+#undef memset
 #undef touchscreen_ota
 #undef ui_message
 #undef esp_restart
@@ -215,6 +231,71 @@ void auto_discovery_task(void *) {
 }
 } // namespace
 
+static bool touchscreen_remove_scale_pairing(const char *host) {
+  if (!host || !host[0] || !wifi_ready)
+    return false;
+
+  char url[192];
+  snprintf(url, sizeof(url), "http://%s/api/controller", host);
+  static const char body[] = "{\"action\":\"remove\"}";
+  esp_http_client_config_t cfg = {};
+  cfg.url = url;
+  cfg.timeout_ms = 3000;
+  auto client = esp_http_client_init(&cfg);
+  if (!client)
+    return false;
+
+  esp_http_client_set_method(client, HTTP_METHOD_POST);
+  esp_http_client_set_header(client, "Content-Type", "application/json");
+  esp_http_client_set_header(client, "X-Controller-Setup", "1");
+  esp_http_client_set_post_field(client, body, strlen(body));
+  esp_err_t e = esp_http_client_perform(client);
+  int status = e == ESP_OK ? esp_http_client_get_status_code(client) : 0;
+  esp_http_client_cleanup(client);
+
+  ESP_LOGI(TAG, "Scale pairing removal request: host='%s' result=%s status=%d",
+           host, esp_err_to_name(e), status);
+  return e == ESP_OK && status == 200;
+}
+
+static void *touchscreen_pairing_memset(void *dest, int value, size_t count) {
+  const bool clearing_pairing =
+      dest == settings.master && value == 0 && count == sizeof(settings.master);
+  if (clearing_pairing && settings.host[0]) {
+    if (touchscreen_remove_scale_pairing(settings.host))
+      ESP_LOGI(TAG, "Matching scale-side touchscreen pairing removed");
+    else
+      ESP_LOGW(TAG,
+               "Could not immediately remove scale-side pairing; mismatch cleanup will retry when the scale is reachable");
+  }
+  return std::memset(dest, value, count);
+}
+
+static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
+                                             const uint8_t *in, size_t len,
+                                             char *out) {
+  esp_err_t e = cl_open(session, in, len, out);
+  if (e != ESP_OK || !out)
+    return e;
+
+  cJSON *message = cJSON_Parse(out);
+  if (message && !strcmp(str(message, "type"), "unpair")) {
+    ESP_LOGI(TAG, "Scale requested synchronized touchscreen unpair");
+    settings.paired = false;
+    std::memset(settings.master, 0, sizeof(settings.master));
+    esp_err_t saved = persist();
+    if (saved != ESP_OK)
+      ESP_LOGE(TAG, "Could not persist scale-requested unpair: %s",
+               esp_err_to_name(saved));
+    retry_connection = false;
+    state.online = false;
+    ui_state(state);
+    ::ui_message("Pairing removed on scale. Open Setup to pair again.");
+  }
+  cJSON_Delete(message);
+  return e;
+}
+
 void touchscreen_ota_get_preferences(OtaPreferences *preferences) {
   if (!preferences)
     return;
@@ -332,10 +413,49 @@ void touchscreen_start_ota_scheduler(void) {
 }
 
 static void touchscreen_ui_message(const char *message) {
-  if (message && !strcmp(message, "Settings saved — restarting"))
+  if (message && !strcmp(message, "Settings saved — restarting")) {
     ::ui_message("Applying settings...");
-  else
-    ::ui_message(message);
+    return;
+  }
+
+  /* Heal an offline scale-side removal as soon as the touchscreen can probe
+   * the scale again. The old local key is no longer useful once the scale has
+   * forgotten it, so remove it automatically instead of asking the user to
+   * clean up both devices manually. */
+  if (message &&
+      !strcmp(message,
+              "In Setup: Remove pairing, then Add touchscreen on the scale.")) {
+    if (settings.paired) {
+      settings.paired = false;
+      std::memset(settings.master, 0, sizeof(settings.master));
+      if (persist() == ESP_OK)
+        ESP_LOGI(TAG, "Cleared stale local pairing after scale-side removal");
+      else
+        ESP_LOGE(TAG, "Could not persist stale-pairing cleanup");
+    }
+    retry_connection = false;
+    state.online = false;
+    ui_state(state);
+    ::ui_message("Pairing removed on scale. Open Setup to pair again.");
+    return;
+  }
+
+  /* Heal the opposite mismatch too. This occurs when the touchscreen was
+   * removed locally while the scale was offline. Once the scale is reachable,
+   * clear its stale pairing automatically. */
+  if (message &&
+      !strcmp(message,
+              "On scale: remove old Wi-Fi touchscreen, then Add touchscreen.")) {
+    if (touchscreen_remove_scale_pairing(settings.host)) {
+      ESP_LOGI(TAG, "Cleared stale scale pairing after touchscreen-side removal");
+      ::ui_message("Old scale pairing cleared. Select Add touchscreen to pair again.");
+    } else {
+      ::ui_message("Scale still has the old pairing. Cleanup will retry automatically.");
+    }
+    return;
+  }
+
+  ::ui_message(message);
 }
 
 static void touchscreen_apply_settings_live() {
