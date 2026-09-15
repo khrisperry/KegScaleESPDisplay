@@ -205,11 +205,11 @@ void forget(lv_event_t *) {
   memset(fields, 0, sizeof(fields));
   networks = nullptr;
   lv_obj_clean(content);
-  label(content, "Replace the paired scale?", 8, 12, 424,
+  label(content, "Remove scale pairing?", 8, 12, 424,
         &lv_font_montserrat_24);
   label(content,
-        "Also remove the old touchscreen pairing on the scale's web page. Then "
-        "open Add touchscreen again.",
+        "This removes the pairing from both the touchscreen and the scale. "
+        "Use Add touchscreen on the scale when you are ready to pair again.",
         8, 64, 424);
   button(content, "Remove pairing", 8, 185, 205, forget_yes);
   button(content, "Cancel", 230, 185, 200, nav, (void *)3);
@@ -236,27 +236,28 @@ void dashboard() {
   if (page_id == 0) {
     lv_label_set_text(headline,
                       current.name[0] ? current.name : "Set up your keg");
+    if (!current.online) {
+      lv_label_set_text(detail, "--");
+      lv_arc_set_value(arc, 0);
+      lv_label_set_text(connection, "Not connected");
+      return;
+    }
     if (current.ready)
       lv_label_set_text_fmt(detail, "%.0f", (double)floorf(current.servings));
     else
       lv_label_set_text(detail, "--");
     lv_arc_set_value(arc, current.ready ? (int)current.percent : 0);
-    char status[80];
-    if (current.online)
-      snprintf(status, sizeof(status), "Connected");
-    else
-      snprintf(status, sizeof(status), "Disconnected — last reading %lus ago",
-               (unsigned long)current.age_seconds);
-    lv_label_set_text_fmt(connection, "%s\n%.2f gal | %.1f oz | %.2f lb | %s",
-                          status, (double)current.gallons,
-                          (double)current.serving, (double)current.weight,
+    lv_label_set_text_fmt(connection,
+                          "Connected\n%.2f gal | %.1f oz | %.2f lb | %s",
+                          (double)current.gallons, (double)current.serving,
+                          (double)current.weight,
                           current.stable ? "Stable" : "Settling");
 
   } else if (page_id == 2) {
     lv_label_set_text_fmt(
         headline, "Scale: %.3f lb   %s", (double)current.weight,
         current.online ? (current.stable ? "Stable" : "Settling")
-                       : "Disconnected");
+                       : "Not connected");
   }
 }
 void build(int page) {
@@ -290,6 +291,13 @@ void build(int page) {
     edit_revision = current.revision;
     editor_valid = current.online;
     label(content, "Keg information", 8, 0, 424, &lv_font_montserrat_24);
+    if (!current.online) {
+      label(content, "Not connected", 8, 56, 424, &lv_font_montserrat_24);
+      label(content,
+            "Connect to the scale before viewing or editing keg information.",
+            8, 105, 424, &lv_font_montserrat_18);
+      return;
+    }
     fields[0] = field("Beer / beverage name", current.name, 42);
     const char *names[] = {"Keg capacity (gallons)", "Empty keg weight (lb)",
                            "Beverage density (lb / gallon)",
@@ -374,7 +382,7 @@ void build(int page) {
              "%s\n\nHardware: Waveshare 4B\nThis update is for the "
              "touchscreen. Update the scale from its web page.",
              esp_app_get_description()->version, current.firmware,
-             current.online ? "Connected" : "Disconnected");
+             current.online ? "Connected" : "Not connected");
     label(content, b, 8, 45, 424);
     button(content, "Check / install dev update", 8, 270, 424, update);
   }
@@ -448,9 +456,12 @@ void ui_state(const State &s) {
     cal_step = 0;
   }
   current = s;
-  if (lost_connection && page_id == 2)
-    build(2);
-  dashboard();
+  if (lost_connection && (page_id == 0 || page_id == 1 || page_id == 2))
+    build(page_id);
+  else
+    dashboard();
+  if (!s.online && (page_id == 0 || page_id == 1))
+    message("Not connected");
   bsp_display_unlock();
 }
 void ui_message(const char *s) {
