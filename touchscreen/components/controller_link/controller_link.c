@@ -80,8 +80,16 @@ esp_err_t cl_agree(cl_session_t *s, const char *peer, const char *server,
   /* Six hexadecimal characters (24 bits) are enough for this local,
    * time-limited, five-attempt user-verification step. The ECDH master key
    * remains 256 bits; only the human comparison string is shortened. */
-  if (e == ESP_OK)
+  if (e == ESP_OK) {
     cl_hex(digest, 3, code);
+    /* Display the human-entered authorization code in uppercase for legibility.
+     * cl_unhex() accepts both cases, so this does not change the derived key or
+     * the value accepted by the scale. */
+    for (size_t i = 0; i < 6; ++i) {
+      if (code[i] >= 'a' && code[i] <= 'f')
+        code[i] = (char)(code[i] - 'a' + 'A');
+    }
+  }
   return e;
 }
 esp_err_t cl_start(cl_session_t *s, const uint8_t challenge[32],
@@ -122,7 +130,7 @@ static esp_err_t crypt(cl_session_t *s, bool encrypt, uint8_t direction,
                          n, out, capacity, used);
   else
     r = psa_aead_decrypt(key, PSA_ALG_GCM, nonce, 12, aad, sizeof(aad) - 1, in,
-                         n, out, capacity, used);
+                         n, out, CL_MAX_PLAIN - 1, used);
   psa_destroy_key(key);
   return r == PSA_SUCCESS ? ESP_OK : ESP_FAIL;
 }
