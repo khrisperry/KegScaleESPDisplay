@@ -130,7 +130,7 @@ static esp_err_t crypt(cl_session_t *s, bool encrypt, uint8_t direction,
                          n, out, capacity, used);
   else
     r = psa_aead_decrypt(key, PSA_ALG_GCM, nonce, 12, aad, sizeof(aad) - 1, in,
-                         n, out, CL_MAX_PLAIN - 1, used);
+                         n, out, capacity, used);
   psa_destroy_key(key);
   return r == PSA_SUCCESS ? ESP_OK : ESP_FAIL;
 }
