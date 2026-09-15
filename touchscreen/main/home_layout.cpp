@@ -121,7 +121,7 @@ lv_obj_t *find_content() {
   return nullptr;
 }
 
-bool content_has_home_arc(lv_obj_t *content) {
+bool content_is_home(lv_obj_t *content) {
   if (!content)
     return false;
   const uint32_t count = lv_obj_get_child_count(content);
@@ -129,9 +129,11 @@ bool content_has_home_arc(lv_obj_t *content) {
     lv_obj_t *child = lv_obj_get_child(content, static_cast<int32_t>(i));
     if (!child || child == home_overlay)
       continue;
-    if (lv_obj_get_width(child) == 200 && lv_obj_get_height(child) == 200 &&
-        lv_obj_get_x(child) >= 110 && lv_obj_get_x(child) <= 130)
-      return true;
+    if (lv_obj_check_type(child, &lv_label_class)) {
+      const char *text = lv_label_get_text(child);
+      if (text && !strcmp(text, "__TOUCH_HOME__"))
+        return true;
+    }
   }
   return false;
 }
@@ -140,7 +142,7 @@ int detect_page() {
   lv_obj_t *content = find_content();
   if (!content)
     return active_page;
-  if (content_has_home_arc(content))
+  if (content_is_home(content))
     return 0;
 
   const uint32_t count = lv_obj_get_child_count(content);
@@ -418,7 +420,7 @@ void ensure_view_button() {
 
 void build_home_overlay() {
   lv_obj_t *content = find_content();
-  if (!content || !content_has_home_arc(content))
+  if (!content || !content_is_home(content))
     return;
 
   home_overlay = lv_obj_create(content);
@@ -564,6 +566,12 @@ void customization_tick(lv_timer_t *) {
     update_home_values();
 }
 } // namespace
+
+void touchscreen_home_render_now() {
+  active_page = 0;
+  ensure_view_button();
+  update_home_values();
+}
 
 void touchscreen_ui_start_dispatch(const Settings &settings) {
   load_preference();

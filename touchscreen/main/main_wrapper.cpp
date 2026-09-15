@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -125,11 +126,13 @@ bool wifi_settings_changed() {
                  sizeof(active.sta.password)) != 0;
 }
 
-bool scale_host_changed() {
-  char desired[sizeof(uri)] = {};
-  if (settings.host[0])
-    snprintf(desired, sizeof(desired), "ws://%s/ws/controller", settings.host);
-  return strcmp(uri, desired) != 0;
+bool scale_host_changed(uint8_t slot) {
+  const auto &c = connection_for_const(slot);
+  char desired[180] = {};
+  if (scale_host_const(slot)[0])
+    snprintf(desired, sizeof(desired), "ws://%s/ws/controller",
+             scale_host_const(slot));
+  return strcmp(c.uri, desired) != 0;
 }
 
 void ota_task(void *) {
@@ -189,7 +192,7 @@ void auto_discovery_task(void *) {
   for (int i = 0; i < 40 && !wifi_ready; ++i)
     vTaskDelay(pdMS_TO_TICKS(500));
 
-  if (!wifi_ready || settings.host[0]) {
+  if (!wifi_ready || active_host_const()[0]) {
     discovery_running = false;
     vTaskDelete(nullptr);
     return;
@@ -197,31 +200,42 @@ void auto_discovery_task(void *) {
 
   touchscreen_ui_message("Wi-Fi connected - looking for your scale...");
   mdns_result_t *found = nullptr;
-  esp_err_t e = mdns_query_ptr("_kegscale", "_tcp", 3000, 4, &found);
-  unsigned count = 0;
-  mdns_result_t *only = nullptr;
-  for (auto p = found; p; p = p->next) {
-    if (p->hostname) {
-      ++count;
-      only = p;
-    }
-  }
+  esp_err_t e = mdns_query_ptr("_kegscale", "_tcp", 3000, 8, &found);
+  char options[800];
+  const unsigned count =
+      e == ESP_OK
+          ? build_scale_discovery_options(found, options, sizeof(options))
+          : 0;
+  if (e != ESP_OK)
+    snprintf(options, sizeof(options), "Manual IP / hostname...");
 
-  if (e == ESP_OK && count == 1 && only) {
-    snprintf(settings.host, sizeof(settings.host), "%s.local", only->hostname);
+  if (e == ESP_OK && count == 1) {
+    char host[128] = {};
+    const char *line_end = strchr(options, '\n');
+    const size_t length =
+        line_end ? std::min(sizeof(host) - 1,
+                            (size_t)(line_end - options))
+                 : std::min(sizeof(host) - 1, strlen(options));
+    memcpy(host, options, length);
+    host[length] = 0;
+    snprintf(active_host(), 128, "%s", host);
     if (persist() == ESP_OK) {
+      publish_scale_profiles();
       ui_settings_applied(settings);
       touchscreen_ui_message("Scale found automatically - connecting...");
-      retry_connection = true;
-      next_connection_attempt = now();
-      connect_scale();
+      auto &c = connection_for(active_scale_index);
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      connect_scale(active_scale_index);
     } else {
       touchscreen_ui_message("Scale found, but its address could not be saved");
     }
   } else if (count > 1) {
+    ui_discovered_options(options);
     touchscreen_ui_message("Several scales found - choose one in Setup");
   } else {
-    touchscreen_ui_message("No scale found - use Find Scale or enter its address");
+    ui_discovered_options(options);
+    touchscreen_ui_message("No scale found - choose Manual IP / hostname");
   }
 
   if (found)
@@ -259,14 +273,16 @@ static bool touchscreen_remove_scale_pairing(const char *host) {
 }
 
 static void *touchscreen_pairing_memset(void *dest, int value, size_t count) {
-  const bool clearing_pairing =
-      dest == settings.master && value == 0 && count == sizeof(settings.master);
-  if (clearing_pairing && settings.host[0]) {
-    if (touchscreen_remove_scale_pairing(settings.host))
-      ESP_LOGI(TAG, "Matching scale-side touchscreen pairing removed");
+  const int slot = scale_index_for_master(dest);
+  const bool clearing_pairing = slot >= 0 && value == 0 && count == 32;
+  if (clearing_pairing && scale_host_const((uint8_t)slot)[0]) {
+    if (touchscreen_remove_scale_pairing(scale_host_const((uint8_t)slot)))
+      ESP_LOGI(TAG, "Matching scale %u pairing removed",
+               (unsigned)(slot + 1));
     else
       ESP_LOGW(TAG,
-               "Could not immediately remove scale-side pairing; mismatch cleanup will retry when the scale is reachable");
+               "Could not immediately remove scale %u pairing; mismatch cleanup will retry when reachable",
+               (unsigned)(slot + 1));
   }
   return std::memset(dest, value, count);
 }
@@ -280,17 +296,36 @@ static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
 
   cJSON *message = cJSON_Parse(out);
   if (message && !strcmp(str(message, "type"), "unpair")) {
-    ESP_LOGI(TAG, "Scale requested synchronized touchscreen unpair");
-    settings.paired = false;
-    std::memset(settings.master, 0, sizeof(settings.master));
-    esp_err_t saved = persist();
-    if (saved != ESP_OK)
-      ESP_LOGE(TAG, "Could not persist scale-requested unpair: %s",
-               esp_err_to_name(saved));
-    retry_connection = false;
-    state.online = false;
-    ui_state(state);
-    ::ui_message("Pairing removed on scale. Open Setup to pair again.");
+    const int found_slot = scale_index_for_link(session);
+    if (found_slot >= 0) {
+      const uint8_t slot = (uint8_t)found_slot;
+      const uint8_t other = slot == 0 ? 1 : 0;
+      const bool removed_active = slot == active_scale_index;
+      ESP_LOGI(TAG, "Scale %u requested synchronized touchscreen unpair",
+               (unsigned)(slot + 1));
+      scale_paired(slot) = false;
+      std::memset(scale_master(slot), 0, 32);
+      auto &c = connection_for(slot);
+      c.retry_connection = false;
+      c.state.online = false;
+      c.authenticated = false;
+      c.traffic_ready = false;
+      if (removed_active && scale_slot_ready(other))
+        active_scale_index = other;
+
+      esp_err_t saved = persist();
+      publish_scale_profiles();
+      if (saved != ESP_OK)
+        ESP_LOGE(TAG, "Could not persist scale %u requested unpair: %s",
+                 (unsigned)(slot + 1), esp_err_to_name(saved));
+
+      if (removed_active) {
+        publish_active_state();
+        ::ui_message(scale_slot_ready(other)
+                         ? "Pairing removed; switched to the other scale."
+                         : "Pairing removed on scale. Open Setup to pair again.");
+      }
+    }
   }
   cJSON_Delete(message);
   return e;
@@ -418,39 +453,45 @@ static void touchscreen_ui_message(const char *message) {
     return;
   }
 
-  /* Heal an offline scale-side removal as soon as the touchscreen can probe
-   * the scale again. The old local key is no longer useful once the scale has
-   * forgotten it, so remove it automatically instead of asking the user to
-   * clean up both devices manually. */
   if (message &&
       !strcmp(message,
               "In Setup: Remove pairing, then Add touchscreen on the scale.")) {
-    if (settings.paired) {
-      settings.paired = false;
-      std::memset(settings.master, 0, sizeof(settings.master));
-      if (persist() == ESP_OK)
-        ESP_LOGI(TAG, "Cleared stale local pairing after scale-side removal");
-      else
+    const uint8_t slot = active_scale_index;
+    if (scale_paired(slot)) {
+      scale_paired(slot) = false;
+      std::memset(scale_master(slot), 0, 32);
+      if (persist() == ESP_OK) {
+        publish_scale_profiles();
+        ESP_LOGI(TAG,
+                 "Cleared stale local scale %u pairing after scale-side removal",
+                 (unsigned)(slot + 1));
+      } else {
         ESP_LOGE(TAG, "Could not persist stale-pairing cleanup");
+      }
     }
-    retry_connection = false;
-    state.online = false;
-    ui_state(state);
+    auto &c = connection_for(slot);
+    c.retry_connection = false;
+    c.state.online = false;
+    c.authenticated = false;
+    c.traffic_ready = false;
+    ui_state(c.state);
     ::ui_message("Pairing removed on scale. Open Setup to pair again.");
     return;
   }
 
-  /* Heal the opposite mismatch too. This occurs when the touchscreen was
-   * removed locally while the scale was offline. Once the scale is reachable,
-   * clear its stale pairing automatically. */
   if (message &&
       !strcmp(message,
               "On scale: remove old Wi-Fi touchscreen, then Add touchscreen.")) {
-    if (touchscreen_remove_scale_pairing(settings.host)) {
-      ESP_LOGI(TAG, "Cleared stale scale pairing after touchscreen-side removal");
-      ::ui_message("Old scale pairing cleared. Select Add touchscreen to pair again.");
+    const uint8_t slot = active_scale_index;
+    if (touchscreen_remove_scale_pairing(scale_host_const(slot))) {
+      ESP_LOGI(TAG,
+               "Cleared stale scale %u pairing after touchscreen-side removal",
+               (unsigned)(slot + 1));
+      ::ui_message(
+          "Old scale pairing cleared. Select Add touchscreen to pair again.");
     } else {
-      ::ui_message("Scale still has the old pairing. Cleanup will retry automatically.");
+      ::ui_message(
+          "Scale still has the old pairing. Cleanup will retry automatically.");
     }
     return;
   }
@@ -459,11 +500,14 @@ static void touchscreen_ui_message(const char *message) {
 }
 
 static void touchscreen_apply_settings_live() {
+  const uint8_t slot = active_scale_index;
   const bool wifi_changed = wifi_settings_changed();
-  const bool host_changed = scale_host_changed();
+  const bool host_changed = scale_host_changed(slot);
   ui_settings_applied(settings);
 
   if (!wifi_changed && !host_changed) {
+    publish_scale_profiles();
+    publish_active_state();
     touchscreen_ui_message("Settings saved");
     return;
   }
@@ -484,12 +528,9 @@ static void touchscreen_apply_settings_live() {
       return;
     }
 
-    retry_connection = true;
-    next_connection_attempt = now() + 3000000;
     wifi_ready = false;
-    if (ws)
-      esp_websocket_client_stop(ws);
-    disconnected();
+    for (uint8_t i = 0; i < 2; ++i)
+      stop_scale_transport(i, scale_host_const(i)[0]);
 
     esp_err_t d = esp_wifi_disconnect();
     if (d == ESP_ERR_WIFI_NOT_CONNECT && settings.ssid[0])
@@ -498,23 +539,30 @@ static void touchscreen_apply_settings_live() {
     touchscreen_ui_message(settings.ssid[0]
                                ? "Wi-Fi settings saved - reconnecting..."
                                : "Wi-Fi settings saved");
-    if (!settings.host[0])
+    if (!active_host_const()[0])
       touchscreen_request_auto_discovery();
     return;
   }
 
-  retry_connection = true;
-  next_connection_attempt = now();
-  touchscreen_ui_message(settings.host[0]
-                             ? "Scale setting saved - reconnecting..."
-                             : "Scale address cleared");
-  connect_scale();
-  if (!settings.host[0])
-    touchscreen_request_auto_discovery();
+  if (host_changed) {
+    auto &c = connection_for(slot);
+    c.retry_connection = scale_host_const(slot)[0];
+    c.next_connection_attempt = now();
+    touchscreen_ui_message(scale_host_const(slot)[0]
+                               ? "Scale setting saved - connecting..."
+                               : "Scale address cleared");
+    if (scale_host_const(slot)[0])
+      connect_scale(slot);
+    else
+      touchscreen_request_auto_discovery();
+  } else {
+    publish_active_state();
+    touchscreen_ui_message("Scale selection saved");
+  }
 }
 
 extern "C" void touchscreen_request_auto_discovery() {
-  if (settings.host[0] || discovery_running.exchange(true))
+  if (active_host_const()[0] || discovery_running.exchange(true))
     return;
   BaseType_t created = xTaskCreate(auto_discovery_task, "scale_discovery", 6144,
                                    nullptr, 4, nullptr);

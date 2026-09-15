@@ -10,6 +10,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+// Implemented by home_layout.cpp. Home is rendered synchronously by the
+// custom Dashboard/Glass renderer instead of the legacy Home widgets.
+void touchscreen_home_render_now();
 namespace {
 Settings initial{};
 State current{};
@@ -19,9 +23,21 @@ int page_id, cal_step;
 uint32_t edit_revision;
 bool editor_valid;
 char pair_code[13];
+char scale_hosts_ui[2][128] = {};
+bool scale_paired_ui[2] = {};
+uint8_t active_scale_ui = 0;
+uint8_t setup_scale_slot = 0;
+lv_obj_t *scale_slot_dropdown = nullptr;
+lv_obj_t *scale_host_dropdown = nullptr;
+lv_obj_t *scale_manual_label = nullptr;
+lv_obj_t *scale_manual_host = nullptr;
+lv_obj_t *home_nav_button = nullptr;
+char discovered_scale_options[800] = "Manual IP / hostname...";
+bool ui_initialized = false;
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
 void build(int page);
+void focus(lv_event_t *e);
 void message(const char *s) { lv_label_set_text(notice, s); }
 bool submit(const char *kind, cJSON *json) {
   Action a{};
@@ -46,7 +62,7 @@ lv_obj_t *label(lv_obj_t *parent, const char *s, int x, int y, int width,
   lv_obj_set_style_text_color(o, lv_color_hex(TEXT), 0);
   return o;
 }
-void button(lv_obj_t *parent, const char *s, int x, int y, int width,
+lv_obj_t *button(lv_obj_t *parent, const char *s, int x, int y, int width,
             lv_event_cb_t cb, void *data = nullptr) {
   auto o = lv_button_create(parent);
   lv_obj_set_pos(o, x, y);
@@ -58,6 +74,119 @@ void button(lv_obj_t *parent, const char *s, int x, int y, int width,
   lv_obj_set_style_text_color(t, lv_color_hex(BG), 0);
   lv_obj_center(t);
   lv_obj_add_event_cb(o, cb, LV_EVENT_CLICKED, data);
+  return o;
+}
+
+bool two_scales_ready() {
+  return scale_hosts_ui[0][0] && scale_paired_ui[0] && scale_hosts_ui[1][0] &&
+         scale_paired_ui[1];
+}
+
+void update_home_nav_button() {
+  if (!home_nav_button)
+    return;
+  lv_obj_t *text = lv_obj_get_child(home_nav_button, 0);
+  if (!text || !lv_obj_check_type(text, &lv_label_class))
+    return;
+  const bool can_switch = page_id == 0 && two_scales_ready();
+  lv_label_set_text(text, can_switch ? "Switch\nScale" : "Home");
+  lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_center(text);
+}
+
+bool is_manual_host_option(const char *text) {
+  return text && !strcmp(text, "Manual IP / hostname...");
+}
+
+void set_manual_host_visible(bool visible) {
+  if (scale_manual_label) {
+    if (visible)
+      lv_obj_remove_flag(scale_manual_label, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(scale_manual_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (scale_manual_host) {
+    if (visible)
+      lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(scale_manual_host, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void select_host_option_for_slot(bool prefer_discovered) {
+  if (!scale_host_dropdown)
+    return;
+
+  const char *saved = scale_hosts_ui[setup_scale_slot];
+  const char *other = scale_hosts_ui[setup_scale_slot == 0 ? 1 : 0];
+  const uint16_t option_count = lv_dropdown_get_option_count(scale_host_dropdown);
+  int saved_index = -1;
+  int first_available = -1;
+  int manual_index = -1;
+  char option[128];
+
+  for (uint16_t i = 0; i < option_count; ++i) {
+    lv_dropdown_set_selected(scale_host_dropdown, i);
+    lv_dropdown_get_selected_str(scale_host_dropdown, option, sizeof(option));
+    if (is_manual_host_option(option)) {
+      manual_index = i;
+      continue;
+    }
+    if (saved[0] && !strcmp(option, saved))
+      saved_index = i;
+    if (first_available < 0 && (!other[0] || strcmp(option, other)))
+      first_available = i;
+  }
+
+  int chosen = manual_index >= 0 ? manual_index : 0;
+  if (saved_index >= 0)
+    chosen = saved_index;
+  else if (prefer_discovered && first_available >= 0)
+    chosen = first_available;
+
+  lv_dropdown_set_selected(scale_host_dropdown, (uint16_t)chosen);
+  lv_dropdown_get_selected_str(scale_host_dropdown, option, sizeof(option));
+  const bool manual = is_manual_host_option(option);
+  if (manual && scale_manual_host)
+    lv_textarea_set_text(scale_manual_host, saved);
+  set_manual_host_visible(manual);
+}
+
+void load_saved_host_options() {
+  if (!scale_host_dropdown)
+    return;
+  char options[320] = {};
+  const char *saved = scale_hosts_ui[setup_scale_slot];
+  if (saved[0]) {
+    snprintf(options, sizeof(options), "%s\nManual IP / hostname...", saved);
+  } else {
+    snprintf(options, sizeof(options), "Manual IP / hostname...");
+  }
+  lv_dropdown_set_options(scale_host_dropdown, options);
+  select_host_option_for_slot(false);
+}
+
+void scale_host_selection_changed(lv_event_t *event) {
+  char selected[128];
+  lv_dropdown_get_selected_str((lv_obj_t *)lv_event_get_target(event),
+                               selected, sizeof(selected));
+  const bool manual = is_manual_host_option(selected);
+  if (manual && scale_manual_host && !lv_textarea_get_text(scale_manual_host)[0])
+    lv_textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
+  set_manual_host_visible(manual);
+}
+
+void scale_slot_changed(lv_event_t *event) {
+  const uint16_t selected =
+      lv_dropdown_get_selected((lv_obj_t *)lv_event_get_target(event));
+  setup_scale_slot = selected == 1 ? 1 : 0;
+  if (scale_host_dropdown &&
+      strcmp(discovered_scale_options, "Manual IP / hostname...")) {
+    lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+    select_host_option_for_slot(true);
+  } else {
+    load_saved_host_options();
+  }
 }
 void dismiss_keyboard() {
   if (keyboard) {
@@ -104,7 +233,15 @@ void command(const char *op) {
     message("Waiting for scale confirmation…");
   cJSON_Delete(o);
 }
-void nav(lv_event_t *e) { build((int)(intptr_t)lv_event_get_user_data(e)); }
+void nav(lv_event_t *e) {
+  const int target = (int)(intptr_t)lv_event_get_user_data(e);
+  if (target == 0 && page_id == 0 && two_scales_ready()) {
+    if (submit("switch_scale", nullptr))
+      message("Switching scale...");
+    return;
+  }
+  build(target);
+}
 void save_keg(lv_event_t *) {
   if (!editor_valid) {
     message("Connection changed. Reload from scale before saving.");
@@ -130,11 +267,6 @@ void save_keg(lv_event_t *) {
   if (submit("command", o))
     message("Saving keg information…");
   cJSON_Delete(o);
-}
-void replace_keg(lv_event_t *) {
-  build(1);
-  message("Place the new keg on the calibrated scale, enter its details, then "
-          "Save. Do not tare with a keg on the scale.");
 }
 void calibration(lv_event_t *) {
   if (cal_step == 0)
@@ -166,7 +298,10 @@ void cancel_calibration(lv_event_t *) {
 }
 void discover(lv_event_t *) {
   dismiss_keyboard();
-  submit("discover", nullptr);
+  auto o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
+  submit("discover", o);
+  cJSON_Delete(o);
   message("Looking for a scale…");
 }
 void scan(lv_event_t *) {
@@ -182,10 +317,20 @@ void select_network(lv_event_t *e) {
 }
 void save_settings(lv_event_t *) {
   dismiss_keyboard();
+  char selected[128] = {};
+  if (scale_host_dropdown)
+    lv_dropdown_get_selected_str(scale_host_dropdown, selected,
+                                 sizeof(selected));
+  const char *host =
+      is_manual_host_option(selected)
+          ? (scale_manual_host ? lv_textarea_get_text(scale_manual_host) : "")
+          : selected;
+
   auto o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
   cJSON_AddStringToObject(o, "ssid", lv_textarea_get_text(fields[0]));
   cJSON_AddStringToObject(o, "password", lv_textarea_get_text(fields[1]));
-  cJSON_AddStringToObject(o, "host", lv_textarea_get_text(fields[2]));
+  cJSON_AddStringToObject(o, "host", host);
   cJSON_AddNumberToObject(o, "brightness", lv_slider_get_value(fields[3]));
   submit("settings", o);
   cJSON_Delete(o);
@@ -195,7 +340,10 @@ void brightness(lv_event_t *e) {
       lv_slider_get_value((lv_obj_t *)lv_event_get_target(e)));
 }
 void forget_yes(lv_event_t *) {
-  submit("forget", nullptr);
+  auto o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
+  submit("forget", o);
+  cJSON_Delete(o);
   build(3);
 }
 void forget(lv_event_t *) {
@@ -204,6 +352,10 @@ void forget(lv_event_t *) {
   // Do not let its result write into deleted setup widgets.
   memset(fields, 0, sizeof(fields));
   networks = nullptr;
+  scale_slot_dropdown = nullptr;
+  scale_host_dropdown = nullptr;
+  scale_manual_label = nullptr;
+  scale_manual_host = nullptr;
   lv_obj_clean(content);
   label(content, "Remove scale pairing?", 8, 12, 424,
         &lv_font_montserrat_24);
@@ -263,30 +415,22 @@ void dashboard() {
 void build(int page) {
   dismiss_keyboard();
   page_id = page;
+  update_home_nav_button();
   lv_obj_clean(content);
   headline = detail = connection = arc = networks = nullptr;
+  scale_slot_dropdown = nullptr;
+  scale_host_dropdown = nullptr;
+  scale_manual_label = nullptr;
+  scale_manual_host = nullptr;
   memset(fields, 0, sizeof(fields));
   if (page == 0) {
-    headline = label(content, current.name, 8, 0, 424, &lv_font_montserrat_24);
-    lv_label_set_long_mode(headline, LV_LABEL_LONG_DOT);
-    lv_obj_set_height(headline, 30);
-    arc = lv_arc_create(content);
-    lv_obj_set_size(arc, 200, 200);
-    lv_obj_set_pos(arc, 120, 36);
-    lv_arc_set_rotation(arc, 135);
-    lv_arc_set_bg_angles(arc, 0, 270);
-    lv_arc_set_range(arc, 0, 100);
-    lv_obj_remove_style(arc, nullptr, LV_PART_KNOB);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(ACCENT), LV_PART_INDICATOR);
-    detail = label(content, "--", 140, 88, 160, &lv_font_montserrat_48);
-    auto caption =
-        label(content, "Servings left", 130, 149, 180, &lv_font_montserrat_18);
-    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
-    connection = label(content, "", 8, 240, 424, &lv_font_montserrat_16);
-    button(content, "Replace keg", 8, 276, 424, replace_keg);
-    dashboard();
+    // Identify the shared content container as Home without building the old
+    // arc/servings/Replace-keg UI. The custom renderer runs before this
+    // navigation callback returns, so there is no legacy Home frame to flash.
+    auto marker =
+        label(content, "__TOUCH_HOME__", 0, 0, 1, &lv_font_montserrat_14);
+    lv_obj_add_flag(marker, LV_OBJ_FLAG_HIDDEN);
+    touchscreen_home_render_now();
   } else if (page == 1) {
     edit_revision = current.revision;
     editor_valid = current.online;
@@ -347,33 +491,81 @@ void build(int page) {
                pair_code);
       label(content, b, 8, 38, 424, &lv_font_montserrat_20);
     }
+
+    setup_scale_slot = active_scale_ui;
     int y = pair_code[0] ? 135 : 45;
+    label(content, "Scale connection", 8, y, 424, &lv_font_montserrat_16);
+    scale_slot_dropdown = lv_dropdown_create(content);
+    lv_obj_set_pos(scale_slot_dropdown, 8, y + 25);
+    lv_obj_set_size(scale_slot_dropdown, 424, 46);
+    char scale_options[128];
+    snprintf(scale_options, sizeof(scale_options),
+             "Scale 1%s\nScale 2%s",
+             scale_paired_ui[0] ? " - Paired"
+                                : (scale_hosts_ui[0][0] ? " - Configured"
+                                                        : " - Not configured"),
+             scale_paired_ui[1] ? " - Paired"
+                                : (scale_hosts_ui[1][0] ? " - Configured"
+                                                        : " - Not configured"));
+    lv_dropdown_set_options(scale_slot_dropdown, scale_options);
+    lv_dropdown_set_selected(scale_slot_dropdown, setup_scale_slot);
+    lv_obj_add_event_cb(scale_slot_dropdown, scale_slot_changed,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+
+    y += 82;
     button(content, "Scan Wi-Fi", 8, y, 205, scan);
     button(content, "Find scale", 230, y, 200, discover);
+
     networks = lv_dropdown_create(content);
     lv_obj_set_pos(networks, 8, y + 56);
     lv_obj_set_size(networks, 424, 45);
     lv_dropdown_set_options(networks, "Select Wi-Fi network");
     lv_obj_add_event_cb(networks, select_network, LV_EVENT_VALUE_CHANGED,
                         nullptr);
+
     fields[0] = field("Wi-Fi name (SSID)", initial.ssid, y + 115, false, 32);
     fields[1] = field("Wi-Fi password", initial.password, y + 200, false, 64);
     lv_textarea_set_password_mode(fields[1], true);
-    fields[2] = field("Scale hostname or IP address", initial.host, y + 285,
-                      false, 127);
+
+    label(content, "Scale hostname or IP", 8, y + 285, 424,
+          &lv_font_montserrat_16);
+    scale_host_dropdown = lv_dropdown_create(content);
+    lv_obj_set_pos(scale_host_dropdown, 8, y + 310);
+    lv_obj_set_size(scale_host_dropdown, 424, 46);
+    lv_obj_add_event_cb(scale_host_dropdown, scale_host_selection_changed,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+
+    scale_manual_label =
+        label(content, "Manual IP / hostname", 8, y + 365, 424,
+              &lv_font_montserrat_16);
+    scale_manual_host = lv_textarea_create(content);
+    lv_obj_set_pos(scale_manual_host, 8, y + 390);
+    lv_obj_set_size(scale_manual_host, 424, 46);
+    lv_textarea_set_one_line(scale_manual_host, true);
+    lv_textarea_set_max_length(scale_manual_host, 127);
+    lv_textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
+    lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_add_event_cb(scale_manual_host, focus, LV_EVENT_SHORT_CLICKED,
+                        nullptr);
+
+    load_saved_host_options();
+
     label(content,
-          "Open Add touchscreen on the scale before connecting for the first "
-          "time.",
-          8, y + 370, 424, &lv_font_montserrat_16);
-    label(content, "Brightness", 8, y + 425, 424);
+          "Use Find scale to discover every scale on this Wi-Fi network, or "
+          "choose Manual IP / hostname. Open Add touchscreen on the selected "
+          "scale before first pairing.",
+          8, y + 455, 424, &lv_font_montserrat_16);
+
+    label(content, "Brightness", 8, y + 535, 424);
     fields[3] = lv_slider_create(content);
-    lv_obj_set_pos(fields[3], 18, y + 468);
+    lv_obj_set_pos(fields[3], 18, y + 578);
     lv_obj_set_size(fields[3], 404, 15);
     lv_slider_set_range(fields[3], 10, 100);
     lv_slider_set_value(fields[3], initial.brightness, LV_ANIM_OFF);
     lv_obj_add_event_cb(fields[3], brightness, LV_EVENT_VALUE_CHANGED, nullptr);
-    button(content, "Save and connect", 8, y + 505, 424, save_settings);
-    button(content, "Remove pairing", 8, y + 565, 424, forget);
+
+    button(content, "Save and connect", 8, y + 615, 424, save_settings);
+    button(content, "Remove selected scale pairing", 8, y + 675, 424, forget);
   } else {
     label(content, "Firmware & diagnostics", 8, 0, 424, &lv_font_montserrat_24);
     char b[300];
@@ -442,9 +634,15 @@ void ui_start(const Settings &s) {
                  &lv_font_montserrat_14);
   lv_obj_set_height(notice, 40);
   const char *names[] = {"Home", "Keg", "Scale", "Setup", "Update"};
-  for (int i = 0; i < 5; i++)
-    button(root, names[i], 8 + i * 94, 430, 88, nav, (void *)(intptr_t)i);
-  build(s.ssid[0] && s.host[0] ? 0 : 3);
+  for (int i = 0; i < 5; i++) {
+    lv_obj_t *nav_button =
+        button(root, names[i], 8 + i * 94, 430, 88, nav,
+               (void *)(intptr_t)i);
+    if (i == 0)
+      home_nav_button = nav_button;
+  }
+  ui_initialized = true;
+  build(s.ssid[0] && scale_hosts_ui[active_scale_ui][0] ? 0 : 3);
   bsp_display_unlock();
 }
 void ui_state(const State &s) {
@@ -501,11 +699,24 @@ void ui_result(bool ok, const char *op, const char *error) {
   bsp_display_unlock();
 }
 void ui_discovered(const char *host) {
+  char options[320];
+  if (host && host[0])
+    snprintf(options, sizeof(options), "%s\nManual IP / hostname...", host);
+  else
+    snprintf(options, sizeof(options), "Manual IP / hostname...");
+  ui_discovered_options(options);
+}
+
+void ui_discovered_options(const char *options) {
   if (!bsp_display_lock(1000))
     return;
-  if (page_id == 3 && fields[2])
-    lv_textarea_set_text(fields[2], host);
-  message("Scale found. Save and connect.");
+  snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
+           options && options[0] ? options : "Manual IP / hostname...");
+  if (page_id == 3 && scale_host_dropdown) {
+    lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+    select_host_option_for_slot(true);
+  }
+  message("Choose a scale from the list, or use Manual IP / hostname.");
   bsp_display_unlock();
 }
 void ui_networks(const char *options) {
@@ -530,5 +741,28 @@ void ui_paired(void) {
   pair_code[0] = 0;
   if (first)
     build(0);
+  bsp_display_unlock();
+}
+
+
+void ui_scale_profiles(const char *primary_host, bool primary_paired,
+                       const char *secondary_host, bool secondary_paired,
+                       uint8_t active_scale) {
+  snprintf(scale_hosts_ui[0], sizeof(scale_hosts_ui[0]), "%s",
+           primary_host ? primary_host : "");
+  snprintf(scale_hosts_ui[1], sizeof(scale_hosts_ui[1]), "%s",
+           secondary_host ? secondary_host : "");
+  scale_paired_ui[0] = primary_paired;
+  scale_paired_ui[1] = secondary_paired;
+  active_scale_ui = active_scale < 2 ? active_scale : 0;
+  setup_scale_slot = active_scale_ui;
+
+  if (!ui_initialized)
+    return;
+  if (!bsp_display_lock(1000))
+    return;
+  update_home_nav_button();
+  if (page_id == 3)
+    build(3);
   bsp_display_unlock();
 }

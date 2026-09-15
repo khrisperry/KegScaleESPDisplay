@@ -355,26 +355,26 @@ esp_err_t display_ui_show_pairing_code(
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        12,
+        10,
         "PAIR DISPLAY",
         &EPAPER_FONT_BODY_LARGE);
 
     if (scale_id != NULL) {
         draw_font_centered_at(
             EPAPER_WIDTH / 2,
-            29,
+            31,
             scale_id,
             &EPAPER_FONT_BODY_SMALL);
     }
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        48,
+        50,
         "ENTER THIS CODE ON",
         &EPAPER_FONT_BODY_MEDIUM);
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        60,
+        67,
         "THE SCALE WEBPAGE",
         &EPAPER_FONT_BODY_MEDIUM);
 
@@ -388,7 +388,7 @@ esp_err_t display_ui_show_pairing_code(
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        82,
+        90,
         code,
         &EPAPER_FONT_BODY_LARGE);
 

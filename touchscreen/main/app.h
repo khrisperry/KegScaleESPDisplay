@@ -38,9 +38,13 @@ void ui_message(const char *message);
 void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
+void ui_discovered_options(const char *options);
 void ui_networks(const char *options);
 void ui_paired(void);
 void ui_settings_applied(const Settings &settings);
+void ui_scale_profiles(const char *primary_host, bool primary_paired,
+                       const char *secondary_host, bool secondary_paired,
+                       uint8_t active_scale);
 
 void ui_update_checking(void);
 void ui_update_status(const char *current_version, const char *latest_version,
