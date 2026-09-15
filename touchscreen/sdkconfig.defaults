@@ -20,6 +20,11 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
+# ESP-IDF requires 64-byte D-cache lines when an ESP32-S3 RGB panel uses
+# PSRAM-backed framebuffers with a bounce buffer. Without this the RGB stream
+# can drift/corrupt under PSRAM contention (for example Wi-Fi/flash activity).
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
