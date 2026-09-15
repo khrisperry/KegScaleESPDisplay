@@ -14,7 +14,6 @@ constexpr const char *kNvsNamespace = "touch_ui";
 constexpr const char *kGlassKey = "glass_home";
 
 constexpr uint32_t COLOR_BG = 0x171717;
-constexpr uint32_t COLOR_PANEL = 0x202020;
 constexpr uint32_t COLOR_TEXT = 0xf7f7f7;
 constexpr uint32_t COLOR_MUTED = 0xa6a6a6;
 constexpr uint32_t COLOR_GREEN = 0x2bc48a;
@@ -164,7 +163,7 @@ void clear_switch_ref(lv_event_t *) { glass_switch = nullptr; }
 
 void load_preference() {
   glass_home = false;
-  nvs_handle_t nvs;
+  nvs_handle_t nvs = 0;
   if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK)
     return;
   uint8_t value = 0;
@@ -175,7 +174,7 @@ void load_preference() {
 }
 
 void save_preference(bool enabled) {
-  nvs_handle_t nvs;
+  nvs_handle_t nvs = 0;
   esp_err_t e = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
   if (e == ESP_OK)
     e = nvs_set_u8(nvs, kGlassKey, enabled ? 1 : 0);
@@ -201,7 +200,7 @@ void update_disconnected(lv_obj_t *overlay) {
                          &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_name, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *title = make_label(overlay, "Not connected", 20, 122, 392,
-                               &lv_font_montserrat_32, COLOR_WARNING);
+                               &lv_font_montserrat_28, COLOR_WARNING);
   lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *help = make_label(overlay, "Waiting for scale connection", 20, 170,
                               392, &lv_font_montserrat_18, COLOR_MUTED);
@@ -248,16 +247,16 @@ void build_dashboard(lv_obj_t *overlay) {
   lv_obj_set_style_arc_color(home_arc, lv_color_hex(COLOR_GREEN),
                              LV_PART_INDICATOR);
 
-  home_percent = make_label(overlay, "--", 39, 116, 104,
-                            &lv_font_montserrat_36);
+  home_percent = make_label(overlay, "--", 28, 108, 126,
+                            &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_t *remaining = make_label(overlay, "REMAINING", 42, 158, 98,
+  lv_obj_t *remaining = make_label(overlay, "REMAINING", 42, 164, 98,
                                    &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
   home_servings = make_label(overlay, "--", 192, 94, 70,
-                             &lv_font_montserrat_36);
-  make_label(overlay, "servings left", 256, 111, 155, &lv_font_montserrat_16,
+                             &lv_font_montserrat_28);
+  make_label(overlay, "servings left", 256, 105, 155, &lv_font_montserrat_16,
              COLOR_MUTED);
   home_gallons = make_label(overlay, "", 192, 153, 220,
                             &lv_font_montserrat_14, COLOR_MUTED);
@@ -287,8 +286,8 @@ lv_obj_t *metric_card(lv_obj_t *overlay, int y, const char *subtext) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_CREAM), 0);
   lv_obj_set_style_border_width(card, 0, 0);
   lv_obj_set_style_radius(card, 13, 0);
-  lv_obj_t *sub = make_label(card, subtext, 8, 33, 228,
-                             &lv_font_montserrat_12, 0x7c4d08);
+  lv_obj_t *sub = make_label(card, subtext, 8, 32, 228,
+                             &lv_font_montserrat_14, 0x7c4d08);
   lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
   return card;
 }
@@ -328,22 +327,22 @@ void build_glass(lv_obj_t *overlay) {
   lv_obj_set_style_radius(outline, 8, 0);
 
   lv_obj_t *card = metric_card(overlay, 45, "REMAINING");
-  home_percent = make_label(card, "--", 8, 3, 228, &lv_font_montserrat_32,
+  home_percent = make_label(card, "--", 8, 2, 228, &lv_font_montserrat_28,
                             COLOR_DARK_TEXT);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
 
   card = metric_card(overlay, 107, "SERVINGS LEFT");
-  home_servings = make_label(card, "--", 8, 5, 228, &lv_font_montserrat_24,
+  home_servings = make_label(card, "--", 8, 4, 228, &lv_font_montserrat_24,
                              COLOR_DARK_TEXT);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
 
   card = metric_card(overlay, 169, "GALLONS REMAINING");
-  home_gallons = make_label(card, "--", 8, 5, 228, &lv_font_montserrat_24,
+  home_gallons = make_label(card, "--", 8, 4, 228, &lv_font_montserrat_24,
                             COLOR_DARK_TEXT);
   lv_obj_set_style_text_align(home_gallons, LV_TEXT_ALIGN_CENTER, 0);
 
   card = metric_card(overlay, 231, "BEER WEIGHT");
-  home_beer_weight = make_label(card, "--", 8, 5, 228,
+  home_beer_weight = make_label(card, "--", 8, 4, 228,
                                 &lv_font_montserrat_24, COLOR_DARK_TEXT);
   lv_obj_set_style_text_align(home_beer_weight, LV_TEXT_ALIGN_CENTER, 0);
 }
