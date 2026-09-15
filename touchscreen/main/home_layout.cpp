@@ -22,6 +22,8 @@ constexpr uint32_t COLOR_WARNING = 0xf2ad45;
 constexpr uint32_t COLOR_GLASS = 0x98a8b0;
 constexpr uint32_t COLOR_CREAM = 0xfff5dc;
 constexpr uint32_t COLOR_DARK_TEXT = 0x17120b;
+constexpr uint32_t COLOR_HEADER_BUTTON = 0x203441;
+constexpr uint32_t COLOR_HEADER_ACCENT = 0x54d6bf;
 
 State latest_state{};
 int active_page = 0;
@@ -37,7 +39,8 @@ lv_obj_t *home_beer_weight = nullptr;
 lv_obj_t *home_scale_weight = nullptr;
 lv_obj_t *home_arc = nullptr;
 lv_obj_t *glass_fill = nullptr;
-lv_obj_t *glass_switch = nullptr;
+lv_obj_t *view_button = nullptr;
+lv_obj_t *view_button_label = nullptr;
 lv_timer_t *customization_timer = nullptr;
 
 void reset_home_child_refs() {
@@ -101,7 +104,7 @@ lv_obj_t *find_content() {
   const uint32_t count = lv_obj_get_child_count(root);
   for (uint32_t i = 0; i < count; ++i) {
     lv_obj_t *child = lv_obj_get_child(root, static_cast<int32_t>(i));
-    if (!child)
+    if (!child || child == view_button)
       continue;
     const int x = lv_obj_get_x(child);
     const int y = lv_obj_get_y(child);
@@ -165,7 +168,10 @@ void clear_home_refs(lv_event_t *) {
   reset_home_child_refs();
 }
 
-void clear_switch_ref(lv_event_t *) { glass_switch = nullptr; }
+void clear_view_button_refs(lv_event_t *) {
+  view_button = nullptr;
+  view_button_label = nullptr;
+}
 
 void load_preference() {
   glass_home = false;
@@ -219,26 +225,11 @@ void update_disconnected(lv_obj_t *overlay) {
 
 void build_dashboard(lv_obj_t *overlay) {
   home_disconnected = false;
-  lv_obj_t *icon = lv_obj_create(overlay);
-  lv_obj_set_pos(icon, 14, 12);
-  lv_obj_set_size(icon, 43, 43);
-  lv_obj_remove_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(icon, lv_color_hex(0x4a361d), 0);
-  lv_obj_set_style_border_width(icon, 0, 0);
-  lv_obj_set_style_radius(icon, 11, 0);
-  lv_obj_t *beer = lv_obj_create(icon);
-  lv_obj_set_pos(beer, 14, 9);
-  lv_obj_set_size(beer, 15, 24);
-  lv_obj_remove_flag(beer, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(beer, lv_color_hex(COLOR_AMBER), 0);
-  lv_obj_set_style_border_color(beer, lv_color_hex(0xf0b22f), 0);
-  lv_obj_set_style_border_width(beer, 2, 0);
-  lv_obj_set_style_radius(beer, 2, 0);
 
-  home_name = make_label(overlay, "", 68, 10, 260, &lv_font_montserrat_20);
+  home_name = make_label(overlay, "", 16, 10, 285, &lv_font_montserrat_20);
   lv_label_set_long_mode(home_name, LV_LABEL_LONG_DOT);
   lv_obj_set_height(home_name, 26);
-  make_label(overlay, "Keg Scale", 68, 36, 170, &lv_font_montserrat_14,
+  make_label(overlay, "Keg Scale", 16, 36, 170, &lv_font_montserrat_14,
              COLOR_MUTED);
   home_status = make_label(overlay, "", 320, 15, 105,
                            &lv_font_montserrat_14, COLOR_GREEN);
@@ -359,6 +350,60 @@ void build_glass(lv_obj_t *overlay) {
   lv_obj_set_style_text_align(home_beer_weight, LV_TEXT_ALIGN_CENTER, 0);
 }
 
+void update_home_values();
+
+void rebuild_home_for_selected_view() {
+  if (!home_overlay)
+    return;
+  lv_obj_clean(home_overlay);
+  reset_home_child_refs();
+  home_disconnected = false;
+  if (!latest_state.online)
+    update_disconnected(home_overlay);
+  else if (glass_home)
+    build_glass(home_overlay);
+  else
+    build_dashboard(home_overlay);
+}
+
+void switch_home_view(lv_event_t *) {
+  glass_home = !glass_home;
+  save_preference(glass_home);
+  rebuild_home_for_selected_view();
+  if (view_button_label)
+    lv_label_set_text(view_button_label,
+                      glass_home ? "Switch to Dashboard" : "Switch to Glass");
+  update_home_values();
+}
+
+void ensure_view_button() {
+  if (!view_button) {
+    lv_obj_t *root = lv_screen_active();
+    view_button = lv_button_create(root);
+    lv_obj_set_pos(view_button, 292, 7);
+    lv_obj_set_size(view_button, 168, 36);
+    lv_obj_set_style_bg_color(view_button, lv_color_hex(COLOR_HEADER_BUTTON), 0);
+    lv_obj_set_style_border_color(view_button, lv_color_hex(COLOR_HEADER_ACCENT), 0);
+    lv_obj_set_style_border_width(view_button, 1, 0);
+    lv_obj_set_style_radius(view_button, 9, 0);
+    view_button_label = lv_label_create(view_button);
+    lv_obj_set_style_text_font(view_button_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(view_button_label, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_center(view_button_label);
+    lv_obj_add_event_cb(view_button, switch_home_view, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(view_button, clear_view_button_refs, LV_EVENT_DELETE, nullptr);
+  }
+
+  if (active_page == 0) {
+    lv_label_set_text(view_button_label,
+                      glass_home ? "Switch to Dashboard" : "Switch to Glass");
+    lv_obj_remove_flag(view_button, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(view_button);
+  } else {
+    lv_obj_add_flag(view_button, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 void build_home_overlay() {
   lv_obj_t *content = find_content();
   if (!content || !content_has_home_arc(content))
@@ -404,13 +449,7 @@ void update_home_values() {
   }
 
   if (home_disconnected || !home_percent || !home_name) {
-    lv_obj_clean(home_overlay);
-    reset_home_child_refs();
-    home_disconnected = false;
-    if (glass_home)
-      build_glass(home_overlay);
-    else
-      build_dashboard(home_overlay);
+    rebuild_home_for_selected_view();
   }
 
   char name[48];
@@ -472,51 +511,12 @@ void update_home_values() {
   }
 }
 
-void layout_switch_changed(lv_event_t *event) {
-  lv_obj_t *sw = static_cast<lv_obj_t *>(lv_event_get_target(event));
-  glass_home = lv_obj_has_state(sw, LV_STATE_CHECKED);
-  save_preference(glass_home);
-}
-
-void ensure_setup_option() {
-  if (active_page != 3 || glass_switch)
-    return;
-  lv_obj_t *content = find_content();
-  if (!content)
-    return;
-
-  int32_t bottom = 0;
-  const uint32_t count = lv_obj_get_child_count(content);
-  for (uint32_t i = 0; i < count; ++i) {
-    lv_obj_t *child = lv_obj_get_child(content, static_cast<int32_t>(i));
-    if (!child)
-      continue;
-    bottom = std::max(bottom, lv_obj_get_y(child) + lv_obj_get_height(child));
-  }
-  const int y = bottom + 18;
-  make_label(content, "Home screen", 8, y, 300, &lv_font_montserrat_18);
-  make_label(content,
-             "Dashboard is the default. Enable Glass view for the visual "
-             "pour-level layout.",
-             8, y + 30, 335, &lv_font_montserrat_14, COLOR_MUTED);
-  make_label(content, "Glass view", 8, y + 76, 180, &lv_font_montserrat_16);
-  glass_switch = lv_switch_create(content);
-  lv_obj_set_pos(glass_switch, 365, y + 66);
-  lv_obj_set_size(glass_switch, 60, 32);
-  if (glass_home)
-    lv_obj_add_state(glass_switch, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(glass_switch, layout_switch_changed,
-                      LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_add_event_cb(glass_switch, clear_switch_ref, LV_EVENT_DELETE, nullptr);
-}
-
 void nav_observer(lv_event_t *event) {
   active_page = static_cast<int>(reinterpret_cast<intptr_t>(
       lv_event_get_user_data(event)));
+  ensure_view_button();
   if (active_page == 0)
     update_home_values();
-  else if (active_page == 3)
-    ensure_setup_option();
 }
 
 void install_nav_observers() {
@@ -540,10 +540,9 @@ void install_nav_observers() {
 
 void customization_tick(lv_timer_t *) {
   active_page = detect_page();
+  ensure_view_button();
   if (active_page == 0)
     update_home_values();
-  else if (active_page == 3)
-    ensure_setup_option();
 }
 } // namespace
 
@@ -554,12 +553,11 @@ void touchscreen_ui_start_dispatch(const Settings &settings) {
   if (!bsp_display_lock(1000))
     return;
   install_nav_observers();
+  ensure_view_button();
   if (!customization_timer)
     customization_timer = lv_timer_create(customization_tick, 250, nullptr);
   if (active_page == 0)
     update_home_values();
-  else if (active_page == 3)
-    ensure_setup_option();
   bsp_display_unlock();
 }
 
@@ -569,6 +567,7 @@ void touchscreen_ui_state_dispatch(const State &state) {
   if (!bsp_display_lock(1000))
     return;
   active_page = detect_page();
+  ensure_view_button();
   if (active_page == 0)
     update_home_values();
   bsp_display_unlock();
