@@ -2,6 +2,8 @@
 #include "bsp/esp32_s3_touch_lcd_4b.h"
 #include "lvgl.h"
 
+void touchscreen_pairing_timeout_cleanup();
+
 namespace {
 lv_obj_t *pairing_overlay = nullptr;
 lv_timer_t *pairing_timeout_timer = nullptr;
@@ -11,6 +13,7 @@ constexpr uint32_t ACCENT = 0x54d6bf;
 constexpr uint32_t TEXT = 0xf2f6f8;
 constexpr uint32_t MUTED = 0xaec0ca;
 constexpr uint32_t PAIRING_TIMEOUT_MS = 120000;
+// TOUCH_BUTTON_STYLE_V5
 
 lv_obj_t *overlay_label(lv_obj_t *parent, const char *text, int x, int y,
                         int width, const lv_font_t *font) {
@@ -44,11 +47,17 @@ lv_obj_t *overlay_button(lv_obj_t *parent, const char *text, int x, int y,
   lv_obj_t *button = lv_button_create(parent);
   lv_obj_set_pos(button, x, y);
   lv_obj_set_size(button, width, 48);
-  lv_obj_set_style_bg_color(button, lv_color_hex(ACCENT), 0);
-  lv_obj_set_style_radius(button, 10, 0);
+  lv_obj_set_style_bg_color(button, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(button, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_width(button, 1, 0);
+  lv_obj_set_style_radius(button, 15, 0);
+  lv_obj_set_style_bg_color(button, lv_color_hex(0x36505f), LV_STATE_PRESSED);
+  lv_obj_set_style_border_color(button, lv_color_hex(ACCENT), LV_STATE_PRESSED);
+
   lv_obj_t *label = lv_label_create(button);
   lv_label_set_text(label, text);
-  lv_obj_set_style_text_color(label, lv_color_hex(BG), 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(TEXT), 0);
   lv_obj_center(label);
   lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
   return button;
@@ -58,6 +67,10 @@ void pairing_timed_out(lv_timer_t *) {
   pairing_timeout_timer = nullptr;
   if (!pairing_overlay)
     return;
+
+  // The full-screen authorization flow is the only pairing-code UI.
+  // Clear the old legacy state before the user can return to Setup.
+  touchscreen_pairing_timeout_cleanup();
 
   lv_obj_clean(pairing_overlay);
   overlay_label(pairing_overlay, "PAIRING TIMED OUT", 24, 72, 432,

@@ -508,7 +508,37 @@ static void touchscreen_apply_settings_live() {
   if (!wifi_changed && !host_changed) {
     publish_scale_profiles();
     publish_active_state();
-    touchscreen_ui_message("Settings saved");
+
+    // "Save & connect" is also an explicit reconnect request. If the selected
+    // scale is configured but the session is not fully authenticated/online,
+    // restart the connection even when SSID and hostname did not change.
+    //
+    // This is especially important after the full-screen pairing code times
+    // out: the old WebSocket can still be sitting in an unfinished handshake.
+    // connect_scale() increments the generation, tears down that stale socket,
+    // probes the scale setup window again, and starts a fresh handshake.
+    auto &c = connection_for(slot);
+    const bool has_scale = scale_host_const(slot)[0] != 0;
+    const bool needs_connection =
+        has_scale &&
+        (!scale_paired(slot) || !c.authenticated || !c.state.online);
+
+    if (needs_connection) {
+      ESP_LOGI(
+          TAG,
+          "Save & connect requested for scale %u with unchanged settings; "
+          "restarting connection (paired=%d authenticated=%d online=%d)",
+          (unsigned)(slot + 1), scale_paired(slot), c.authenticated,
+          c.state.online);
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      touchscreen_ui_message(scale_paired(slot)
+                                 ? "Reconnecting to scale..."
+                                 : "Starting scale pairing...");
+      connect_scale(slot);
+    } else {
+      touchscreen_ui_message("Settings saved");
+    }
     return;
   }
 

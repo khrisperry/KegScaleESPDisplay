@@ -41,6 +41,9 @@ CONFIG_LV_BUILD_DEMOS=n
 # renders formats such as %.0f as literal text like "f".
 CONFIG_LV_USE_FLOAT=y
 
+# QR code shown in the touchscreen Scale Menu.
+CONFIG_LV_USE_QRCODE=y
+
 # Fonts used by the 480x480 UI.
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_16=y

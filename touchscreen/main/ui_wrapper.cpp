@@ -507,6 +507,8 @@ void update_page_watch(lv_timer_t *) {
 }
 } // namespace
 
+void touchscreen_update_page_render_now() { render_update_page(); }
+
 void ui_start(const Settings &settings) {
   ui_start_legacy(settings);
   lv_timer_create(update_page_watch, 1000, nullptr);
