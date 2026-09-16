@@ -5,6 +5,7 @@
 extern "C" void touchscreen_app_main();
 extern "C" void touchscreen_request_auto_discovery();
 void touchscreen_start_ota_scheduler(void);
+void touchscreen_start_pairing_guard(void);
 
 namespace {
 constexpr uint32_t kTouchscreenTaskStackBytes = 16 * 1024;
@@ -25,4 +26,5 @@ extern "C" void app_main() {
   configASSERT(created == pdPASS);
   touchscreen_request_auto_discovery();
   touchscreen_start_ota_scheduler();
+  touchscreen_start_pairing_guard();
 }

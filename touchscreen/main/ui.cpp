@@ -6,6 +6,9 @@
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "lvgl.h"
+#include "lwip/inet.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +17,11 @@
 // Implemented by home_layout.cpp. Home is rendered synchronously by the
 // custom Dashboard/Glass renderer instead of the legacy Home widgets.
 void touchscreen_home_render_now();
+void touchscreen_home_set_menu_open(bool open);
+void touchscreen_home_set_keyboard_open(bool open);
+// Implemented by ui_wrapper.cpp. Render the custom OTA page synchronously so
+// the legacy Firmware & diagnostics page never flashes first.
+void touchscreen_update_page_render_now();
 namespace {
 Settings initial{};
 State current{};
@@ -33,10 +41,20 @@ lv_obj_t *scale_manual_label = nullptr;
 lv_obj_t *scale_manual_host = nullptr;
 lv_obj_t *capacity_dropdown = nullptr;
 lv_obj_t *home_nav_button = nullptr;
+lv_obj_t *menu_handle_button = nullptr;
+lv_obj_t *menu_scrim = nullptr;
+lv_obj_t *menu_panel = nullptr;
+lv_obj_t *qr_fullscreen = nullptr;
+lv_obj_t *connection_badge = nullptr;
+// TOUCH_DRAWER_V1
+// TOUCH_SHELL_POLISH_V3
+// TOUCH_LAYOUT_POLISH_V4
+// TOUCH_DRAWER_REFINEMENTS_V2_4
 char discovered_scale_options[800] = "Manual IP / hostname...";
 bool ui_initialized = false;
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
+// TOUCH_BUTTON_STYLE_V5
 void build(int page);
 void focus(lv_event_t *e);
 void message(const char *s) { lv_label_set_text(notice, s); }
@@ -68,14 +86,404 @@ lv_obj_t *button(lv_obj_t *parent, const char *s, int x, int y, int width,
   auto o = lv_button_create(parent);
   lv_obj_set_pos(o, x, y);
   lv_obj_set_size(o, width, 46);
-  lv_obj_set_style_bg_color(o, lv_color_hex(ACCENT), 0);
-  lv_obj_set_style_radius(o, 10, 0);
+
+  // Shared modern action-button treatment used throughout all sub-pages.
+  // Individual controls such as the drawer close button may further override
+  // these defaults after creation.
+  lv_obj_set_style_bg_color(o, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(o, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_width(o, 1, 0);
+  lv_obj_set_style_radius(o, 15, 0);
+
+  // Give taps an obvious but restrained pressed-state response.
+  lv_obj_set_style_bg_color(o, lv_color_hex(0x36505f), LV_STATE_PRESSED);
+  lv_obj_set_style_border_color(o, lv_color_hex(ACCENT), LV_STATE_PRESSED);
+
   auto t = lv_label_create(o);
   lv_label_set_text(t, s);
-  lv_obj_set_style_text_color(t, lv_color_hex(BG), 0);
+  lv_obj_set_style_text_color(t, lv_color_hex(TEXT), 0);
   lv_obj_center(t);
   lv_obj_add_event_cb(o, cb, LV_EVENT_CLICKED, data);
   return o;
+}
+
+void set_menu_x(void *obj, int32_t x) {
+  lv_obj_set_x(static_cast<lv_obj_t *>(obj), x);
+}
+
+void animate_menu_x(int32_t from, int32_t to) {
+  if (!menu_panel)
+    return;
+  lv_anim_delete(menu_panel, set_menu_x);
+  lv_anim_t anim;
+  lv_anim_init(&anim);
+  lv_anim_set_var(&anim, menu_panel);
+  lv_anim_set_values(&anim, from, to);
+  lv_anim_set_duration(&anim, 220);
+  lv_anim_set_exec_cb(&anim, set_menu_x);
+  lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+  lv_anim_start(&anim);
+}
+
+void active_scale_web_url(char *url, size_t url_size,
+                          char *host_text, size_t host_text_size) {
+  if (url && url_size)
+    url[0] = 0;
+  if (host_text && host_text_size)
+    host_text[0] = 0;
+
+  const char *host = scale_hosts_ui[active_scale_ui];
+  if (!host || !host[0])
+    return;
+
+  if (host_text && host_text_size)
+    snprintf(host_text, host_text_size, "%s", host);
+
+  if (!url || !url_size)
+    return;
+
+  if (strstr(host, "://"))
+    snprintf(url, url_size, "%s", host);
+  else
+    snprintf(url, url_size, "http://%s/", host);
+}
+
+
+bool active_scale_ip_url(char *url, size_t url_size,
+                         char *ip_text, size_t ip_text_size) {
+  if (url && url_size)
+    url[0] = 0;
+  if (ip_text && ip_text_size)
+    ip_text[0] = 0;
+
+  const char *saved = scale_hosts_ui[active_scale_ui];
+  if (!saved || !saved[0])
+    return false;
+
+  char lookup[128] = {};
+  const char *start = saved;
+  if (!strncmp(start, "http://", 7))
+    start += 7;
+  else if (!strncmp(start, "https://", 8))
+    start += 8;
+
+  size_t n = 0;
+  while (start[n] && start[n] != '/' && start[n] != ':' &&
+         n + 1 < sizeof(lookup)) {
+    lookup[n] = start[n];
+    ++n;
+  }
+  lookup[n] = 0;
+  if (!lookup[0])
+    return false;
+
+  struct addrinfo hints = {};
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  struct addrinfo *result = nullptr;
+
+  const int rc = getaddrinfo(lookup, nullptr, &hints, &result);
+  if (rc != 0 || !result)
+    return false;
+
+  bool ok = false;
+  if (result->ai_addr && result->ai_family == AF_INET) {
+    const auto *addr =
+        reinterpret_cast<const struct sockaddr_in *>(result->ai_addr);
+    char resolved[INET_ADDRSTRLEN] = {};
+    if (inet_ntop(AF_INET, &addr->sin_addr, resolved, sizeof(resolved))) {
+      if (ip_text && ip_text_size)
+        snprintf(ip_text, ip_text_size, "%s", resolved);
+      if (url && url_size)
+        snprintf(url, url_size, "http://%s/", resolved);
+      ok = true;
+    }
+  }
+
+  freeaddrinfo(result);
+  return ok;
+}
+
+void close_qr_fullscreen(lv_event_t *) {
+  if (!qr_fullscreen)
+    return;
+  lv_obj_delete(qr_fullscreen);
+  qr_fullscreen = nullptr;
+}
+
+void show_qr_fullscreen(lv_event_t *) {
+  char name_url[192];
+  char host[128];
+  active_scale_web_url(name_url, sizeof(name_url), host, sizeof(host));
+  if (!name_url[0])
+    return;
+
+  char ip_url[64] = {};
+  char ip_text[32] = {};
+  const bool have_ip =
+      active_scale_ip_url(ip_url, sizeof(ip_url), ip_text, sizeof(ip_text));
+
+  if (qr_fullscreen) {
+    lv_obj_delete(qr_fullscreen);
+    qr_fullscreen = nullptr;
+  }
+
+  lv_obj_t *root = lv_screen_active();
+  qr_fullscreen = lv_obj_create(root);
+  lv_obj_set_pos(qr_fullscreen, 0, 0);
+  lv_obj_set_size(qr_fullscreen, 480, 480);
+  lv_obj_remove_flag(qr_fullscreen, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(qr_fullscreen, lv_color_hex(BG), 0);
+  lv_obj_set_style_bg_opa(qr_fullscreen, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(qr_fullscreen, 0, 0);
+  lv_obj_set_style_radius(qr_fullscreen, 0, 0);
+  lv_obj_set_style_pad_all(qr_fullscreen, 0, 0);
+
+  auto title = label(qr_fullscreen, "Manage this scale", 30, 18, 420,
+                     &lv_font_montserrat_24);
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+
+  auto help = label(qr_fullscreen, "Choose the address that works best",
+                    30, 50, 420, &lv_font_montserrat_14);
+  lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
+
+  auto name_title = label(qr_fullscreen, "By Name", 34, 79, 180,
+                          &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(name_title, LV_TEXT_ALIGN_CENTER, 0);
+
+  lv_obj_t *name_qr = lv_qrcode_create(qr_fullscreen);
+  lv_qrcode_set_size(name_qr, 154);
+  lv_qrcode_set_dark_color(name_qr, lv_color_black());
+  lv_qrcode_set_light_color(name_qr, lv_color_white());
+  lv_qrcode_update(name_qr, name_url, strlen(name_url));
+  lv_obj_set_pos(name_qr, 47, 108);
+  lv_obj_set_style_border_color(name_qr, lv_color_white(), 0);
+  lv_obj_set_style_border_width(name_qr, 5, 0);
+
+  auto host_label = label(qr_fullscreen, host, 28, 275, 192,
+                          &lv_font_montserrat_14);
+  lv_label_set_long_mode(host_label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(host_label, LV_TEXT_ALIGN_CENTER, 0);
+
+  auto ip_title = label(qr_fullscreen, "By IP", 266, 79, 180,
+                        &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(ip_title, LV_TEXT_ALIGN_CENTER, 0);
+
+  if (have_ip) {
+    lv_obj_t *ip_qr = lv_qrcode_create(qr_fullscreen);
+    lv_qrcode_set_size(ip_qr, 154);
+    lv_qrcode_set_dark_color(ip_qr, lv_color_black());
+    lv_qrcode_set_light_color(ip_qr, lv_color_white());
+    lv_qrcode_update(ip_qr, ip_url, strlen(ip_url));
+    lv_obj_set_pos(ip_qr, 279, 108);
+    lv_obj_set_style_border_color(ip_qr, lv_color_white(), 0);
+    lv_obj_set_style_border_width(ip_qr, 5, 0);
+
+    auto ip_label = label(qr_fullscreen, ip_text, 260, 275, 192,
+                          &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(ip_label, LV_TEXT_ALIGN_CENTER, 0);
+  } else {
+    lv_obj_t *placeholder = lv_obj_create(qr_fullscreen);
+    lv_obj_set_pos(placeholder, 279, 108);
+    lv_obj_set_size(placeholder, 154, 154);
+    lv_obj_remove_flag(placeholder, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(placeholder, lv_color_hex(0x202d36), 0);
+    lv_obj_set_style_border_color(placeholder, lv_color_hex(0x52636e), 0);
+    lv_obj_set_style_border_width(placeholder, 1, 0);
+    lv_obj_set_style_radius(placeholder, 12, 0);
+
+    auto unavailable = label(placeholder, "IP unavailable", 8, 58, 138,
+                             &lv_font_montserrat_16);
+    lv_obj_set_style_text_align(unavailable, LV_TEXT_ALIGN_CENTER, 0);
+
+    auto ip_help = label(qr_fullscreen,
+                         "Could not resolve the scale's current IP",
+                         260, 275, 192, &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(ip_help, LV_TEXT_ALIGN_CENTER, 0);
+  }
+
+  auto note = label(qr_fullscreen,
+                    "Name is easier to remember. IP bypasses name resolution.",
+                    30, 322, 420, &lv_font_montserrat_14);
+  lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
+
+  auto back = button(qr_fullscreen, "Back", 166, 420, 148, close_qr_fullscreen);
+  lv_obj_set_size(back, 148, 40);
+  lv_obj_set_style_bg_color(back, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_border_color(back, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_width(back, 1, 0);
+  lv_obj_set_style_radius(back, 20, 0);
+  if (lv_obj_t *back_text = lv_obj_get_child(back, 0))
+    lv_obj_set_style_text_color(back_text, lv_color_hex(TEXT), 0);
+  lv_obj_set_ext_click_area(back, 6);
+
+  lv_obj_move_foreground(qr_fullscreen);
+}
+
+void close_scale_menu(lv_event_t *) {
+  touchscreen_home_set_menu_open(false);
+  if (connection_badge)
+    lv_obj_remove_flag(connection_badge, LV_OBJ_FLAG_HIDDEN);
+  if (menu_scrim)
+    lv_obj_add_flag(menu_scrim, LV_OBJ_FLAG_HIDDEN);
+  if (menu_panel) {
+    const int32_t current_x = lv_obj_get_x(menu_panel);
+    animate_menu_x(current_x, 480);
+  }
+}
+
+void drawer_nav(lv_event_t *event) {
+  const int target =
+      static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)));
+  close_scale_menu(nullptr);
+  build(target);
+}
+
+void populate_scale_menu() {
+  if (!menu_panel)
+    return;
+
+  lv_obj_clean(menu_panel);
+
+  label(menu_panel, "Scale Menu", 14, 14, 150, &lv_font_montserrat_20);
+  auto close = button(menu_panel, "X", 182, 10, 32, close_scale_menu);
+  lv_obj_set_size(close, 32, 32);
+  lv_obj_set_style_bg_color(close, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_radius(close, 16, 0);
+  lv_obj_set_ext_click_area(close, 10);
+  if (lv_obj_t *close_text = lv_obj_get_child(close, 0))
+    lv_obj_set_style_text_color(close_text, lv_color_hex(TEXT), 0);
+
+  char url[192];
+  char host[128];
+  active_scale_web_url(url, sizeof(url), host, sizeof(host));
+
+  if (url[0]) {
+    lv_obj_t *qr = lv_qrcode_create(menu_panel);
+    lv_qrcode_set_size(qr, 96);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_update(qr, url, strlen(url));
+    lv_obj_set_pos(qr, 66, 52);
+    lv_obj_set_style_border_color(qr, lv_color_white(), 0);
+    lv_obj_set_style_border_width(qr, 4, 0);
+    lv_obj_add_flag(qr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(qr, show_qr_fullscreen, LV_EVENT_CLICKED, nullptr);
+
+    auto qr_help = label(menu_panel, "Scan to manage this scale", 14, 168, 200,
+                         &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(qr_help, LV_TEXT_ALIGN_CENTER, 0);
+
+    auto host_label =
+        label(menu_panel, host, 14, 191, 200, &lv_font_montserrat_14);
+    lv_label_set_long_mode(host_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(host_label, LV_TEXT_ALIGN_CENTER, 0);
+  } else {
+    auto no_scale =
+        label(menu_panel, "Connect a scale to enable the QR code", 14, 84, 200,
+              &lv_font_montserrat_16);
+    lv_obj_set_style_text_align(no_scale, LV_TEXT_ALIGN_CENTER, 0);
+  }
+
+  auto drawer_button = [&](const char *title, int y, int page) {
+    lv_obj_t *b = button(
+        menu_panel, title, 14, y, 200, drawer_nav,
+        reinterpret_cast<void *>(static_cast<intptr_t>(page)));
+    lv_obj_set_size(b, 200, 42);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_radius(b, 15, 0);
+    if (lv_obj_t *t = lv_obj_get_child(b, 0))
+      lv_obj_set_style_text_color(t, lv_color_hex(TEXT), 0);
+    return b;
+  };
+
+  const int first_y = 229;
+  const int gap = 47;
+  drawer_button("Keg", first_y + gap * 0, 1);
+  drawer_button("Scale", first_y + gap * 1, 2);
+  drawer_button("Setup", first_y + gap * 2, 3);
+  drawer_button("Update / Diagnostics", first_y + gap * 3, 4);
+}
+
+void open_scale_menu(lv_event_t *) {
+  if (!menu_panel || !menu_scrim)
+    return;
+
+  populate_scale_menu();
+  touchscreen_home_set_menu_open(true);
+  if (connection_badge)
+    lv_obj_add_flag(connection_badge, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_remove_flag(menu_scrim, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(menu_scrim);
+  lv_obj_move_foreground(menu_panel);
+
+  lv_obj_set_x(menu_panel, 480);
+  animate_menu_x(480, 252);
+}
+
+void ensure_scale_menu(lv_obj_t *root) {
+  if (!menu_scrim) {
+    menu_scrim = lv_obj_create(root);
+    lv_obj_set_pos(menu_scrim, 0, 0);
+    lv_obj_set_size(menu_scrim, 480, 480);
+    lv_obj_remove_flag(menu_scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(menu_scrim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(menu_scrim, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(menu_scrim, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(menu_scrim, 0, 0);
+    lv_obj_set_style_radius(menu_scrim, 0, 0);
+    lv_obj_set_style_pad_all(menu_scrim, 0, 0);
+    lv_obj_add_event_cb(menu_scrim, close_scale_menu, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(menu_scrim, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (!menu_panel) {
+    menu_panel = lv_obj_create(root);
+    lv_obj_set_pos(menu_panel, 480, 0);
+    lv_obj_set_size(menu_panel, 228, 480);
+    lv_obj_remove_flag(menu_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(menu_panel, lv_color_hex(CARD), 0);
+    lv_obj_set_style_bg_opa(menu_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(menu_panel, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(menu_panel, 0, 0);
+    lv_obj_set_style_border_side(menu_panel, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_radius(menu_panel, 0, 0);
+    lv_obj_set_style_pad_all(menu_panel, 0, 0);
+  }
+
+  if (!menu_handle_button) {
+    menu_handle_button = lv_button_create(root);
+    lv_obj_set_pos(menu_handle_button, 426, 7);
+    lv_obj_set_size(menu_handle_button, 42, 42);
+    lv_obj_set_style_bg_color(menu_handle_button, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_opa(menu_handle_button, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(menu_handle_button, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_width(menu_handle_button, 1, 0);
+    lv_obj_set_style_radius(menu_handle_button, 21, 0);
+    lv_obj_set_ext_click_area(menu_handle_button, 5);
+
+    for (int i = 0; i < 3; ++i) {
+      lv_obj_t *bar = lv_obj_create(menu_handle_button);
+      lv_obj_remove_style_all(bar);
+      lv_obj_set_size(bar, 18, 2);
+      lv_obj_align(bar, LV_ALIGN_CENTER, 0, -6 + i * 6);
+      lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_bg_color(bar, lv_color_hex(TEXT), 0);
+      lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(bar, 1, 0);
+    }
+
+    lv_obj_add_event_cb(menu_handle_button, open_scale_menu, LV_EVENT_CLICKED,
+                        nullptr);
+  }
+
+  lv_obj_move_foreground(menu_handle_button);
 }
 
 bool two_scales_ready() {
@@ -89,8 +497,21 @@ void update_home_nav_button() {
   lv_obj_t *text = lv_obj_get_child(home_nav_button, 0);
   if (!text || !lv_obj_check_type(text, &lv_label_class))
     return;
-  const bool can_switch = page_id == 0 && two_scales_ready();
-  lv_label_set_text(text, can_switch ? "Switch\nScale" : "Home");
+
+  char caption[64];
+  if (current.name[0]) {
+    if (two_scales_ready())
+      snprintf(caption, sizeof(caption), "%s  >", current.name);
+    else
+      snprintf(caption, sizeof(caption), "%s", current.name);
+  } else {
+    snprintf(caption, sizeof(caption), "%s",
+             two_scales_ready() ? "Switch Scale  >" : "Home");
+  }
+
+  lv_label_set_text(text, caption);
+  lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(text, lv_obj_get_width(home_nav_button) - 18);
   lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(text);
 }
@@ -189,16 +610,37 @@ void scale_slot_changed(lv_event_t *event) {
     load_saved_host_options();
   }
 }
+void toggle_password_visibility(lv_event_t *event) {
+  auto button = static_cast<lv_obj_t *>(lv_event_get_target(event));
+  auto password = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+  if (!button || !password)
+    return;
+
+  const bool currently_hidden = lv_textarea_get_password_mode(password);
+  lv_textarea_set_password_mode(password, !currently_hidden);
+
+  if (lv_obj_t *button_text = lv_obj_get_child(button, 0))
+    lv_label_set_text(button_text, currently_hidden ? "HIDE" : "SHOW");
+
+  if (keyboard) {
+    lv_keyboard_set_textarea(keyboard, password);
+    lv_obj_move_foreground(keyboard);
+  }
+}
+
 void dismiss_keyboard() {
   if (keyboard) {
     lv_keyboard_set_textarea(keyboard, nullptr);
     lv_obj_delete_async(keyboard);
     keyboard = nullptr;
-    lv_obj_set_height(content, 334);
+    lv_obj_set_height(content, 356);
+    touchscreen_home_set_keyboard_open(false);
   }
 }
 void keyboard_event(lv_event_t *) { dismiss_keyboard(); }
 void focus(lv_event_t *e) {
+  touchscreen_home_set_keyboard_open(true);
+
   if (!keyboard) {
     keyboard = lv_keyboard_create(lv_screen_active());
     lv_obj_set_size(keyboard, 480, 200);
@@ -206,10 +648,12 @@ void focus(lv_event_t *e) {
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_READY, nullptr);
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_CANCEL, nullptr);
   }
+
   auto field = (lv_obj_t *)lv_event_get_target(e);
   lv_keyboard_set_textarea(keyboard, field);
   lv_obj_set_height(content, 222);
   lv_obj_scroll_to_view(field, LV_ANIM_OFF);
+  lv_obj_move_foreground(keyboard);
 }
 lv_obj_t *field(const char *title, const char *value, int y,
                 bool numeric = false, int limit = 32) {
@@ -585,11 +1029,6 @@ void build(int page) {
            cancel_calibration);
   } else if (page == 3) {
     label(content, "Setup", 8, 0, 190, &lv_font_montserrat_24);
-    if (pair_code[0]) {
-      char pair_label[48];
-      snprintf(pair_label, sizeof(pair_label), "Pair: %s", pair_code);
-      label(content, pair_label, 205, 5, 227, &lv_font_montserrat_16);
-    }
 
     setup_scale_slot = active_scale_ui;
 
@@ -666,6 +1105,27 @@ void build(int page) {
     fields[1] =
         compact_setup_field("Password", initial.password, 225, 186, 207, true, 64);
 
+    lv_obj_set_style_pad_right(fields[1], 58, LV_PART_MAIN);
+
+    lv_obj_t *password_toggle = lv_button_create(content);
+    lv_obj_set_pos(password_toggle, 378, 207);
+    lv_obj_set_size(password_toggle, 50, 32);
+    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_opa(password_toggle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_width(password_toggle, 1, 0);
+    lv_obj_set_style_radius(password_toggle, 10, 0);
+    lv_obj_set_style_pad_all(password_toggle, 0, 0);
+
+    lv_obj_t *password_toggle_text = lv_label_create(password_toggle);
+    lv_label_set_text(password_toggle_text, "SHOW");
+    lv_obj_set_style_text_font(password_toggle_text, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(password_toggle_text, lv_color_hex(TEXT), 0);
+    lv_obj_center(password_toggle_text);
+
+    lv_obj_add_event_cb(password_toggle, toggle_password_visibility,
+                        LV_EVENT_CLICKED, fields[1]);
+
     label(content, "Brightness", 8, 250, 92, &lv_font_montserrat_14);
     fields[3] = lv_slider_create(content);
     lv_obj_set_pos(fields[3], 108, 258);
@@ -677,19 +1137,21 @@ void build(int page) {
     button(content, "Save & connect", 8, 284, 207, save_settings);
     button(content, "Remove pairing", 225, 284, 207, forget);
   } else {
-    label(content, "Firmware & diagnostics", 8, 0, 424, &lv_font_montserrat_24);
-    char b[300];
-    snprintf(b, sizeof(b),
-             "Touchscreen: %s\nScale: %s\nWi-Fi protocol: 1\nConnection: "
-             "%s\n\nHardware: Waveshare 4B\nThis update is for the "
-             "touchscreen. Update the scale from its web page.",
-             esp_app_get_description()->version, current.firmware,
-             current.online ? "Connected" : "Not connected");
-    label(content, b, 8, 45, 424);
-    button(content, "Check / install dev update", 8, 270, 424, update);
+    // Page 4 belongs entirely to the new OTA UI. Render it immediately rather
+    // than drawing the legacy Firmware & diagnostics page first.
+    touchscreen_update_page_render_now();
   }
 }
 } // namespace
+
+// Called from the pairing timeout overlay while already in LVGL UI context.
+// Clear the legacy pairing state and redraw Setup underneath the overlay.
+void touchscreen_pairing_timeout_cleanup() {
+  pair_code[0] = 0;
+  if (page_id == 3)
+    build(3);
+}
+
 void ui_start(const Settings &s) {
   initial = s;
   // Use driver-owned frames and wait for bounce-frame completion before reuse.
@@ -731,26 +1193,43 @@ void ui_start(const Settings &s) {
   lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(root, lv_color_hex(BG), 0);
   lv_obj_set_style_text_font(root, &lv_font_montserrat_16, 0);
-  label(root, "KEG SCALE", 20, 12, 440, &lv_font_montserrat_24);
   content = lv_obj_create(root);
-  lv_obj_set_pos(content, 12, 50);
-  lv_obj_set_size(content, 456, 334);
+  lv_obj_set_pos(content, 12, 8);
+  lv_obj_set_size(content, 456, 394);
   lv_obj_set_scroll_dir(content, LV_DIR_VER);
   lv_obj_remove_flag(content, LV_OBJ_FLAG_SCROLL_ELASTIC);
   lv_obj_set_style_bg_color(content, lv_color_hex(CARD), 0);
   lv_obj_set_style_border_width(content, 0, 0);
   lv_obj_set_style_pad_all(content, 6, 0);
-  notice = label(root, "Connect Wi-Fi and pair with your scale", 18, 388, 444,
-                 &lv_font_montserrat_14);
-  lv_obj_set_height(notice, 40);
-  const char *names[] = {"Home", "Keg", "Scale", "Setup", "Update"};
-  for (int i = 0; i < 5; i++) {
-    lv_obj_t *nav_button =
-        button(root, names[i], 8 + i * 94, 430, 88, nav,
-               (void *)(intptr_t)i);
-    if (i == 0)
-      home_nav_button = nav_button;
-  }
+  // Transient messages remain available above the controls.
+  notice = label(root, "", 18, 404, 444, &lv_font_montserrat_14);
+  lv_obj_set_height(notice, 24);
+  lv_label_set_long_mode(notice, LV_LABEL_LONG_DOT);
+
+  // Persistent connection state gets a compact bubble between the two
+  // bottom controls instead of occupying the full width.
+  connection_badge = label(root, "Offline", 211, 438, 82,
+                           &lv_font_montserrat_14);
+  lv_obj_set_height(connection_badge, 28);
+  lv_obj_set_style_text_align(connection_badge, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_color(connection_badge, lv_color_hex(TEXT), 0);
+  lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x7a3b3b), 0);
+  lv_obj_set_style_bg_opa(connection_badge, LV_OPA_70, 0);
+  lv_obj_set_style_radius(connection_badge, 14, 0);
+  lv_obj_set_style_pad_top(connection_badge, 5, 0);
+  // Keep only Home / Switch Scale on the main screen. All management pages
+  // live in the right-side drawer.
+  home_nav_button = button(root, "Home", 8, 432, 196, nav,
+                           reinterpret_cast<void *>(static_cast<intptr_t>(0)));
+  lv_obj_set_size(home_nav_button, 196, 40);
+  lv_obj_set_style_bg_color(home_nav_button, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_bg_opa(home_nav_button, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(home_nav_button, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_width(home_nav_button, 1, 0);
+  lv_obj_set_style_radius(home_nav_button, 15, 0);
+  if (lv_obj_t *home_text = lv_obj_get_child(home_nav_button, 0))
+    lv_obj_set_style_text_color(home_text, lv_color_hex(TEXT), 0);
+  ensure_scale_menu(root);
   ui_initialized = true;
   build(s.ssid[0] && scale_hosts_ui[active_scale_ui][0] ? 0 : 3);
   bsp_display_unlock();
@@ -764,6 +1243,13 @@ void ui_state(const State &s) {
     cal_step = 0;
   }
   current = s;
+  update_home_nav_button();
+  if (connection_badge) {
+    lv_label_set_text(connection_badge, current.online ? "Connected" : "Offline");
+    lv_obj_set_style_bg_color(
+        connection_badge,
+        lv_color_hex(current.online ? 0x247a5a : 0x7a3b3b), 0);
+  }
   if (lost_connection && (page_id == 0 || page_id == 1 || page_id == 2))
     build(page_id);
   else
@@ -775,7 +1261,10 @@ void ui_state(const State &s) {
 void ui_message(const char *s) {
   if (!bsp_display_lock(1000))
     return;
-  message(s);
+  if (!s || !strcmp(s, "Connected to scale") || !strcmp(s, "Not connected"))
+    message("");
+  else
+    message(s);
   bsp_display_unlock();
 }
 void ui_pair_code(const char *code) {
@@ -854,6 +1343,10 @@ void ui_paired(void) {
   bsp_display_unlock();
 }
 
+
+bool touchscreen_active_scale_paired(void) {
+  return scale_paired_ui[active_scale_ui < 2 ? active_scale_ui : 0];
+}
 
 void ui_scale_profiles(const char *primary_host, bool primary_paired,
                        const char *secondary_host, bool secondary_paired,

@@ -979,6 +979,64 @@ esp_err_t ble_client_init(void)
     return ESP_OK;
 }
 
+esp_err_t ble_client_deinit(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+
+    /*
+     * Discovery is strictly one-shot for the touchscreen. At this point
+     * ble_client_scan() has completed (or cancelled on timeout), so there
+     * should be no active GATT connection.
+     */
+    if (s_active_connection != NULL) {
+        ESP_LOGW(
+            TAG,
+            "Refusing BLE shutdown while a connection is still active");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Stopping temporary BLE client");
+
+    /*
+     * nimble_port_stop() causes nimble_port_run() in host_task() to return.
+     * host_task() then calls nimble_port_freertos_deinit(). After that, the
+     * port/controller resources can be deinitialized here.
+     */
+    int rc = nimble_port_stop();
+
+    if (rc != 0) {
+        ESP_LOGW(
+            TAG,
+            "Could not stop NimBLE host; rc=%d",
+            rc);
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = nimble_port_deinit();
+
+    if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Could not deinitialize NimBLE port: %s",
+            esp_err_to_name(err));
+        return err;
+    }
+
+    if (s_host_events != NULL) {
+        vEventGroupDelete(s_host_events);
+        s_host_events = NULL;
+    }
+
+    s_own_addr_type = 0;
+    s_active_connection = NULL;
+    s_initialized = false;
+
+    ESP_LOGI(TAG, "Temporary BLE client stopped");
+    return ESP_OK;
+}
+
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
     size_t capacity,

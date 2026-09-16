@@ -27,7 +27,7 @@ extern "C" void touchscreen_request_auto_discovery();
  * encrypted unpair notification. */
 static void touchscreen_apply_settings_live();
 static void touchscreen_ui_message(const char *message);
-static esp_err_t touchscreen_start_ota_task_legacy();
+static esp_err_t touchscreen_start_ota_task_legacy(bool install);
 static bool touchscreen_remove_scale_pairing(const char *host);
 static void *touchscreen_pairing_memset(void *dest, int value, size_t count);
 static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
@@ -62,6 +62,7 @@ std::atomic<int64_t> ota_last_check_us{0};
 constexpr uint32_t kOtaTaskStackBytes = 12 * 1024;
 constexpr UBaseType_t kOtaTaskPriority = 4;
 constexpr uint32_t kInitialOtaCheckDelayMs = 30000;
+constexpr uint32_t kOtaReconnectDeferMs = 2000;
 constexpr uint32_t kDailyOtaCheckMs = 24U * 60U * 60U * 1000U;
 constexpr const char *kOtaNvsNamespace = "touch_ota";
 constexpr const char *kOtaChannelKey = "channel";
@@ -135,6 +136,35 @@ bool scale_host_changed(uint8_t slot) {
   return strcmp(c.uri, desired) != 0;
 }
 
+/*
+ * HTTPS OTA and a reconnecting WebSocket both consume internal networking
+ * resources. When the active scale has a saved pairing, give reconnect
+ * priority and do not start TLS until that saved session is authenticated and
+ * delivering state again.
+ *
+ * An unconfigured or unpaired touchscreen is not blocked here; OTA still
+ * remains available during initial setup. A live unpaired pairing WebSocket is
+ * treated as busy so OTA does not compete with the approval handshake.
+ */
+bool ota_scale_transport_busy() {
+  if (!wifi_ready.load())
+    return true;
+
+  const uint8_t slot = active_scale_index;
+  if (!scale_host_const(slot)[0])
+    return false;
+
+  const auto &c = connection_for_const(slot);
+
+  if (c.pending_id)
+    return true;
+
+  if (scale_paired(slot))
+    return !c.authenticated || !c.state.online;
+
+  return c.ws && esp_websocket_client_is_connected(c.ws);
+}
+
 void ota_task(void *) {
   const bool install = ota_install_requested.load();
   const bool foreground = ota_foreground_requested.load();
@@ -174,16 +204,48 @@ void ota_scheduler_task(void *) {
     vTaskDelay(pdMS_TO_TICKS(1000));
   vTaskDelay(pdMS_TO_TICKS(kInitialOtaCheckDelayMs));
 
+  bool reconnect_wait_logged = false;
   for (;;) {
-    if (wifi_ready) {
-      const bool install = ota_auto_install.load();
-      esp_err_t e = touchscreen_ota_request(install, false);
-      if (e == ESP_ERR_INVALID_STATE)
-        ESP_LOGI(TAG, "Automatic OTA check skipped because another check is running");
-      else if (e != ESP_OK)
-        ESP_LOGW(TAG, "Could not schedule automatic OTA check: %s",
-                 esp_err_to_name(e));
+    if (!wifi_ready) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
     }
+
+    if (ota_scale_transport_busy()) {
+      if (!reconnect_wait_logged) {
+        const auto &c = connection_for_const(active_scale_index);
+        ESP_LOGI(TAG,
+                 "Automatic OTA check deferred until scale %u reconnect settles "
+                 "(paired=%d authenticated=%d online=%d)",
+                 (unsigned)(active_scale_index + 1),
+                 scale_paired(active_scale_index), c.authenticated,
+                 c.state.online);
+        reconnect_wait_logged = true;
+      }
+      vTaskDelay(pdMS_TO_TICKS(kOtaReconnectDeferMs));
+      continue;
+    }
+
+    if (reconnect_wait_logged) {
+      ESP_LOGI(TAG,
+               "Scale connection settled; automatic OTA check may proceed");
+      reconnect_wait_logged = false;
+    }
+
+    const bool install = ota_auto_install.load();
+    esp_err_t e = touchscreen_ota_request(install, false);
+    if (e == ESP_ERR_INVALID_STATE)
+      ESP_LOGI(TAG,
+               "Automatic OTA check deferred because networking/update work is busy");
+    else if (e != ESP_OK)
+      ESP_LOGW(TAG, "Could not schedule automatic OTA check: %s",
+               esp_err_to_name(e));
+
+    /*
+     * Only start the normal daily interval once we have actually attempted
+     * this cycle. If the scale was reconnecting above, we stay in the short
+     * defer loop rather than losing the check for 24 hours.
+     */
     vTaskDelay(pdMS_TO_TICKS(kDailyOtaCheckMs));
   }
 }
@@ -394,6 +456,22 @@ void touchscreen_set_ota_install_mode(bool install) {
 }
 
 esp_err_t touchscreen_ota_request(bool install, bool foreground) {
+  if (ota_scale_transport_busy()) {
+    const auto &c = connection_for_const(active_scale_index);
+    ESP_LOGI(TAG,
+             "Touchscreen OTA %s deferred: scale %u connection is busy "
+             "(paired=%d authenticated=%d online=%d)",
+             install ? "install" : "check",
+             (unsigned)(active_scale_index + 1),
+             scale_paired(active_scale_index), c.authenticated,
+             c.state.online);
+    if (foreground || install)
+      ui_update_error(
+          "Scale is reconnecting. Wait for it to connect, then try the update again.",
+          install);
+    return ESP_ERR_INVALID_STATE;
+  }
+
   if (ota_running.exchange(true)) {
     ESP_LOGW(TAG,
              "Touchscreen OTA request ignored because an update is already running");
@@ -432,8 +510,8 @@ esp_err_t touchscreen_ota_request(bool install, bool foreground) {
   return ESP_OK;
 }
 
-static esp_err_t touchscreen_start_ota_task_legacy() {
-  return touchscreen_ota_request(ota_install_requested.load(), true);
+static esp_err_t touchscreen_start_ota_task_legacy(bool install) {
+  return touchscreen_ota_request(install, true);
 }
 
 void touchscreen_start_ota_scheduler(void) {
@@ -508,7 +586,37 @@ static void touchscreen_apply_settings_live() {
   if (!wifi_changed && !host_changed) {
     publish_scale_profiles();
     publish_active_state();
-    touchscreen_ui_message("Settings saved");
+
+    // "Save & connect" is also an explicit reconnect request. If the selected
+    // scale is configured but the session is not fully authenticated/online,
+    // restart the connection even when SSID and hostname did not change.
+    //
+    // This is especially important after the full-screen pairing code times
+    // out: the old WebSocket can still be sitting in an unfinished handshake.
+    // connect_scale() increments the generation, tears down that stale socket,
+    // probes the scale setup window again, and starts a fresh handshake.
+    auto &c = connection_for(slot);
+    const bool has_scale = scale_host_const(slot)[0] != 0;
+    const bool needs_connection =
+        has_scale &&
+        (!scale_paired(slot) || !c.authenticated || !c.state.online);
+
+    if (needs_connection) {
+      ESP_LOGI(
+          TAG,
+          "Save & connect requested for scale %u with unchanged settings; "
+          "restarting connection (paired=%d authenticated=%d online=%d)",
+          (unsigned)(slot + 1), scale_paired(slot), c.authenticated,
+          c.state.online);
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      touchscreen_ui_message(scale_paired(slot)
+                                 ? "Reconnecting to scale..."
+                                 : "Starting scale pairing...");
+      connect_scale(slot);
+    } else {
+      touchscreen_ui_message("Settings saved");
+    }
     return;
   }
 

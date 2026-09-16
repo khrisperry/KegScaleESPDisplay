@@ -30,6 +30,20 @@ struct OtaPreferences {
   bool auto_install;
 };
 
+enum TouchscreenDiscoveryMode {
+  TOUCHSCREEN_DISCOVERY_NONE = 0,
+  TOUCHSCREEN_DISCOVERY_WEB = 1,
+  TOUCHSCREEN_DISCOVERY_SETUP_WIFI = 2,
+  TOUCHSCREEN_DISCOVERY_MULTIPLE = 3,
+  TOUCHSCREEN_DISCOVERY_NOT_FOUND = 4,
+  TOUCHSCREEN_DISCOVERY_ERROR = 5,
+};
+
+bool touchscreen_active_scale_paired(void);
+void touchscreen_home_discovery_result(int mode, const char *scale_name,
+                                       const char *qr_payload,
+                                       const char *detail);
+
 extern QueueHandle_t actions;
 
 void ui_start(const Settings &settings);

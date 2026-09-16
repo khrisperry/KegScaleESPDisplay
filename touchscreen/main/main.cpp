@@ -1,4 +1,5 @@
 #include "app.h"
+#include "ble_client.h"
 #include "cJSON.h"
 #include "controller_link.h"
 #include "esp_app_desc.h"
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <strings.h>
 
 QueueHandle_t actions;
 namespace {
@@ -774,6 +776,290 @@ unsigned build_scale_discovery_options(mdns_result_t *found, char *options,
   return count;
 }
 
+void normalize_host(const char *host, char *buffer, size_t size) {
+  if (!buffer || size == 0)
+    return;
+  buffer[0] = 0;
+  if (!host || !host[0])
+    return;
+
+  const char *start = host;
+  if (!strncmp(start, "http://", 7))
+    start += 7;
+  else if (!strncmp(start, "https://", 8))
+    start += 8;
+
+  size_t used = 0;
+  while (start[used] && start[used] != '/' && start[used] != ':' &&
+         used + 1 < size) {
+    buffer[used] = start[used];
+    ++used;
+  }
+  buffer[used] = 0;
+}
+
+bool peer_matches_host(const ble_client_peer_t &peer, const char *host) {
+  char normalized[128];
+  normalize_host(host, normalized, sizeof(normalized));
+  if (!normalized[0])
+    return false;
+
+  size_t len = strlen(normalized);
+  if (len > 6 && !strcasecmp(normalized + len - 6, ".local"))
+    normalized[len - 6] = 0;
+
+  if (peer.scale_id[0] && !strcasecmp(peer.scale_id, normalized))
+    return true;
+
+  return peer.setup_url_available && peer.ip_address[0] &&
+         !strcmp(peer.ip_address, normalized);
+}
+
+bool host_is_other_slot(const char *host, uint8_t slot) {
+  const uint8_t other = slot == 0 ? 1 : 0;
+  const char *other_host = scale_host_const(other);
+  return host && host[0] && other_host && other_host[0] &&
+         !strcasecmp(host, other_host);
+}
+
+void send_web_discovery_result(const char *scale_name, const char *host) {
+  char url[192];
+  snprintf(url, sizeof(url), "http://%s/", host);
+  touchscreen_home_discovery_result(TOUCHSCREEN_DISCOVERY_WEB,
+                                    scale_name, url, host);
+}
+
+void discover_unpaired_scale_qr(uint8_t slot) {
+  if (slot > 1)
+    slot = 0;
+
+  auto &slot_connection = connection_for(slot);
+  if (scale_paired(slot) || slot_connection.authenticated ||
+      slot_connection.state.online) {
+    ESP_LOGI(TAG,
+             "Skipping disconnected QR discovery for scale %u: paired/authenticated/online",
+             (unsigned)(slot + 1));
+    touchscreen_home_discovery_result(TOUCHSCREEN_DISCOVERY_NONE,
+                                      "", "", "");
+    return;
+  }
+
+  const char *saved = scale_host_const(slot);
+  char saved_match[140] = {};
+  char only_network_host[140] = {};
+  char only_network_name[64] = {};
+  unsigned eligible_network_count = 0;
+  bool network_was_ambiguous = false;
+
+  if (wifi_ready.load()) {
+    ESP_LOGI(TAG,
+             "Disconnected QR: checking mDNS for unpaired scale %u",
+             (unsigned)(slot + 1));
+
+    mdns_result_t *found = nullptr;
+    esp_err_t mdns_err =
+        mdns_query_ptr("_kegscale", "_tcp", 1800, 8, &found);
+
+    if (mdns_err == ESP_OK) {
+      for (auto p = found; p; p = p->next) {
+        if (!p->hostname || !p->hostname[0])
+          continue;
+
+        char host[140];
+        snprintf(host, sizeof(host), "%s.local", p->hostname);
+
+        if (host_is_other_slot(host, slot))
+          continue;
+
+        ++eligible_network_count;
+        if (eligible_network_count == 1) {
+          snprintf(only_network_host, sizeof(only_network_host), "%s", host);
+          snprintf(only_network_name, sizeof(only_network_name), "%s",
+                   p->hostname);
+        }
+
+        if (saved && saved[0] && !strcasecmp(saved, host))
+          snprintf(saved_match, sizeof(saved_match), "%s", host);
+      }
+
+      network_was_ambiguous =
+          eligible_network_count > 1 && !saved_match[0];
+
+      if (found)
+        mdns_query_results_free(found);
+
+      if (saved_match[0]) {
+        ESP_LOGI(TAG, "Disconnected QR: mDNS matched saved scale '%s'",
+                 saved_match);
+        send_web_discovery_result(saved_match, saved_match);
+        return;
+      }
+
+      if (eligible_network_count == 1) {
+        ESP_LOGI(TAG, "Disconnected QR: one mDNS scale found '%s'",
+                 only_network_host);
+        send_web_discovery_result(
+            only_network_name[0] ? only_network_name : only_network_host,
+            only_network_host);
+        return;
+      }
+    } else {
+      ESP_LOGW(TAG, "Disconnected QR mDNS scan failed: %s",
+               esp_err_to_name(mdns_err));
+    }
+  }
+
+  /*
+   * mDNS can take long enough for a connection/pairing transition to finish.
+   * Re-check immediately before bringing Bluetooth up so a stale queued
+   * discover_qr action can never start BLE on an already-connected display.
+   */
+  if (scale_paired(slot) || connection_for(slot).authenticated ||
+      connection_for(slot).state.online) {
+    ESP_LOGI(TAG,
+             "Disconnected QR: scale %u became connected before BLE fallback; BLE will remain off",
+             (unsigned)(slot + 1));
+    touchscreen_home_discovery_result(TOUCHSCREEN_DISCOVERY_NONE,
+                                      "", "", "");
+    return;
+  }
+
+  ESP_LOGI(TAG,
+           "Disconnected QR: starting temporary BLE discovery for unpaired scale %u",
+           (unsigned)(slot + 1));
+
+  esp_err_t ble_err = ble_client_init();
+  if (ble_err != ESP_OK) {
+    ESP_LOGW(TAG, "Disconnected QR BLE init failed: %s",
+             esp_err_to_name(ble_err));
+    touchscreen_home_discovery_result(
+        network_was_ambiguous ? TOUCHSCREEN_DISCOVERY_MULTIPLE
+                              : TOUCHSCREEN_DISCOVERY_ERROR,
+        "", "",
+        network_was_ambiguous
+            ? "Several network scales were found. Open Setup to choose one."
+            : "Bluetooth discovery could not start. Open Setup and try Find scale.");
+    return;
+  }
+
+  ble_client_peer_t peers[BLE_CLIENT_MAX_CANDIDATES] = {};
+  size_t peer_count = 0;
+  ble_err = ble_client_scan(peers, BLE_CLIENT_MAX_CANDIDATES,
+                            &peer_count, 2500);
+
+  /*
+   * BLE is only a discovery fallback for the touchscreen. Do not leave
+   * NimBLE/controller resources alive while the normal Wi-Fi controller
+   * connection is running.
+   */
+  const esp_err_t ble_shutdown_err = ble_client_deinit();
+  if (ble_shutdown_err == ESP_OK) {
+    ESP_LOGI(TAG,
+             "Disconnected QR: BLE discovery finished and Bluetooth is off; internal_free=%u largest_internal=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                               MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  } else {
+    ESP_LOGW(TAG,
+             "Disconnected QR: BLE shutdown failed: %s",
+             esp_err_to_name(ble_shutdown_err));
+  }
+
+  if (ble_err != ESP_OK) {
+    ESP_LOGW(TAG, "Disconnected QR BLE scan failed: %s",
+             esp_err_to_name(ble_err));
+    touchscreen_home_discovery_result(
+        network_was_ambiguous ? TOUCHSCREEN_DISCOVERY_MULTIPLE
+                              : TOUCHSCREEN_DISCOVERY_ERROR,
+        "", "",
+        network_was_ambiguous
+            ? "Several network scales were found. Open Setup to choose one."
+            : "Bluetooth scan failed. Open Setup and try Find scale.");
+    return;
+  }
+
+  const uint8_t other = slot == 0 ? 1 : 0;
+  const char *other_host = scale_host_const(other);
+  int selected = -1;
+  int saved_selected = -1;
+  unsigned eligible = 0;
+
+  for (size_t i = 0; i < peer_count; ++i) {
+    if (!peers[i].scale_id[0])
+      continue;
+
+    if (other_host && other_host[0] &&
+        peer_matches_host(peers[i], other_host))
+      continue;
+
+    ++eligible;
+    selected = (int)i;
+
+    if (saved && saved[0] && peer_matches_host(peers[i], saved))
+      saved_selected = (int)i;
+  }
+
+  if (saved_selected >= 0)
+    selected = saved_selected;
+  else if (eligible != 1)
+    selected = -1;
+
+  if (selected < 0) {
+    if (eligible > 1 || network_was_ambiguous) {
+      ESP_LOGI(TAG,
+               "Disconnected QR: multiple unpaired scale candidates found");
+      touchscreen_home_discovery_result(
+          TOUCHSCREEN_DISCOVERY_MULTIPLE, "", "",
+          "Several scales are nearby. Open Setup to choose the correct one.");
+    } else {
+      ESP_LOGI(TAG, "Disconnected QR: no scale candidate found");
+      touchscreen_home_discovery_result(
+          TOUCHSCREEN_DISCOVERY_NOT_FOUND, "", "",
+          "No scale was found on Wi-Fi or Bluetooth.");
+    }
+    return;
+  }
+
+  const ble_client_peer_t &peer = peers[selected];
+
+  if (peer.setup_url_available && peer.ip_address[0]) {
+    ESP_LOGI(TAG,
+             "Disconnected QR: BLE found %s at LAN IP %s",
+             peer.scale_id, peer.ip_address);
+    send_web_discovery_result(peer.scale_id, peer.ip_address);
+    return;
+  }
+
+  static const char prefix[] = "KegScale-";
+  const char *suffix =
+      !strncasecmp(peer.scale_id, prefix, sizeof(prefix) - 1)
+          ? peer.scale_id + sizeof(prefix) - 1
+          : peer.scale_id;
+
+  char setup_ssid[48];
+  snprintf(setup_ssid, sizeof(setup_ssid),
+           "KegScale-Setup-%s", suffix);
+
+  char wifi_qr[128];
+  snprintf(wifi_qr, sizeof(wifi_qr),
+           "WIFI:T:nopass;S:%s;;", setup_ssid);
+
+  char detail[150];
+  snprintf(detail, sizeof(detail),
+           "%s - the captive setup page should open automatically. "
+           "If it does not, open 192.168.4.1.",
+           setup_ssid);
+
+  ESP_LOGI(TAG,
+           "Disconnected QR: BLE found offline scale %s; setup AP '%s'",
+           peer.scale_id, setup_ssid);
+
+  touchscreen_home_discovery_result(
+      TOUCHSCREEN_DISCOVERY_SETUP_WIFI,
+      peer.scale_id, wifi_qr, detail);
+}
+
 void action(const Action &a) {
   cJSON *o = cJSON_Parse(a.body);
 
@@ -845,6 +1131,8 @@ void action(const Action &a) {
         ui_message("Could not save settings");
       }
     }
+  } else if (!strcmp(a.kind, "discover_qr")) {
+    discover_unpaired_scale_qr(active_scale_index);
   } else if (!strcmp(a.kind, "scan_wifi")) {
     ESP_LOGI(TAG, "Starting Wi-Fi network scan");
     wifi_scan_config_t scan = {};
@@ -948,7 +1236,7 @@ void action(const Action &a) {
       ui_message("Wait for the current operation to finish");
     } else {
       ESP_LOGI(TAG, "Starting touchscreen OTA check without dropping scale sessions");
-      esp_err_t e = touchscreen_ota();
+      esp_err_t e = touchscreen_ota(false);
       ESP_LOGI(TAG, "Touchscreen OTA returned %s", esp_err_to_name(e));
       if (e != ESP_OK)
         ui_message(esp_err_to_name(e));

@@ -180,10 +180,16 @@ static void draw_battery_indicator(uint8_t battery_percent)
     }
 }
 
-static esp_err_t present(void)
+static esp_err_t present_internal(bool clear_touch_ack)
 {
-    /* Every full screen restores the transient touch area's blank baseline. */
-    clear_touch_ack_area();
+    /*
+     * Most full-screen layouts should clear the transient touch indicator
+     * before refresh. Some layouts, such as the setup QR screen, intentionally
+     * draw content through that region and must preserve it.
+     */
+    if (clear_touch_ack) {
+        clear_touch_ack_area();
+    }
 
     /* Setup/status screens must not be used as a scale-screen diff baseline. */
     s_scale_screen_magic = 0;
@@ -195,6 +201,16 @@ static esp_err_t present(void)
     }
 
     return err;
+}
+
+static esp_err_t present(void)
+{
+    return present_internal(true);
+}
+
+static esp_err_t present_preserve_content(void)
+{
+    return present_internal(false);
 }
 
 static esp_err_t present_scale(
@@ -362,35 +378,49 @@ esp_err_t display_ui_show_pairing_code(
     if (scale_id != NULL) {
         draw_font_centered_at(
             EPAPER_WIDTH / 2,
-            31,
+            29,
             scale_id,
             &EPAPER_FONT_BODY_SMALL);
     }
 
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        50,
+        41,
         "ENTER THIS CODE ON",
         &EPAPER_FONT_BODY_MEDIUM);
+
     draw_font_centered_at(
         EPAPER_WIDTH / 2,
-        67,
+        55,
         "THE SCALE WEBPAGE",
         &EPAPER_FONT_BODY_MEDIUM);
 
-    char code[16];
+    char code_left[8];
+    char code_right[8];
+
     snprintf(
-        code,
-        sizeof(code),
-        "%03lu %03lu",
-        (unsigned long)(passkey / 1000U),
+        code_left,
+        sizeof(code_left),
+        "%03lu",
+        (unsigned long)(passkey / 1000U));
+
+    snprintf(
+        code_right,
+        sizeof(code_right),
+        "%03lu",
         (unsigned long)(passkey % 1000U));
 
     draw_font_centered_at(
-        EPAPER_WIDTH / 2,
-        90,
-        code,
-        &EPAPER_FONT_BODY_LARGE);
+        (EPAPER_WIDTH / 2) - 50,
+        70,
+        code_left,
+        &EPAPER_FONT_HERO);
+
+    draw_font_centered_at(
+        (EPAPER_WIDTH / 2) + 50,
+        70,
+        code_right,
+        &EPAPER_FONT_HERO);
 
     return present();
 }
@@ -469,7 +499,7 @@ esp_err_t display_ui_show_setup_qr(
             true);
     }
 
-    return present();
+    return present_preserve_content();
 }
 
 esp_err_t display_ui_show_candidates(
