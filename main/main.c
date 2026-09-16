@@ -1035,7 +1035,73 @@ static void install_display_update_if_needed(
 
     ESP_LOGI(
         TAG,
-        "Display update %s is available; requesting encrypted Wi-Fi/OTA bundle",
+        "Display update %s is advertised; checking OTA authorization",
+        state->update.version);
+
+    /*
+     * IMPORTANT:
+     * Update metadata means only that a newer image exists. It does NOT mean
+     * the update has been approved.
+     *
+     * The protected Wi-Fi/OTA bundle is only readable after the scale has
+     * approved the display update. Check for that bundle before changing the
+     * e-paper screen or starting an OTA.
+     */
+    ble_client_update_bundle_t *bundle =
+        calloc(
+            1,
+            sizeof(*bundle));
+
+    if (bundle == NULL) {
+        ESP_LOGW(
+            TAG,
+            "Display OTA authorization check deferred: out of memory");
+        return;
+    }
+
+    esp_err_t err =
+        ble_client_fetch_update_bundle(
+            &pairing->peer,
+            bundle);
+
+    if (err != ESP_OK) {
+        ESP_LOGI(
+            TAG,
+            "Display update %s is available but not approved; staying on current firmware",
+            state->update.version);
+
+        memset(
+            bundle,
+            0,
+            sizeof(*bundle));
+        free(bundle);
+        return;
+    }
+
+    if (strcmp(
+            bundle->version,
+            state->update.version) != 0 ||
+        strcmp(
+            bundle->sha256,
+            state->update.sha256) != 0 ||
+        bundle->size_bytes !=
+            state->update.size_bytes) {
+        ESP_LOGW(
+            TAG,
+            "Approved OTA bundle does not match advertised display update %s; install skipped",
+            state->update.version);
+
+        memset(
+            bundle,
+            0,
+            sizeof(*bundle));
+        free(bundle);
+        return;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Display update %s is approved; starting OTA",
         state->update.version);
 
     esp_err_t screen_state_err =
@@ -1050,54 +1116,27 @@ static void install_display_update_if_needed(
             esp_err_to_name(screen_state_err));
     }
 
-    display_ui_show_message(
-        "DISPLAY UPDATE",
-        "UPDATE IN PROGRESS",
-        "PLEASE WAIT");
+    esp_err_t screen_err =
+        display_ui_show_message(
+            "DISPLAY UPDATE",
+            "UPDATE IN PROGRESS",
+            "PLEASE WAIT");
 
-    ble_client_update_bundle_t *bundle =
-        calloc(
-            1,
-            sizeof(*bundle));
-
-    if (bundle == NULL) {
+    if (screen_err != ESP_OK) {
         ESP_LOGW(
             TAG,
-            "Display OTA failed: could not allocate update bundle");
-        screen_state_err = ESP_ERR_NO_MEM;
-    } else {
-        screen_state_err =
-            ble_client_fetch_update_bundle(
-                &pairing->peer,
-                bundle);
+            "Could not show OTA progress screen: %s",
+            esp_err_to_name(screen_err));
     }
 
-    esp_err_t err = screen_state_err;
+    err = display_ota_install(bundle);
 
-    if (err == ESP_OK &&
-        (strcmp(
-             bundle->version,
-             state->update.version) != 0 ||
-         strcmp(
-             bundle->sha256,
-             state->update.sha256) != 0 ||
-         bundle->size_bytes !=
-             state->update.size_bytes)) {
-        err = ESP_ERR_INVALID_RESPONSE;
-    }
-
-    if (err == ESP_OK) {
-        err = display_ota_install(bundle);
-    }
-
-    if (bundle != NULL) {
-        memset(
-            bundle,
-            0,
-            sizeof(*bundle));
-        free(bundle);
-        bundle = NULL;
-    }
+    memset(
+        bundle,
+        0,
+        sizeof(*bundle));
+    free(bundle);
+    bundle = NULL;
 
     if (err == ESP_OK) {
         ESP_LOGI(
@@ -1110,7 +1149,7 @@ static void install_display_update_if_needed(
 
     ESP_LOGW(
         TAG,
-        "Display OTA failed: %s; Wi-Fi is off and the current firmware remains active",
+        "Display OTA failed after approval: %s; current firmware remains active",
         esp_err_to_name(err));
 
     display_ui_show_message(
