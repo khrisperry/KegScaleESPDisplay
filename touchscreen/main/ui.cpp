@@ -18,6 +18,7 @@
 // custom Dashboard/Glass renderer instead of the legacy Home widgets.
 void touchscreen_home_render_now();
 void touchscreen_home_set_menu_open(bool open);
+void touchscreen_home_set_keyboard_open(bool open);
 // Implemented by ui_wrapper.cpp. Render the custom OTA page synchronously so
 // the legacy Firmware & diagnostics page never flashes first.
 void touchscreen_update_page_render_now();
@@ -609,16 +610,37 @@ void scale_slot_changed(lv_event_t *event) {
     load_saved_host_options();
   }
 }
+void toggle_password_visibility(lv_event_t *event) {
+  auto button = static_cast<lv_obj_t *>(lv_event_get_target(event));
+  auto password = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+  if (!button || !password)
+    return;
+
+  const bool currently_hidden = lv_textarea_get_password_mode(password);
+  lv_textarea_set_password_mode(password, !currently_hidden);
+
+  if (lv_obj_t *button_text = lv_obj_get_child(button, 0))
+    lv_label_set_text(button_text, currently_hidden ? "HIDE" : "SHOW");
+
+  if (keyboard) {
+    lv_keyboard_set_textarea(keyboard, password);
+    lv_obj_move_foreground(keyboard);
+  }
+}
+
 void dismiss_keyboard() {
   if (keyboard) {
     lv_keyboard_set_textarea(keyboard, nullptr);
     lv_obj_delete_async(keyboard);
     keyboard = nullptr;
     lv_obj_set_height(content, 356);
+    touchscreen_home_set_keyboard_open(false);
   }
 }
 void keyboard_event(lv_event_t *) { dismiss_keyboard(); }
 void focus(lv_event_t *e) {
+  touchscreen_home_set_keyboard_open(true);
+
   if (!keyboard) {
     keyboard = lv_keyboard_create(lv_screen_active());
     lv_obj_set_size(keyboard, 480, 200);
@@ -626,10 +648,12 @@ void focus(lv_event_t *e) {
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_READY, nullptr);
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_CANCEL, nullptr);
   }
+
   auto field = (lv_obj_t *)lv_event_get_target(e);
   lv_keyboard_set_textarea(keyboard, field);
   lv_obj_set_height(content, 222);
   lv_obj_scroll_to_view(field, LV_ANIM_OFF);
+  lv_obj_move_foreground(keyboard);
 }
 lv_obj_t *field(const char *title, const char *value, int y,
                 bool numeric = false, int limit = 32) {
@@ -1081,6 +1105,27 @@ void build(int page) {
     fields[1] =
         compact_setup_field("Password", initial.password, 225, 186, 207, true, 64);
 
+    lv_obj_set_style_pad_right(fields[1], 58, LV_PART_MAIN);
+
+    lv_obj_t *password_toggle = lv_button_create(content);
+    lv_obj_set_pos(password_toggle, 378, 207);
+    lv_obj_set_size(password_toggle, 50, 32);
+    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_opa(password_toggle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_width(password_toggle, 1, 0);
+    lv_obj_set_style_radius(password_toggle, 10, 0);
+    lv_obj_set_style_pad_all(password_toggle, 0, 0);
+
+    lv_obj_t *password_toggle_text = lv_label_create(password_toggle);
+    lv_label_set_text(password_toggle_text, "SHOW");
+    lv_obj_set_style_text_font(password_toggle_text, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(password_toggle_text, lv_color_hex(TEXT), 0);
+    lv_obj_center(password_toggle_text);
+
+    lv_obj_add_event_cb(password_toggle, toggle_password_visibility,
+                        LV_EVENT_CLICKED, fields[1]);
+
     label(content, "Brightness", 8, 250, 92, &lv_font_montserrat_14);
     fields[3] = lv_slider_create(content);
     lv_obj_set_pos(fields[3], 108, 258);
@@ -1298,6 +1343,10 @@ void ui_paired(void) {
   bsp_display_unlock();
 }
 
+
+bool touchscreen_active_scale_paired(void) {
+  return scale_paired_ui[active_scale_ui < 2 ? active_scale_ui : 0];
+}
 
 void ui_scale_profiles(const char *primary_host, bool primary_paired,
                        const char *secondary_host, bool secondary_paired,

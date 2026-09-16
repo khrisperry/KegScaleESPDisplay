@@ -108,6 +108,15 @@ enum {
 
 esp_err_t ble_client_init(void);
 
+/**
+ * Stop/deinitialize the NimBLE client after a temporary discovery session.
+ *
+ * This intentionally does not permanently release BT controller memory, so
+ * BLE may be initialized again later if an unpaired touchscreen needs another
+ * discovery scan.
+ */
+esp_err_t ble_client_deinit(void);
+
 void ble_client_set_display_battery_millivolts(
     uint16_t battery_millivolts);
 
