@@ -1,19 +1,6 @@
 name: Display security tests
 
 on:
-  push:
-    branches: [main, beta, dev]
-    paths:
-      - "main/**"
-      - "components/ble_client/include/ble_client.h"
-      - "tests/ota_authorization_policy_test.c"
-      - ".github/workflows/security-tests.yml"
-  pull_request:
-    paths:
-      - "main/**"
-      - "components/ble_client/include/ble_client.h"
-      - "tests/ota_authorization_policy_test.c"
-      - ".github/workflows/security-tests.yml"
   workflow_dispatch:
 
 permissions:

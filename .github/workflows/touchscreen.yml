@@ -1,11 +1,7 @@
 name: Wi-Fi Touchscreen
 on:
-  push:
-    branches: [main, beta, dev, wifi-controller-validation]
-    paths: ['touchscreen/**', '.github/workflows/touchscreen.yml']
-  pull_request:
-    paths: ['touchscreen/**', '.github/workflows/touchscreen.yml']
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:

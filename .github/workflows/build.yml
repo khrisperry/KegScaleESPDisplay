@@ -1,12 +1,6 @@
 name: ESP-IDF Build
 
 on:
-  push:
-    branches:
-      - main
-      - beta
-      - dev
-  pull_request:
   workflow_dispatch:
 
 permissions:

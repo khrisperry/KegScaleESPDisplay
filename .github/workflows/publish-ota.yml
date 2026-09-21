@@ -1,20 +1,6 @@
 name: Publish Display OTA Firmware
 
 on:
-  push:
-    branches:
-      - main
-      - beta
-      - dev
-    paths:
-      - "main/**"
-      - "components/**"
-      - "CMakeLists.txt"
-      - "version.txt"
-      - "partitions.csv"
-      - "sdkconfig.defaults"
-      - ".github/workflows/build.yml"
-      - ".github/workflows/publish-ota.yml"
   workflow_dispatch:
 
 permissions:
