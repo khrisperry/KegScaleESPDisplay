@@ -20,7 +20,7 @@ This is a separate ESP-IDF application for the **Waveshare ESP32-S3-Touch-LCD-4B
 3. On **Setup**, scan/select Wi-Fi (or enter its SSID), enter the password, then Save and connect. The device restarts after saving.
 4. On the scale's web page, select **Wi-Fi touchscreen setup → Add touchscreen**. Pairing stays open for five minutes.
 5. On the touchscreen's Setup page, select **Find scale**, or enter its IPv4 address/hostname. Save and connect. Discovery needs the same LAN/VLAN; routed connections require network access to the scale on TCP port 80. Discovery never silently selects among several scales.
-6. The touchscreen displays a 12-character pairing code. Enter that exact code on the scale's setup page and authorize it. Successful pairing opens the dashboard.
+6. The touchscreen displays a six-character hexadecimal pairing code. Enter that exact code on the scale's setup page and authorize it. Successful pairing opens the dashboard.
 
 If confirmation is interrupted during first pairing, remove the touchscreen pairing on the scale and reopen Add touchscreen. The existing e-paper pairing is separate.
 

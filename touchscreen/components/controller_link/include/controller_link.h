@@ -10,8 +10,8 @@ extern "C" {
 #define CL_MAX_PLAIN 2048
 #define CL_MAX_FRAME (CL_MAX_PLAIN + 24)
 #define CL_PUBLIC_SIZE 65
-/* Version 1: P-256 ECDH pairing with a 48-bit user-compared authentication
- * string. AES-256-GCM traffic keys are derived per server challenge. */
+/* Version 1: P-256 ECDH pairing with a 24-bit user-compared hexadecimal
+ * string. AES-256-GCM traffic keys are derived per connection. */
 typedef struct {
   psa_key_id_t ephemeral;
   uint8_t master[32];

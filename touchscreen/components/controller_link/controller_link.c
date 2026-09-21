@@ -54,9 +54,14 @@ esp_err_t cl_keypair(cl_session_t *s, char pub[131]) {
   size_t n = 0;
   if (psa_export_public_key(s->ephemeral, bytes, sizeof(bytes), &n) !=
           PSA_SUCCESS ||
-      n != 65)
+      n != 65) {
+    psa_destroy_key(s->ephemeral);
+    s->ephemeral = 0;
+    memset(bytes, 0, sizeof(bytes));
     return ESP_FAIL;
+  }
   cl_hex(bytes, n, pub);
+  memset(bytes, 0, sizeof(bytes));
   return ESP_OK;
 }
 esp_err_t cl_agree(cl_session_t *s, const char *peer, const char *server,
@@ -136,18 +141,38 @@ static esp_err_t crypt(cl_session_t *s, bool encrypt, uint8_t direction,
 }
 esp_err_t cl_seal(cl_session_t *s, const char *plain, uint8_t *out,
                   size_t *len) {
-  size_t n = strlen(plain);
-  if (n >= CL_MAX_PLAIN || s->tx_seq == UINT32_MAX)
+  if (len)
+    *len = 0;
+
+  if (!s || !plain || !out || !len)
+    return ESP_ERR_INVALID_ARG;
+
+  const char *terminator =
+      (const char *)memchr(plain, '\0', CL_MAX_PLAIN);
+  if (!terminator || s->tx_seq == UINT32_MAX)
     return ESP_ERR_INVALID_SIZE;
-  uint32_t seq = ++s->tx_seq;
+
+  const size_t n = (size_t)(terminator - plain);
+
+  const uint32_t seq = s->tx_seq + 1;
+  size_t encrypted_len = 0;
+  esp_err_t e =
+      crypt(s, true, s->server ? 1 : 2, seq, (const uint8_t *)plain, n,
+            out + 4, CL_MAX_FRAME - 4, &encrypted_len);
+
+  if (e != ESP_OK) {
+    memset(out, 0, 4);
+    return e;
+  }
+
   out[0] = seq >> 24;
   out[1] = seq >> 16;
   out[2] = seq >> 8;
   out[3] = seq;
-  esp_err_t e = crypt(s, true, s->server ? 1 : 2, seq, (const uint8_t *)plain,
-                      n, out + 4, CL_MAX_FRAME - 4, len);
-  *len += 4;
-  return e;
+
+  s->tx_seq = seq;
+  *len = encrypted_len + 4;
+  return ESP_OK;
 }
 esp_err_t cl_open(cl_session_t *s, const uint8_t *in, size_t len, char *out) {
   if (len < 20 || len > CL_MAX_FRAME)
