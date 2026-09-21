@@ -25,19 +25,9 @@ const char *text(cJSON *o, const char *key) {
   return cJSON_IsString(v) ? v->valuestring : "";
 }
 
-esp_http_client_handle_t open_url(const char *url) {
-  char request_url[480];
-  const char separator = strchr(url, '?') ? '&' : '?';
-  const int request_len =
-      snprintf(request_url, sizeof(request_url), "%s%ccache_bust=%llu", url,
-               separator, (unsigned long long)esp_timer_get_time());
-  if (request_len <= 0 || (size_t)request_len >= sizeof(request_url)) {
-    ESP_LOGW(TAG, "OTA request URL too long after cache busting");
-    return nullptr;
-  }
-
+esp_http_client_handle_t open_url(const char *url, bool manifest_request = false) {
   esp_http_client_config_t cfg = {};
-  cfg.url = request_url;
+  cfg.url = url;
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.timeout_ms = 15000;
   cfg.disable_auto_redirect = true;
@@ -45,10 +35,14 @@ esp_http_client_handle_t open_url(const char *url) {
   if (!h)
     return nullptr;
 
+  esp_http_client_set_header(h, "User-Agent", "KegScaleTouch-OTA");
+  if (manifest_request)
+    esp_http_client_set_header(h, "Accept", "application/vnd.github.raw+json");
+
   esp_http_client_set_header(h, "Cache-Control",
                              "no-cache, no-store, max-age=0");
   esp_http_client_set_header(h, "Pragma", "no-cache");
-  ESP_LOGI(TAG, "OTA cache-busted request: %s", request_url);
+  ESP_LOGI(TAG, "OTA request: %s", url);
 
   esp_err_t e = esp_http_client_open(h, 0);
   int64_t headers = -1;
@@ -112,9 +106,15 @@ esp_err_t touchscreen_ota(bool install) {
   snprintf(base, sizeof(base), "%s/%s/esp32s3/", feed_root, channel);
 
   char url[360];
-  snprintf(url, sizeof(url), "%smanifest.json", base);
+  // Contents API returns the manifest body directly; do not follow download_url
+  // back to the mutable raw main URL. Binary allowlisting still uses base.
+  const int url_length = snprintf(url, sizeof(url),
+      "https://api.github.com/repos/khrisperry/KegScaleFirmware/contents/"
+      "touchscreen/%s/esp32s3/manifest.json?ref=main", channel);
+  if (url_length <= 0 || (size_t)url_length >= sizeof(url))
+    return ESP_ERR_INVALID_SIZE;
   ESP_LOGI(TAG, "Checking touchscreen %s feed: %s", channel, url);
-  auto h = open_url(url);
+  auto h = open_url(url, true);
   if (!h) {
     ESP_LOGW(TAG, "Could not open touchscreen OTA manifest for channel=%s",
              channel);
