@@ -7,6 +7,7 @@
 
 #include "ble_client.h"
 #include "display_ota.h"
+#include "ota_authorization_policy.h"
 #include "display_ui.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
@@ -1064,7 +1065,14 @@ static void install_display_update_if_needed(
             &pairing->peer,
             bundle);
 
-    if (err != ESP_OK) {
+    const display_ota_authorization_result_t authorization =
+        display_ota_authorization_evaluate(
+            err,
+            &state->update,
+            bundle);
+
+    if (authorization ==
+        DISPLAY_OTA_AUTHORIZATION_NOT_APPROVED) {
         ESP_LOGI(
             TAG,
             "Display update %s is available but not approved; staying on current firmware",
@@ -1078,14 +1086,8 @@ static void install_display_update_if_needed(
         return;
     }
 
-    if (strcmp(
-            bundle->version,
-            state->update.version) != 0 ||
-        strcmp(
-            bundle->sha256,
-            state->update.sha256) != 0 ||
-        bundle->size_bytes !=
-            state->update.size_bytes) {
+    if (authorization !=
+        DISPLAY_OTA_AUTHORIZATION_APPROVED) {
         ESP_LOGW(
             TAG,
             "Approved OTA bundle does not match advertised display update %s; install skipped",
