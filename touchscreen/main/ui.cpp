@@ -1272,6 +1272,22 @@ void ui_message(const char *s) {
     message(s);
   bsp_display_unlock();
 }
+
+void ui_message_for_generation(const char *s, uint32_t generation) {
+  if (!bsp_display_lock(1000))
+    return;
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation)) {
+    ESP_LOGI("display",
+             "Ignoring stale UI message generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  message(s ? s : "");
+  bsp_display_unlock();
+}
 void ui_pair_code(const char *code) {
   if (!bsp_display_lock(1000))
     return;
@@ -1342,7 +1358,6 @@ void ui_discovered_options_for_generation(const char *options,
            options && options[0] ? options : "Manual IP / hostname...");
   lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
   select_host_option_for_slot(true);
-  message("Choose a scale from the list, or use Manual IP / hostname.");
   bsp_display_unlock();
 }
 
@@ -1360,7 +1375,6 @@ void ui_networks(const char *options, uint32_t generation) {
     return;
   }
   lv_dropdown_set_options(networks, options);
-  message("Choose your Wi-Fi network");
   bsp_display_unlock();
 }
 void ui_update_progress(int percent) {
