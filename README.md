@@ -14,7 +14,7 @@ Initial hardware target:
 - Native capacitive touch wake on GPIO12 (ESP32 touch channel 5)
 - Timer wake every 180 seconds
 
-The scale remains the source of truth. This display does not perform tare, load-cell calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA. Touch sensitivity can be calibrated with the guided on-display procedure started from the scale webpage.
+The scale remains the source of truth. This display does not perform tare, load-cell calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA. Touch sensitivity is set manually under Settings > Displays on the Scale webpage; the default is 1%.
 
 ## Pairing model
 
@@ -23,7 +23,7 @@ The display stores exactly one scale identity in NVS and NimBLE stores the authe
 Initial setup is driven entirely from the scale web interface:
 
 1. After Wi-Fi provisioning, leave the unpaired display powered on near the scale. It reads the scale's advertised LAN address and shows a QR code that opens the first-run setup wizard.
-2. Complete calibration and the keg profile, then start the wizard's **Display** step.
+2. Complete Scale calibration and the keg profile as needed, then open **Settings > Displays > Add e-paper display**. Plug the e-paper display into USB power for pairing.
 3. Click **Start display pairing**. The scale advertises an explicit five-minute pairing window.
 4. The display generates a random six-digit code and shows the target KegScale-XXXX identity plus the code on e-paper.
 5. Enter the display code in the wizard and click **Pair display**.
@@ -68,7 +68,7 @@ V2.3.1 does **not** have the GPIO12 display-power switch added in V2.4.
 
 ## Development workflow
 
-Changes are developed on feature branches, compiled in GitHub Actions, hardware-tested, and merged after validation.
+Changes are developed and validated locally, then synchronized to release branches. GitHub Actions are manually dispatched; source pushes alone do not publish OTA firmware.
 
 
 ## Current bring-up behavior
@@ -133,14 +133,9 @@ The GitHub Actions build also targets classic ESP32.
 
 ## Capacitive touch wake
 
-The current hardware configuration uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the scale-owned threshold. It defaults to 3% below baseline and can be changed from the scale web page or Home Assistant; lower values are more sensitive. Start **touch calibration** from the scale webpage. The display shows a battery preparation screen for 10 seconds (USB presence is not automatically detected), then guides you through four steps:
+The current hardware uses the ESP32's native capacitive touch input on **GPIO12 / touch channel 5**. Before each deep sleep the firmware measures the untouched baseline and applies the Scale-owned threshold. New configurations and the firmware fallback default to **1% below baseline**; lower values are more sensitive. Existing saved values are preserved. Change sensitivity manually on the Scale webpage under **Settings > Displays > E-paper display settings**, or through Home Assistant.
 
-1. **Do not touch** the tap handle while its untouched signal is measured.
-2. **Touch and hold** the outside edges until the display says to release.
-3. **Release now** and leave the handle untouched until the next prompt.
-4. Complete **three touch checks**, each with a separate hold and release prompt. A check counts only after release is detected.
-
-The screen uses a small progress heading, a large action, and a short explanation. One full refresh prepares the screen; every following calibration screen uses an aligned partial refresh. **Touch ready** appears only after all checks pass and the scale saves the sensitivity. A failure explains the problem and asks you to restart from the scale page; detailed sensor values stay in the serial log. Failed checks do not submit a new sensitivity. The e-paper panel is not a touchscreen.
+The guided touch-calibration wizard is currently removed. The display ignores legacy wizard requests and clears interrupted-wizard state on boot. Automatic baseline measurement before sleep remains active. The e-paper panel is not a touchscreen.
 
 Periodic check-in can be enabled alongside touch wake. When the normal three-minute check-in is disabled, a one-hour safety timer remains armed so the display can still receive data, settings, firmware updates, removal requests, and manual full-refresh commands if the touch sensor fails. The previous GPIO39 EXT0 button wake has been removed because the classic ESP32 cannot use EXT0 and touch wake simultaneously.
 
@@ -151,7 +146,8 @@ If an active 3-pin capacitive-touch module is used instead of a passive electrod
 
 ### Touch wake waits for the pour
 
-A timer wake performs the normal quick BLE check. When frequent periodic check-in is enabled, a GPIO12 capacitive-touch wake assumes a pour may be starting, so it waits 10 seconds before the first scale read and then retries every 2 seconds until a new stable meaningful scale state is available or 30 seconds total have elapsed. In reduced-check-in mode, it performs one scale read after the 10-second delay and returns to sleep. The e-paper keeps showing the previous valid state during this observation window and is refreshed only once at the end of a real pour.
+A timer wake performs one BLE check. Touch wake acknowledges the tap and sleeps for 10 seconds before fetching. An unstable calibrated reading permits one more fetch after five seconds; there is no third settling check. The previous image is retained until a meaningful stable result arrives. See [power management](docs/power-management.md).
+
 The scale also coordinates display firmware updates. The display reads a version offer over BLE, retrieves home Wi-Fi credentials and update metadata only through an authenticated encrypted BLE session, performs an HTTPS A/B OTA download, validates the image size and SHA-256 digest, and turns Wi-Fi back off before rebooting.
 
 
@@ -164,3 +160,7 @@ screen, and resets the changed-region refresh counter.
 ## Waveshare Wi-Fi touchscreen
 
 The separate [touchscreen application](touchscreen/README.md) targets the ESP32-S3-Touch-LCD-4B. It uses Wi-Fi only, supports keg editing and scale calibration, and has its own build/OTA feed. The repository root continues to build this BLE e-paper application.
+
+## V1.3.4 release
+
+See [release notes](docs/releases/V1.3.4.md) for the synchronized Scale/e-paper/Touch release. Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository alongside this repository. Host tests cover OTA authorization/failures, crypto failures, wake/refresh policy, and Touch connection recovery; physical battery, radio, and power-loss checks remain separate.

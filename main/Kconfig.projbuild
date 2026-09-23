@@ -42,7 +42,7 @@ config KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT
     int "Touch sensitivity threshold below baseline (percent)"
     depends on KEG_DISPLAY_TOUCH_WAKE
     range 1 50
-    default 3
+    default 1
     help
         ESP32 touch values decrease when touched. The wake threshold is calibrated
         before each deep sleep as this percentage below the untouched benchmark.

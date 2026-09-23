@@ -1,18 +1,23 @@
 #include "app.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
 #include "lvgl.h"
+#include "esp_timer.h"
+#include <cstdio>
 
 void touchscreen_pairing_timeout_cleanup();
 
 namespace {
 lv_obj_t *pairing_overlay = nullptr;
 lv_timer_t *pairing_timeout_timer = nullptr;
+lv_obj_t *cancel_button = nullptr;
+lv_obj_t *cancel_label = nullptr;
+int64_t pairing_deadline_us = 0;
+bool cancel_queued = false;
 
 constexpr uint32_t BG = 0x101c26;
 constexpr uint32_t ACCENT = 0x54d6bf;
 constexpr uint32_t TEXT = 0xf2f6f8;
 constexpr uint32_t MUTED = 0xaec0ca;
-constexpr uint32_t PAIRING_TIMEOUT_MS = 120000;
 // TOUCH_BUTTON_STYLE_V5
 
 lv_obj_t *overlay_label(lv_obj_t *parent, const char *text, int x, int y,
@@ -38,9 +43,22 @@ void clear_pairing_overlay_locked() {
   if (pairing_overlay)
     lv_obj_delete(pairing_overlay);
   pairing_overlay = nullptr;
+  cancel_button = cancel_label = nullptr;
+  cancel_queued = false;
 }
 
-void back_to_setup(lv_event_t *) { clear_pairing_overlay_locked(); }
+void request_pairing_cancel(bool expired) {
+  if (cancel_queued) return;
+  Action action{};
+  snprintf(action.kind, sizeof(action.kind), "cancel_pairing");
+  snprintf(action.body, sizeof(action.body), "{\"expired\":%s}", expired ? "true" : "false");
+  if (xQueueSend(actions, &action, 0) == pdTRUE) {
+    cancel_queued = true;
+    lv_obj_add_state(cancel_button, LV_STATE_DISABLED);
+    lv_label_set_text(cancel_label, expired ? "Pairing window ended" : "Canceling pairing...");
+  }
+}
+void cancel_pairing(lv_event_t *) { request_pairing_cancel(false); }
 
 lv_obj_t *overlay_button(lv_obj_t *parent, const char *text, int x, int y,
                          int width, lv_event_cb_t callback) {
@@ -63,35 +81,14 @@ lv_obj_t *overlay_button(lv_obj_t *parent, const char *text, int x, int y,
   return button;
 }
 
-void pairing_timed_out(lv_timer_t *) {
-  pairing_timeout_timer = nullptr;
-  if (!pairing_overlay)
-    return;
-
-  // The full-screen authorization flow is the only pairing-code UI.
-  // Clear the old legacy state before the user can return to Setup.
-  touchscreen_pairing_timeout_cleanup();
-
-  lv_obj_clean(pairing_overlay);
-  overlay_label(pairing_overlay, "PAIRING TIMED OUT", 24, 72, 432,
-                &lv_font_montserrat_28);
-
-  lv_obj_t *message = overlay_label(
-      pairing_overlay,
-      "The scale did not confirm this pairing code. Open Add touchscreen on "
-      "the scale and try again.",
-      38, 155, 404, &lv_font_montserrat_18);
-  lv_obj_set_style_text_line_space(message, 6, 0);
-
-  lv_obj_t *note = overlay_label(
-      pairing_overlay,
-      "A new pairing attempt will generate a new authorization code.", 38, 270,
-      404, &lv_font_montserrat_16);
-  lv_obj_set_style_text_color(note, lv_color_hex(MUTED), 0);
-
-  overlay_button(pairing_overlay, "Back to Setup", 60, 360, 360,
-                 back_to_setup);
-  lv_obj_move_foreground(pairing_overlay);
+void pairing_tick(lv_timer_t *) {
+  if (!pairing_overlay || cancel_queued) return;
+  const int64_t remaining = pairing_deadline_us - esp_timer_get_time();
+  if (remaining <= 0) { request_pairing_cancel(true); return; }
+  const unsigned seconds = (unsigned)((remaining + 999999) / 1000000);
+  char text[64];
+  snprintf(text, sizeof(text), "Cancel pairing (%u:%02u)", seconds / 60, seconds % 60);
+  lv_label_set_text(cancel_label, text);
 }
 
 void show_pairing_overlay_locked(const char *code) {
@@ -128,19 +125,20 @@ void show_pairing_overlay_locked(const char *code) {
   lv_obj_set_style_text_line_space(instruction, 6, 0);
 
   lv_obj_t *status = overlay_label(pairing_overlay, "Waiting for confirmation...",
-                                   38, 350, 404,
+                                   38, 320, 404,
                                    &lv_font_montserrat_20);
   lv_obj_set_style_text_color(status, lv_color_hex(ACCENT), 0);
 
   lv_obj_t *note = overlay_label(
       pairing_overlay,
-      "Keep this screen open until the scale confirms the connection.", 38,
-      405, 404, &lv_font_montserrat_14);
+      "Time remaining in the Scale pairing window.", 38,
+      430, 404, &lv_font_montserrat_14);
   lv_obj_set_style_text_color(note, lv_color_hex(MUTED), 0);
 
-  pairing_timeout_timer =
-      lv_timer_create(pairing_timed_out, PAIRING_TIMEOUT_MS, nullptr);
-  lv_timer_set_repeat_count(pairing_timeout_timer, 1);
+  cancel_button = overlay_button(pairing_overlay, "Cancel pairing", 60, 368, 360, cancel_pairing);
+  cancel_label = lv_obj_get_child(cancel_button, 0);
+  pairing_timeout_timer = lv_timer_create(pairing_tick, 250, nullptr);
+  pairing_tick(nullptr);
   lv_obj_move_foreground(pairing_overlay);
 }
 } // namespace
@@ -160,5 +158,23 @@ void touchscreen_ui_paired_dispatch(void) {
   if (!bsp_display_lock(1000))
     return;
   clear_pairing_overlay_locked();
+  bsp_display_unlock();
+}
+
+// Called only while holding the LVGL lock (including home-layout callbacks).
+bool touchscreen_pairing_overlay_visible() { return pairing_overlay != nullptr; }
+
+void touchscreen_pairing_window(uint32_t seconds) {
+  if (!bsp_display_lock(1000)) return;
+  pairing_deadline_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
+  bsp_display_unlock();
+}
+
+void touchscreen_pairing_ended() {
+  if (!bsp_display_lock(1000)) return;
+  if (pairing_overlay) {
+    touchscreen_pairing_timeout_cleanup();
+    clear_pairing_overlay_locked();
+  }
   bsp_display_unlock();
 }

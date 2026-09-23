@@ -88,12 +88,11 @@ Timer wakes remain fast one-shot checks.
 
 A capacitive-touch wake is treated as a likely pour event instead:
 
-1. Keep the existing e-paper image unchanged.
-2. Wait 10 seconds before the first BLE read.
-3. Read the paired scale.
-4. If the result is unchanged or settling, wait 2 seconds and read again.
-5. As soon as a meaningful stable state is observed, refresh e-paper once and sleep.
-6. If no meaningful stable change arrives by 20 seconds total, keep the existing image and return to sleep.
+1. Draw the touch acknowledgement.
+2. Deep-sleep with only a timer for 10 seconds.
+3. Read the paired Scale once.
+4. If calibrated but unstable, and no force-refresh request is present, sleep another five seconds and read once more.
+5. Refresh for a meaningful stable result, or retain the previous image if still settling. No third settling check is made.
 
 The scale-side significant-change sequence is the primary signal. The display also retains defensive comparisons for servings, profile revision, stability, and >=0.5 lb total-weight changes.
 

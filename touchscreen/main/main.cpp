@@ -86,6 +86,8 @@ struct ScaleConnection {
   int64_t last_reading = 0;
   int64_t last_age_update = 0;
   int64_t next_connection_attempt = 0;
+  int64_t pairing_deadline_us = 0;
+  int64_t cancel_pairing_deadline_us = 0;
   bool authenticated = false;
   bool traffic_ready = false;
   bool retry_connection = true;
@@ -394,6 +396,7 @@ bool scale_accepting_connection(uint8_t slot) {
   const bool paired = yes(o, "paired");
   const bool pending = yes(o, "pending");
   const double seconds = num(o, "seconds");
+  connection_for(slot).pairing_deadline_us = now() + (int64_t)(seconds * 1000000);
   const bool connected = yes(o, "connected");
   const bool ready = paired == scale_paired(slot) && (paired || seconds > 0);
   ESP_LOGI(TAG,
@@ -523,9 +526,12 @@ void on_frame(const Frame &f) {
   if (f.kind == 2) {
     ESP_LOGW(TAG, "Processing scale %u WebSocket disconnect; retry in 10 seconds",
              (unsigned)(slot + 1));
-    c.retry_connection = true;
+    c.retry_connection = c.cancel_pairing_deadline_us == 0;
+    c.cancel_pairing_deadline_us = 0;
     c.next_connection_attempt = now() + kReconnectRetryUs;
     disconnected(slot);
+    if (slot == active_scale_index && !scale_paired(slot))
+      touchscreen_pairing_ended();
     if (slot == active_scale_index)
       ui_message("Disconnected — reconnecting to scale");
     return;
@@ -622,6 +628,15 @@ void on_frame(const Frame &f) {
         ESP_LOGI(TAG,
                  "Scale %u key agreement succeeded; displaying approval code",
                  (unsigned)(slot + 1));
+        // New Scales include the actual remaining window. For older Scales,
+        // retain the deadline obtained by the setup probe instead of starting
+        // an unrelated timer when the code arrives.
+        const cJSON *seconds_field = cJSON_GetObjectItemCaseSensitive(o, "seconds");
+        const int64_t remaining = c.pairing_deadline_us - now();
+        const uint32_t seconds = cJSON_IsNumber(seconds_field)
+            ? (uint32_t)std::max(0.0, std::min(300.0, num(o, "seconds")))
+            : (remaining > 0 ? (uint32_t)((remaining + 999999) / 1000000) : 0);
+        touchscreen_pairing_window(seconds);
         ui_pair_code(code);
       }
     } else if (!scale_paired(slot)) {
@@ -644,7 +659,15 @@ void on_frame(const Frame &f) {
     }
     if (e != ESP_OK && slot == active_scale_index)
       ui_message("Pairing failed. Reopen pairing on the scale.");
+  } else if (f.kind == 4 && !strcmp(type, "pairing_canceled") && !scale_paired(slot)) {
+    c.cancel_pairing_deadline_us = 0;
+    stop_scale_transport(slot, false);
+    if (slot == active_scale_index) {
+      touchscreen_pairing_ended();
+      ui_message("Pairing canceled. Start again from the Scale when ready.");
+    }
   } else if (f.kind == 4 && !strcmp(type, "authorized")) {
+    c.cancel_pairing_deadline_us = 0;
     ESP_LOGI(TAG, "Scale %u authorized this touchscreen",
              (unsigned)(slot + 1));
     if (!scale_paired(slot)) {
@@ -1063,6 +1086,28 @@ void discover_unpaired_scale_qr(uint8_t slot) {
 void action(const Action &a) {
   cJSON *o = cJSON_Parse(a.body);
 
+  if (!strcmp(a.kind, "cancel_pairing")) {
+    const uint8_t slot = active_scale_index;
+    auto &c = connection_for(slot);
+    // Approval may have arrived while Cancel was queued. Never erase that key.
+    if (!scale_paired(slot)) {
+      const bool sent = c.traffic_ready && send_secure(slot, "{\"type\":\"cancel_pairing\"}");
+      if (sent) {
+        // Wait for the encrypted outcome: cancellation or a concurrent approval.
+        c.cancel_pairing_deadline_us = now() + 3000000;
+      } else {
+        stop_scale_transport(slot, false);
+        touchscreen_pairing_ended();
+        ui_message("Pairing stopped here. The Scale window will expire automatically.");
+      }
+    } else {
+      touchscreen_pairing_ended();
+      ui_message("Pairing already completed; saved connection kept.");
+    }
+    cJSON_Delete(o);
+    return;
+  }
+
   if (!strcmp(a.kind, "settings") && o) {
     const char *host = str(o, "host");
     const int requested_slot = (int)num(o, "slot");
@@ -1385,6 +1430,17 @@ extern "C" void app_main() {
     const int64_t current_time = now();
     for (uint8_t slot = 0; slot < 2; ++slot) {
       auto &c = connection_for(slot);
+
+      if (c.cancel_pairing_deadline_us && current_time >= c.cancel_pairing_deadline_us) {
+        c.cancel_pairing_deadline_us = 0;
+        if (!scale_paired(slot)) {
+          stop_scale_transport(slot, false);
+          if (slot == active_scale_index) {
+            touchscreen_pairing_ended();
+            ui_message("Pairing stopped here. Check the Scale before retrying.");
+          }
+        }
+      }
 
       if (c.retry_connection && scale_host_const(slot)[0] &&
           current_time >= c.next_connection_attempt) {

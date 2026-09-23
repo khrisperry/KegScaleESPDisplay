@@ -82,3 +82,8 @@ void touchscreen_start_ota_scheduler(void);
 /* Kept for the legacy main.cpp OTA action. New UI paths call
  * touchscreen_ota_request() directly and do not disturb the scale session. */
 void touchscreen_set_ota_install_mode(bool install);
+
+// Pairing overlay state is synchronized by the LVGL lock.
+bool touchscreen_pairing_overlay_visible();
+void touchscreen_pairing_window(uint32_t seconds);
+void touchscreen_pairing_ended();

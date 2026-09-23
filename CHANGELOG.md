@@ -1,5 +1,12 @@
 # Changelog
 
+## V1.3.4 - 2026-09-23
+
+Guided pairing/cancel improvements, e-paper touch wizard removal and 1% default,
+OTA/crypto hardening, and connection/wake regression suites. Scale web Dashboard
+and Glass views now match serving-size vessels and fit phones. See
+[complete release notes](docs/releases/V1.3.4.md).
+
 ## V1.0.0 - 2026-09-06
 
 First production release of the KegScaleESP companion display.

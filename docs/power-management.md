@@ -1,4 +1,4 @@
-# Low-power wake behavior (V0.0.22)
+# Low-power wake behavior - V1.3.4
 
 Touch and scheduled check-ins are independent.
 
@@ -47,30 +47,16 @@ scale firmware upgrade (cache rediscovery), force refresh/unpair, and OTA.
 Measure current/awake time to quantify battery savings; no battery-life duration
 is claimed without those measurements.
 
-## Battery-powered touch calibration
+## Touch sensitivity
 
-The scale webpage asks the user to disconnect USB before it queues a guided
-calibration for the bonded display. On the next wake, the display saves the
-pending calibration and immediately begins the untouched baseline step. If an
-unexpected reboot interrupts calibration, the saved marker resumes it at Step
-1 instead of returning to the normal screen. The display then walks the user
-through leaving the tap handle untouched, touching and holding
-the tap handle's outside edges, releasing it, and completing three verification
-touches in the same area. The calculated percentage is accepted only when the
-touch signal clears the measured noise margin. A successful value is saved back
-to the scale; failure keeps the previous threshold.
+Guided touch calibration is removed. Automatic untouched-baseline measurement
+before sleep remains active. New/default sensitivity is 1% below baseline;
+existing Scale-saved values are preserved. Adjust sensitivity under Settings >
+Displays on the Scale webpage. Current firmware clears an interrupted legacy
+wizard marker rather than resuming the old flow.
 
-Calibration uses a bounded oneshot conversion for every sample, including a
-32-sample software-filter warm-up before baseline noise measurement. It does
-not depend on background continuous scanning. Failures show the reason and
-ESP-IDF error name for 30 seconds before restoring the normal screen. These
-changes still require battery-powered hardware validation; host tests exercise
-the production routine with fake samples, conversion errors, zero readings,
-and missing touches.
-
-Run the calibration regression locally with:
-`gcc -std=c11 -Wall -Wextra -Werror -Itests/touch_stubs -Icomponents/touch_wake/include tests/touch_calibration_test.c -o /tmp/touch_calibration_test`
-and `/tmp/touch_calibration_test`.
+The lower-level calibration routine remains in the component for compatibility
+and host regression coverage, but the application no longer invokes it.
 
 During OTA, the Wi-Fi DHCP hostname is `KegScaleDisplay-XXXX`, where `XXXX`
 is the final two station MAC bytes. It is reapplied at station start before

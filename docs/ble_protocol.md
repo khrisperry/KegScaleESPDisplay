@@ -21,7 +21,7 @@ While unpaired, the display continuously scans. If exactly one scale advertises 
 | Wi-Fi/OTA bundle | `8f7a0007-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted long read; exact bonded display only |
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
 | Display information | `8f7a0009-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted firmware and battery-voltage report |
-| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Runtime threshold and calibrated-result writeback |
+| Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Runtime threshold; legacy authenticated writeback |
 
 ## 20-byte snapshot
 
@@ -117,16 +117,11 @@ The shortened on-wire version field preserves the original packet size. Existing
 semantic firmware versions fit within it, and zero-filled legacy packets are read
 as having no battery-voltage value.
 
-### Guided touch calibration
+### Retired touch calibration
 
-The scale webpage can queue an authenticated control flag (bit 3) that starts
-the calibration wizard on the display's next wake. The scale webpage asks the
-user to unplug USB before queuing the command. The display then immediately
-measures the untouched battery-powered baseline, captures a held
-touch on the tap handle's outside edges, calculates a threshold from the
-signal-to-noise gap, and verifies three additional touches in the same area. A
-successful result is written back to the scale and becomes the new persisted
-touch threshold. A failed calibration leaves the previous value unchanged.
+Control bit 3 is reserved for legacy guided calibration. Current Scale firmware
+does not queue it, and current display firmware does not start or resume the wizard.
+Touch sensitivity is adjusted manually through the Scale.
 
 ### Touch configuration
 
@@ -144,7 +139,7 @@ configuration packet unchanged for backward compatibility:
 Valid thresholds are 1–50%. Lower values are more sensitive. Reads remain
 backward compatible; saving a calibration uses an authenticated encrypted write
 of the same 3-byte packet. If an older scale does not expose this characteristic,
-or a value is invalid, the display uses its 3% firmware default.
+or a value is invalid, the display uses its 1% firmware default.
 
 ## Encrypted display OTA
 
@@ -154,6 +149,6 @@ The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionall
 
 The display-control characteristic is also restricted to the exact authorized
 bond. Flag bit 0 requests unpair, bit 1 identifies replacement, bit 2 requests
-an immediate full-screen refresh, and bit 3 starts guided touch calibration. A
+an immediate full-screen refresh, and bit 3 is reserved for retired guided touch calibration. A
 full refresh redraws the current keg screen and resets the changed-region
 partial-refresh counter.

@@ -69,14 +69,20 @@ esp_err_t cl_agree(cl_session_t *s, const char *peer, const char *server,
   uint8_t input[32 + 65 + 65], p[65], digest[32];
   size_t n = 0;
   if (!cl_unhex(peer, p, 65) || !cl_unhex(server, input + 32, 65) ||
-      !cl_unhex(client, input + 97, 65))
+      !cl_unhex(client, input + 97, 65)) {
+    if (s->ephemeral)
+      psa_destroy_key(s->ephemeral);
+    s->ephemeral = 0;
     return ESP_ERR_INVALID_ARG;
+  }
   psa_status_t r =
       psa_raw_key_agreement(PSA_ALG_ECDH, s->ephemeral, p, 65, input, 32, &n);
   psa_destroy_key(s->ephemeral);
   s->ephemeral = 0;
-  if (r != PSA_SUCCESS || n != 32)
+  if (r != PSA_SUCCESS || n != 32) {
+    memset(input, 0, sizeof(input));
     return ESP_FAIL;
+  }
   esp_err_t e = hash(input, sizeof(input), s->master);
   memset(input, 0, sizeof(input));
   if (e != ESP_OK)

@@ -855,7 +855,8 @@ void ensure_view_button() {
     lv_obj_add_event_cb(view_button, clear_view_button_refs, LV_EVENT_DELETE, nullptr);
   }
 
-  if (active_page == 0 && !home_menu_open && !home_keyboard_open) {
+  if (active_page == 0 && !home_menu_open && !home_keyboard_open &&
+      !touchscreen_pairing_overlay_visible()) {
     tune_home_footer_layout();
     lv_label_set_text(view_button_label,
                       glass_home ? "Dashboard" : "Glass");
