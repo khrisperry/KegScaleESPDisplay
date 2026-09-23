@@ -1,4 +1,5 @@
 #include "app.h"
+#include "ui_lifetime.h"
 #include "esp_lcd_touch.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
 #include "bsp/touch.h"
@@ -51,6 +52,7 @@ lv_obj_t *connection_badge = nullptr;
 // TOUCH_LAYOUT_POLISH_V4
 // TOUCH_DRAWER_REFINEMENTS_V2_4
 char discovered_scale_options[800] = "Manual IP / hostname...";
+TouchscreenUiGeneration content_generation{1};
 bool ui_initialized = false;
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
@@ -60,6 +62,7 @@ void focus(lv_event_t *e);
 void message(const char *s) { lv_label_set_text(notice, s); }
 bool submit(const char *kind, cJSON *json) {
   Action a{};
+  a.ui_generation = touchscreen_ui_generation_current(&content_generation);
   snprintf(a.kind, sizeof(a.kind), "%s", kind);
   char *s = json ? cJSON_PrintUnformatted(json) : nullptr;
   bool valid = !s || strlen(s) < sizeof(a.body);
@@ -848,6 +851,7 @@ void forget(lv_event_t *) {
   scale_host_dropdown = nullptr;
   scale_manual_label = nullptr;
   scale_manual_host = nullptr;
+  touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
   label(content, "Remove scale pairing?", 8, 12, 424,
         &lv_font_montserrat_24);
@@ -908,6 +912,7 @@ void build(int page) {
   dismiss_keyboard();
   page_id = page;
   update_home_nav_button();
+  touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
   lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
   headline = detail = connection = arc = networks = nullptr;
@@ -1318,11 +1323,43 @@ void ui_discovered_options(const char *options) {
   message("Choose a scale from the list, or use Manual IP / hostname.");
   bsp_display_unlock();
 }
-void ui_networks(const char *options) {
+
+void ui_discovered_options_for_generation(const char *options,
+                                          uint32_t generation) {
   if (!bsp_display_lock(1000))
     return;
-  if (page_id == 3 && networks)
-    lv_dropdown_set_options(networks, options);
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
+      page_id != 3 || !scale_host_dropdown) {
+    ESP_LOGI("display",
+             "Ignoring stale scale discovery result generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
+           options && options[0] ? options : "Manual IP / hostname...");
+  lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+  select_host_option_for_slot(true);
+  message("Choose a scale from the list, or use Manual IP / hostname.");
+  bsp_display_unlock();
+}
+
+void ui_networks(const char *options, uint32_t generation) {
+  if (!bsp_display_lock(1000))
+    return;
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
+      page_id != 3 || !networks) {
+    ESP_LOGI("display",
+             "Ignoring stale Wi-Fi scan result generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  lv_dropdown_set_options(networks, options);
   message("Choose your Wi-Fi network");
   bsp_display_unlock();
 }
