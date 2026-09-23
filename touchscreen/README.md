@@ -4,7 +4,7 @@ This is a separate ESP-IDF application for the **Waveshare ESP32-S3-Touch-LCD-4B
 
 ## First installation
 
-1. Update the scale to **V0.0.31 or later with Wi-Fi controller protocol 1**. The scale's existing BLE e-paper pairing stays intact.
+1. Update the scale to **V1.3.4 or later with Wi-Fi controller protocol 1**. The scale's existing BLE e-paper pairing stays intact.
 2. In an ESP-IDF **v6.0.1** terminal, open this subdirectory, not the repository root:
 
    ```powershell
@@ -38,8 +38,10 @@ The scale remains authoritative. The touchscreen does not calculate its own inde
 ## Updates and compatibility
 
 The manually dispatched `Wi-Fi Touchscreen` workflow builds this application.
-Validated firmware is published under `KegScaleFirmware/touchscreen/<channel>/esp32s3/`
-for production, beta, or dev. This feed is separate from Scale and e-paper firmware.
+Validated firmware is published under `KegScaleFirmware/touchscreen/<channel>/esp32s3/`.
+Production and Dev are published for V1.3.4. Beta support exists in the UI/workflow,
+but no Touch Beta manifest is currently published; do not select Beta until a Beta
+artifact is available. This feed is separate from Scale and e-paper firmware.
 HTTPS, hardware/target, image SHA-256, application identity, and version are checked.
 
 Two Scale profiles can be saved and selected. Each Scale supports one authorized
