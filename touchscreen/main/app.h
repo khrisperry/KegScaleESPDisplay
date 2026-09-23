@@ -15,6 +15,9 @@ struct Settings {
 struct Action {
   char kind[24];
   char body[1024];
+  // UI content generation that created this action. Async Setup results must
+  // match it before touching widgets created by that screen generation.
+  uint32_t ui_generation;
 };
 
 struct State {
@@ -53,7 +56,9 @@ void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
 void ui_discovered_options(const char *options);
-void ui_networks(const char *options);
+void ui_discovered_options_for_generation(const char *options,
+                                          uint32_t generation);
+void ui_networks(const char *options, uint32_t generation);
 void ui_paired(void);
 void ui_settings_applied(const Settings &settings);
 void ui_scale_profiles(const char *primary_host, bool primary_paired,
