@@ -29,6 +29,9 @@ Covered behavior:
   complete a pending command.
 - OTA is deferred during Wi-Fi loss, saved-session reconnect, an active pairing
   socket, or a pending command, and allowed after authenticated state resumes.
+- Setup UI actions carry a content-generation token. Wi-Fi scan and mDNS discovery
+  results/messages are rejected if the Setup screen was rebuilt or destroyed
+  before the asynchronous work completes, including leave-and-return flows.
 
 The full Display/Touch host suite and ESP-IDF 6.0.1 Touch build passed. No firmware
 behavior changes were needed for these cases, and nothing was flashed or published.
@@ -38,9 +41,10 @@ behavior changes were needed for these cases, and nothing was flashed or publish
 Transport, cryptography, persistence, and UI calls are faked in this harness.
 Separate existing protocol tests exercise real cryptography, and overlay tests
 exercise the countdown/cancel UI logic. These tests do not prove radio timing,
-real scheduler interleavings, actual NVS persistence, or LVGL object lifetime.
-The removal scenario tests the connection transition, not the HTTP cleanup guard.
-Discovery/scan callbacks after screen destruction remain separate backlog work.
+real scheduler interleavings or actual NVS persistence. The UI lifetime regression
+tests the production generation guard and its callback wiring, but host tests still
+do not prove LVGL's internal object allocator behavior on hardware. The removal
+scenario tests the connection transition, not the HTTP cleanup guard.
 
 On hardware, verify pairing interruption and retry, remove/immediate re-pair,
 switching two saved Scales, Wi-Fi loss during a save, and OTA attempts during
