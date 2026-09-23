@@ -58,6 +58,7 @@ The wire protocol and pairing code format are unchanged.
 ## Hardware checks still required
 
 Host tests do not prove radio behavior, physical screen rendering, power-loss
-recovery, or bootloader rollback. On Dev hardware, verify authorization before
-the update screen, interrupted download recovery, successful reboot into the new
-image, and preservation of settings and pairing. Production remains on hold.
+recovery, or bootloader rollback. On hardware, verify authorization before the
+update screen, interrupted download recovery, successful reboot into the new image,
+and preservation of settings and pairing. V1.3.4 was published to Production on
+September 23, 2026; publication does not replace these hardware acceptance checks.
