@@ -1196,10 +1196,13 @@ void action(const Action &a) {
           strcat(options, "\n");
         strncat(options, ssid, 32);
       }
-      ui_networks(options[0] ? options : "No networks found");
+      ui_networks(options[0] ? options : "No networks found",
+                  a.ui_generation);
+      ui_message_for_generation("Choose your Wi-Fi network", a.ui_generation);
     } else {
       ESP_LOGW(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(scan_err));
-      ui_message("Wi-Fi scan failed. Enter the SSID manually.");
+      ui_message_for_generation(
+          "Wi-Fi scan failed. Enter the SSID manually.", a.ui_generation);
     }
   } else if (!strcmp(a.kind, "discover")) {
     ESP_LOGI(TAG, "Starting mDNS discovery for _kegscale._tcp");
@@ -1214,13 +1217,16 @@ void action(const Action &a) {
       snprintf(options, sizeof(options), "Manual IP / hostname...");
     ESP_LOGI(TAG, "mDNS discovery completed: result=%s candidates=%u",
              esp_err_to_name(e), count);
-    ui_discovered_options(options);
+    ui_discovered_options_for_generation(options, a.ui_generation);
     if (count > 1)
-      ui_message("Several scales found. Choose one from the list.");
+      ui_message_for_generation(
+          "Several scales found. Choose one from the list.", a.ui_generation);
     else if (count == 1)
-      ui_message("Scale found. Choose it or use Manual IP entry.");
+      ui_message_for_generation(
+          "Scale found. Choose it or use Manual IP entry.", a.ui_generation);
     else
-      ui_message("No scale found. Choose Manual IP / hostname.");
+      ui_message_for_generation(
+          "No scale found. Choose Manual IP / hostname.", a.ui_generation);
     if (found)
       mdns_query_results_free(found);
   } else if (!strcmp(a.kind, "forget")) {
