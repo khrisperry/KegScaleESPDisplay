@@ -10,9 +10,8 @@ Initial hardware target:
 - ESP32
 - 4 MB flash
 - 2.13-inch monochrome e-paper (122x250 native / 250x122 landscape, SSD1680-class panel)
-- Timer wake every 180 seconds
+- Optional scheduled check-in (3 minutes when enabled; 1-hour safety timer otherwise)
 - Native capacitive touch wake on GPIO12 (ESP32 touch channel 5)
-- Timer wake every 180 seconds
 
 The scale remains the source of truth. This display does not perform tare, load-cell calibration, keg-profile editing, Wi-Fi configuration, Home Assistant, or scale OTA. Touch sensitivity is set manually under Settings > Displays on the Scale webpage; the default is 1%.
 
@@ -75,7 +74,7 @@ Changes are developed and validated locally, then synchronized to release branch
 
 The initial firmware is already structured around the final low-power workflow:
 
-- timer wake every 3 minutes
+- optional 3-minute scheduled check-in with a one-hour safety timer when frequent check-in is disabled
 - native GPIO12 capacitive-touch wake
 - direct reconnect to one saved scale
 - exact-ID recovery scan if the BLE address changes
@@ -103,7 +102,7 @@ All setup, pairing, connection-status, QR, keg, and diagnostics screens use the 
 
 No serial interaction is required for normal pairing. Start **Add display** from the scale web page and enter the one-time six-digit code shown on the e-paper display.
 
-An unpaired display stays awake and scans for an explicitly pairing-enabled scale, so initial setup does not wait for the normal three-minute sleep interval.
+An unpaired display stays awake and scans for an explicitly pairing-enabled scale, so initial setup does not wait for the normal scheduled sleep interval.
 
 ## Build
 
@@ -121,11 +120,11 @@ The GitHub Actions build also targets classic ESP32.
 
 1. Confirm firmware boots and scans BLE.
 2. Confirm it discovers the existing scale and reads protocol version 1.
-3. Confirm one-scale automatic pairing or explicit serial pairing.
+3. Confirm web-driven pairing with the six-digit display code and authenticated BLE bond.
 4. Confirm current keg values decode correctly.
 5. Confirm the e-paper panel initializes and orientation is correct.
 6. Confirm a meaningful scale change updates e-paper.
-7. Confirm a no-change 3-minute wake does not refresh e-paper.
+7. Confirm a no-change scheduled wake does not refresh e-paper.
 8. Confirm touching the GPIO12 electrode wakes from deep sleep and logs `wake=touch`.
 9. Tune the touch threshold percentage if needed.
 10. Measure actual V2.3.1 deep-sleep battery current.
