@@ -31,7 +31,7 @@ If confirmation is interrupted during first pairing, remove the touchscreen pair
 - **Replace keg:** Leads to the keg form with replacement instructions. Do not tare with a keg on the scale.
 - **Scale:** Start calibration, remove all objects, save empty tare, apply a known weight, then calibrate. Each step advances only after the scale confirms it. A two-minute lease excludes other calibration callers and expires automatically; Cancel releases it.
 - **Setup:** Wi-Fi, scale discovery/address, brightness and pairing removal. The on-screen keyboard appears when an input is selected. Scroll the form to reach its remaining fields and buttons.
-- **Update:** Firmware versions and explicit installation of development touchscreen firmware. Development updates require confirmation and should only be used for instructed testing.
+- **Update:** Firmware versions, Production/Beta/Dev channel selection, automatic-update preference, and manual check/install. Saved preferences are preserved. New Touch settings currently default to Dev with automatic installation enabled; select Production here for normal release updates.
 
 The scale remains authoritative. The touchscreen does not calculate its own independent keg totals. The e-paper display receives changes at its next BLE check-in.
 
