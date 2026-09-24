@@ -785,6 +785,25 @@ static bool render_if_needed(
             peer,
             state,
             battery_percent);
+
+        if (state->force_refresh_requested &&
+            state->command_ack_supported &&
+            state->control_command_id != 0) {
+            esp_err_t ack_err =
+                ble_client_acknowledge_control(
+                    peer,
+                    state->control_command_id,
+                    state->control_flags);
+
+            if (ack_err != ESP_OK) {
+                ESP_LOGW(
+                    TAG,
+                    "Full refresh completed, but command ACK failed; Scale will retry command id=%u: %s",
+                    (unsigned)state->control_command_id,
+                    esp_err_to_name(ack_err));
+            }
+        }
+
         return true;
     } else {
         ESP_LOGW(
@@ -1154,6 +1173,24 @@ static bool handle_unpair_request(
     ESP_LOGI(
         TAG,
         "Authenticated scale requested display unpair");
+
+    if (state->command_ack_supported &&
+        state->control_command_id != 0) {
+        esp_err_t ack_err =
+            ble_client_acknowledge_control(
+                &pairing->peer,
+                state->control_command_id,
+                state->control_flags);
+
+        if (ack_err != ESP_OK) {
+            ESP_LOGW(
+                TAG,
+                "Unpair completion ACK failed; keeping local bond so command id=%u can retry: %s",
+                (unsigned)state->control_command_id,
+                esp_err_to_name(ack_err));
+            return false;
+        }
+    }
 
     ble_client_forget_peer(
         &pairing->peer);
