@@ -31,7 +31,7 @@
 QueueHandle_t actions;
 
 static void touchscreen_apply_settings_live();
-static void touchscreen_touchscreen_ui_message(const char *message);
+static void touchscreen_ui_message(const char *message);
 static bool touchscreen_remove_scale_pairing(const char *host);
 static void *touchscreen_pairing_memset(void *dest, int value, size_t count);
 static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
