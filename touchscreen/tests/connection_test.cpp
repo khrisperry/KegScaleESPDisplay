@@ -13,6 +13,11 @@ using esp_websocket_client_handle_t = void *;
 #include "connection_types.inc"
 const char *TAG="test";
 const char *esp_err_to_name(esp_err_t) { return "fake"; }
+struct esp_app_desc_t { char version[32]; };
+const esp_app_desc_t *esp_app_get_description() {
+ static const esp_app_desc_t app = {"VTEST"};
+ return &app;
+}
 template<typename... Args> void log_fake(Args...) {}
 #define ESP_LOGI(...) log_fake(__VA_ARGS__)
 #define ESP_LOGW(...) log_fake(__VA_ARGS__)
@@ -115,6 +120,7 @@ static Frame frame(uint8_t slot,int kind,const char *json="") {
 static void test_reconnect() {
  reset(); auto &c=connections[0]; connect_scale(0); assert(probes==1&&starts==1);
  on_frame(frame(0,1));assert(last_hello.find("public")!=std::string::npos);
+ assert(last_hello.find("\"firmware\":\"VTEST\"")!=std::string::npos);
  c.traffic_ready=true; c.link.master[0]=42;
  on_frame(frame(0,2));assert(!c.traffic_ready&&!c.authenticated&&ended==1&&c.retry_connection);
  assert(c.next_connection_attempt==clock_us+kReconnectRetryUs&&c.link.master[0]==0);
@@ -123,6 +129,7 @@ static void test_reconnect() {
  assert(settings.paired&&settings.master[0]==42&&c.authenticated&&saves==1);
  on_frame(frame(0,2));connect_scale(0);assert(probes==2); // saved pairing skips HTTP
  on_frame(frame(0,1));assert(last_hello.find("public")==std::string::npos&&c.link.master[0]==42);
+ assert(last_hello.find("\"firmware\":\"VTEST\"")!=std::string::npos);
  reset();connect_scale(1);assert(probes==0&&starts==0&&!connections[1].retry_connection);
  secondary_scale.paired=true;connect_scale(1);assert(starts==1&&probes==0);
  active_scale_index=1;settings.paired=true;connect_scale(0);assert(starts==2&&probes==0);
