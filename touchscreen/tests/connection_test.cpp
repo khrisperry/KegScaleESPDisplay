@@ -35,6 +35,7 @@ struct esp_websocket_event_data_t { int op_code, payload_offset, payload_len, da
 struct esp_websocket_client_config_t {
  const char *uri; int buffer_size, task_stack; bool disable_auto_reconnect;
  int reconnect_timeout_ms, network_timeout_ms;
+ size_t ping_interval_sec; int pingpong_timeout_sec;
 };
 Settings settings{};
 StoredScaleProfile secondary_scale{};
