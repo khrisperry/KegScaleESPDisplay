@@ -1807,10 +1807,6 @@ esp_err_t touchscreen_ota_request(bool install, bool foreground) {
   return ESP_OK;
 }
 
-static esp_err_t touchscreen_start_ota_task_legacy(bool install) {
-  return touchscreen_ota_request(install, true);
-}
-
 void touchscreen_start_ota_scheduler(void) {
   if (ota_scheduler_started.exchange(true))
     return;
