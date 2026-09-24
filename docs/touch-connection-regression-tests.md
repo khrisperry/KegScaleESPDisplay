@@ -8,7 +8,9 @@ source is used when available; otherwise the runner links the system cJSON libra
 The Touch CI test job installs both development libraries.
 
 `run_connection_test.py` extracts complete production functions and type definitions
-from `main.cpp`, `main_wrapper.cpp`, and `app.h`. It compiles them with transport,
+from `main.cpp` and `app.h`. V1.3.6 Dev removes `main_wrapper.cpp`; the
+runtime settings, OTA, discovery, and synchronized-pairing paths now use explicit
+calls in the production source. The harness compiles them with transport,
 clock, persistence, cryptography, and UI fakes, using real cJSON parsing. No copy
 of the connection algorithm is maintained in the harness.
 
@@ -56,3 +58,18 @@ switching two saved Scales, Wi-Fi loss during a save, and OTA attempts during
 reconnect. Confirm a lost acknowledgement shows an unknown outcome; check the
 Scale's actual saved value before manually retrying. Confirm both display types
 remain usable while pairing the other.
+
+
+## V1.3.6 main-wrapper removal checkpoint
+
+Touch V1.3.6 Dev removes the source-inclusion/macro-interception
+`main_wrapper.cpp`. The application now builds `main.cpp` directly. Live
+settings apply, OTA scheduling, automatic discovery, local pairing cleanup, and
+authenticated scale-requested unpair handling are explicit production calls.
+`main_architecture_guard_test.py` fails if the wrapper returns, CMake stops
+building `main.cpp` directly, or the key explicit hooks disappear.
+
+Host and ESP-IDF build validation are required before hardware acceptance. On
+hardware, verify saved reconnect, Remove pairing synchronization, fresh
+six-character pairing, Save & connect without reboot, auto-discovery, and manual
+Touch OTA/reconnect behavior.
