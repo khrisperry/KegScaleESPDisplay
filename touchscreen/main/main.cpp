@@ -105,6 +105,7 @@ struct ScaleConnection {
   bool retry_connection = true;
   std::atomic<uint32_t> generation{0};
   std::atomic<uint32_t> disconnect_reported_generation{0};
+  std::atomic<bool> retirement_pending{false};
   State state{};
 };
 
@@ -236,8 +237,9 @@ void transport_retirement_task(void *) {
              (unsigned long)retired.generation);
     esp_websocket_client_stop(retired.handle);
     esp_websocket_client_destroy(retired.handle);
+    connection_for(retired.slot).retirement_pending = false;
     ESP_LOGI(TAG,
-             "Retired scale %u WebSocket generation=%lu",
+             "Retired scale %u WebSocket generation=%lu; reconnect may proceed",
              (unsigned)(retired.slot + 1),
              (unsigned long)retired.generation);
   }
@@ -259,6 +261,7 @@ bool retire_transport_async(uint8_t slot,
              (unsigned)(slot + 1), (unsigned long)generation);
     return false;
   }
+  connection_for(slot).retirement_pending = true;
   return true;
 }
 
@@ -502,6 +505,16 @@ bool scale_accepting_connection(uint8_t slot) {
 
 void connect_scale(uint8_t slot) {
   auto &c = connection_for(slot);
+
+  if (c.retirement_pending) {
+    c.retry_connection = true;
+    c.next_connection_attempt = now();
+    ESP_LOGD(TAG,
+             "Scale %u reconnect deferred until previous WebSocket retirement completes",
+             (unsigned)(slot + 1));
+    return;
+  }
+
   const uint32_t generation = c.generation.fetch_add(1) + 1;
   c.retry_connection = true;
   c.next_connection_attempt = now() + kReconnectRetryUs;
@@ -524,6 +537,10 @@ void connect_scale(uint8_t slot) {
       disconnected(slot);
       return;
     }
+    disconnected(slot);
+    c.retry_connection = true;
+    c.next_connection_attempt = now();
+    return;
   }
   disconnected(slot);
 
@@ -2222,6 +2239,7 @@ extern "C" void touchscreen_app_main() {
       }
 
       if (c.retry_connection && scale_host_const(slot)[0] &&
+          !c.retirement_pending &&
           current_time >= c.next_connection_attempt) {
         connect_scale(slot);
         continue;
