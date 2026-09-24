@@ -1785,16 +1785,27 @@ rediscover:
                         info.version,
                         (unsigned)info.battery_millivolts);
                 }
+            } else {
+                info_err = ESP_ERR_INVALID_STATE;
             }
         }
 
         if (info_err != ESP_OK) {
-            /* A best-effort report must not discard an already received unpair
-             * or force-refresh command. Do not reconnect just to resend it. */
             ESP_LOGW(
                 TAG,
-                "Could not report display firmware to scale: %s",
+                "Could not report display firmware to scale before control read: %s",
                 esp_err_to_name(info_err));
+
+            /*
+             * When the new ACK characteristic exists, the Scale must learn
+             * this display's V1.3.5+ firmware before it constructs a command.
+             * Otherwise a transient info-write failure could make the Scale
+             * fall back to legacy clear-on-read semantics. Do not read a
+             * reliable command until capability reporting succeeds.
+             */
+            if (display_command_ack_handle != 0) {
+                err = info_err;
+            }
         }
     }
 
