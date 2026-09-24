@@ -36,10 +36,12 @@ checks = {
         'retire_transport_async' in main and
         'retirement_pending' in main and
         'xQueueCreate(8, sizeof(RetiredTransport))' in main and
-        'frames = xQueueCreate(16, sizeof(Frame));' in main,
-    "heartbeat send cannot hold the app loop for one second":
-        'esp_websocket_client_send_bin(c.ws, (char *)out, len,' in main and
-        'pdMS_TO_TICKS(50)' in main,
+        'frames = xQueueCreate(8, sizeof(Frame));' in main,
+    "modern Scale keepalive uses WebSocket worker":
+        'config.ping_interval_sec = 5;' in main and
+        'config.pingpong_timeout_sec = 12;' in main and
+        'scale_supports_protocol_keepalive(c.state.firmware)' in main and
+        'current_time - c.last_ping > 8000000' in main,
     "Scale reconnect never stops its WebSocket synchronously":
         "esp_websocket_client_stop(c.ws)" not in main and
         "esp_websocket_client_destroy(c.ws)" not in main and
