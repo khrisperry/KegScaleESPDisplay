@@ -114,6 +114,13 @@ static const ble_uuid128_t s_touch_config_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x0a, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_command_ack_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x0b, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -177,8 +184,18 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
-    uint16_t reserved;
+    uint16_t command_id;
 } wire_display_control_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t completed_flags;
+    uint16_t command_id;
+} wire_display_command_ack_t;
+
+_Static_assert(
+    sizeof(wire_display_command_ack_t) == 4,
+    "Display command acknowledgement layout changed");
 
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
@@ -227,6 +244,7 @@ typedef struct {
     uint16_t display_control_handle;
     uint16_t display_info_handle;
     uint16_t touch_config_handle;
+    uint16_t display_command_ack_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -601,6 +619,11 @@ static int characteristic_disc_cb(
                        &characteristic->uuid.u,
                        &s_touch_config_uuid.u) == 0) {
             context->touch_config_handle =
+                characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_command_ack_uuid.u) == 0) {
+            context->display_command_ack_handle =
                 characteristic->val_handle;
         }
 
@@ -1321,7 +1344,8 @@ static esp_err_t discover_handles(
     uint16_t *update_bundle_handle,
     uint16_t *display_control_handle,
     uint16_t *display_info_handle,
-    uint16_t *touch_config_handle)
+    uint16_t *touch_config_handle,
+    uint16_t *display_command_ack_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -1404,6 +1428,8 @@ static esp_err_t discover_handles(
         chr_context.display_info_handle;
     *touch_config_handle =
         chr_context.touch_config_handle;
+    *display_command_ack_handle =
+        chr_context.display_command_ack_handle;
 
     return ESP_OK;
 }
@@ -1449,7 +1475,7 @@ esp_err_t ble_client_pair(
 typedef struct {
     uint32_t magic;
     ble_client_peer_t peer;
-    uint16_t handles[9];
+    uint16_t handles[10];
     char identity[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     uint8_t profile_revision;
@@ -1457,7 +1483,7 @@ typedef struct {
     uint8_t touch_threshold;
 } retained_gatt_cache_t;
 RTC_DATA_ATTR static retained_gatt_cache_t s_gatt_cache;
-#define GATT_CACHE_MAGIC 0x4b474331U
+#define GATT_CACHE_MAGIC 0x4b474332U
 
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
@@ -1515,6 +1541,7 @@ esp_err_t ble_client_fetch_mode(
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
+    uint16_t display_command_ack_handle = 0;
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
     size_t text_len = 0;
@@ -1530,6 +1557,7 @@ rediscover:
         display_control_handle = s_gatt_cache.handles[6];
         display_info_handle = s_gatt_cache.handles[7];
         touch_config_handle = s_gatt_cache.handles[8];
+        display_command_ack_handle = s_gatt_cache.handles[9];
         ESP_LOGI(TAG, "Touch fetch: using retained BLE handles");
     } else {
         err =
@@ -1543,7 +1571,8 @@ rediscover:
                 &update_bundle_handle,
                 &display_control_handle,
                 &display_info_handle,
-                &touch_config_handle);
+                &touch_config_handle,
+                &display_command_ack_handle);
     }
 
     /* Validate protocol and scale firmware before using cached handles to write. */
@@ -1740,9 +1769,19 @@ rediscover:
                 control_len == sizeof(control) &&
                 control.protocol_version ==
                     BLE_CLIENT_UPDATE_PROTOCOL_VERSION) {
+                state->control_flags =
+                    control.flags;
+                state->control_command_id =
+                    control.command_id;
+                state->command_ack_supported =
+                    display_command_ack_handle != 0 &&
+                    control.command_id != 0;
                 state->unpair_requested =
                     (control.flags &
                      DISPLAY_CONTROL_UNPAIR) != 0;
+                state->replacement_requested =
+                    (control.flags &
+                     DISPLAY_CONTROL_REPLACE) != 0;
                 state->force_refresh_requested =
                     (control.flags &
                      DISPLAY_CONTROL_FORCE_REFRESH) != 0;
@@ -1872,6 +1911,7 @@ rediscover:
         s_gatt_cache.handles[6] = display_control_handle;
         s_gatt_cache.handles[7] = display_info_handle;
         s_gatt_cache.handles[8] = touch_config_handle;
+        s_gatt_cache.handles[9] = display_command_ack_handle;
         strlcpy(s_gatt_cache.identity, state->device_info, sizeof(s_gatt_cache.identity));
         strlcpy(s_gatt_cache.keg_name, state->keg_name, sizeof(s_gatt_cache.keg_name));
         s_gatt_cache.profile_revision = state->profile_revision;
@@ -1944,6 +1984,7 @@ esp_err_t ble_client_fetch_update_bundle(
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
+    uint16_t display_command_ack_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -1957,7 +1998,8 @@ esp_err_t ble_client_fetch_update_bundle(
                 &update_bundle_handle,
                 &display_control_handle,
                 &display_info_handle,
-                &touch_config_handle);
+                &touch_config_handle,
+                &display_command_ack_handle);
     }
 
     wire_update_bundle_t wire = {0};
@@ -2063,6 +2105,7 @@ esp_err_t ble_client_save_touch_threshold(
     uint16_t display_control_handle = 0;
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
+    uint16_t display_command_ack_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2076,7 +2119,8 @@ esp_err_t ble_client_save_touch_threshold(
                 &update_bundle_handle,
                 &display_control_handle,
                 &display_info_handle,
-                &touch_config_handle);
+                &touch_config_handle,
+                &display_command_ack_handle);
     }
 
     if (err == ESP_OK &&
