@@ -73,3 +73,22 @@ Host and ESP-IDF build validation are required before hardware acceptance. On
 hardware, verify saved reconnect, Remove pairing synchronization, fresh
 six-character pairing, Save & connect without reboot, auto-discovery, and manual
 Touch OTA/reconnect behavior.
+
+
+## V1.3.6 pairing-rearm isolation fix — hardware validation pending
+
+September 24 field-style hardware testing found that the pairing cleanup guard
+re-armed an Add touchscreen window by disconnecting the touchscreen's entire
+Wi-Fi station. With two configured Scales, removing/re-pairing Scale 2 therefore
+dropped Scale 1's otherwise healthy WebSocket too.
+
+Dev now queues a slot-specific `pairing_rearm` action to the main task instead.
+The pairing guard never disconnects/reconnects station Wi-Fi. If the repaired
+Scale is inactive, the active Scale is left untouched and the user is prompted
+to select the repaired slot in Setup; if it is active, only that Scale's
+connection is restarted. `pairing_rearm_isolation_guard_test.py` prevents the
+global Wi-Fi reset path from returning.
+
+Hardware acceptance: keep Scale 1 online, remove Scale 2, open Add touchscreen
+on Scale 2, and verify Scale 1 never disconnects. Then select Scale 2 and
+complete fresh pairing without rebooting or bouncing Wi-Fi.
