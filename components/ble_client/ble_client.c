@@ -1748,6 +1748,58 @@ rediscover:
     }
 
     if (err == ESP_OK &&
+        display_info_handle != 0) {
+        esp_err_t info_err =
+            secure_connection(
+                conn_handle,
+                &connection);
+
+        if (info_err == ESP_OK) {
+            wire_display_info_t info = {
+                .protocol_version =
+                    BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+                .battery_millivolts =
+                    s_display_battery_millivolts,
+            };
+
+            const esp_app_desc_t *app =
+                esp_app_get_description();
+
+            if (app != NULL) {
+                strlcpy(
+                    info.version,
+                    app->version,
+                    sizeof(info.version));
+
+                info_err =
+                    write_value(
+                        conn_handle,
+                        display_info_handle,
+                        &info,
+                        sizeof(info));
+
+                if (info_err == ESP_OK) {
+                    ESP_LOGI(
+                        TAG,
+                        "Reported display firmware %s and battery %u mV to scale",
+                        info.version,
+                        (unsigned)info.battery_millivolts);
+                }
+            }
+        }
+
+        if (info_err != ESP_OK) {
+            /* A best-effort report must not discard an already received unpair
+             * or force-refresh command. Do not reconnect just to resend it. */
+            ESP_LOGW(
+                TAG,
+                "Could not report display firmware to scale: %s",
+                esp_err_to_name(info_err));
+        }
+    }
+
+
+    if (err == ESP_OK &&
         display_control_handle != 0) {
         esp_err_t control_err =
             secure_connection(
@@ -1807,57 +1859,6 @@ rediscover:
                 TAG,
                 "Authenticated display control unavailable: %s",
                 esp_err_to_name(control_err));
-        }
-    }
-
-    if (err == ESP_OK &&
-        display_info_handle != 0) {
-        esp_err_t info_err =
-            secure_connection(
-                conn_handle,
-                &connection);
-
-        if (info_err == ESP_OK) {
-            wire_display_info_t info = {
-                .protocol_version =
-                    BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
-                .battery_millivolts =
-                    s_display_battery_millivolts,
-            };
-
-            const esp_app_desc_t *app =
-                esp_app_get_description();
-
-            if (app != NULL) {
-                strlcpy(
-                    info.version,
-                    app->version,
-                    sizeof(info.version));
-
-                info_err =
-                    write_value(
-                        conn_handle,
-                        display_info_handle,
-                        &info,
-                        sizeof(info));
-
-                if (info_err == ESP_OK) {
-                    ESP_LOGI(
-                        TAG,
-                        "Reported display firmware %s and battery %u mV to scale",
-                        info.version,
-                        (unsigned)info.battery_millivolts);
-                }
-            }
-        }
-
-        if (info_err != ESP_OK) {
-            /* A best-effort report must not discard an already received unpair
-             * or force-refresh command. Do not reconnect just to resend it. */
-            ESP_LOGW(
-                TAG,
-                "Could not report display firmware to scale: %s",
-                esp_err_to_name(info_err));
         }
     }
 
