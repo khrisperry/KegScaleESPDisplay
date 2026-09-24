@@ -5,6 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 main = (root / "main" / "main.cpp").read_text(encoding="utf-8")
 cmake = (root / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+defaults = (root / "sdkconfig.defaults").read_text(encoding="utf-8")
 wrapper = root / "main" / "main_wrapper.cpp"
 
 checks = {
@@ -37,11 +38,13 @@ checks = {
         'retirement_pending' in main and
         'xQueueCreate(8, sizeof(RetiredTransport))' in main and
         'frames = xQueueCreate(8, sizeof(Frame));' in main,
-    "modern Scale keepalive uses WebSocket worker":
-        'config.ping_interval_sec = 5;' in main and
-        'config.pingpong_timeout_sec = 12;' in main and
-        'scale_supports_protocol_keepalive(c.state.firmware)' in main and
-        'current_time - c.last_ping > 8000000' in main,
+    "all Scale versions use authenticated application heartbeat":
+        'current_time - c.last_ping > 8000000' in main and
+        '!scale_supports_protocol_keepalive' not in main and
+        'Scale %u heartbeat send failed; reconnect scheduled' in main,
+    "WebSocket TX uses separate component lock":
+        'CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y' in defaults and
+        'CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000' in defaults,
     "Scale reconnect never stops its WebSocket synchronously":
         "esp_websocket_client_stop(c.ws)" not in main and
         "esp_websocket_client_destroy(c.ws)" not in main and
