@@ -249,11 +249,10 @@ bool retire_transport_async(uint8_t slot,
   if (!handle)
     return true;
 
-  RetiredTransport retired{
-      .handle = handle,
-      .slot = slot,
-      .generation = generation,
-  };
+  RetiredTransport retired{};
+  retired.handle = handle;
+  retired.slot = slot;
+  retired.generation = generation;
   if (xQueueSend(retired_transports, &retired, 0) != pdTRUE) {
     ESP_LOGE(TAG,
              "Transport retirement queue full for scale %u generation=%lu; deferring reconnect",
@@ -387,10 +386,11 @@ void stop_scale_transport(uint8_t slot, bool retry) {
   if (old_ws &&
       !retire_transport_async(slot, old_ws, retired_generation)) {
     /*
-     * Do not block the main/UI task trying to stop a wedged WebSocket. Keep
-     * the slot offline and retry later; the retirement worker queue normally
-     * has ample capacity and this path is only a safety valve.
+     * Do not block the main/UI task trying to stop a wedged WebSocket. Restore
+     * ownership of the handle so the next retry can queue it again instead of
+     * leaking the transport.
      */
+    c.ws = old_ws;
     c.retry_connection = retry && scale_host_const(slot)[0];
     c.next_connection_attempt = now() + kReconnectRetryUs;
     disconnected(slot);
@@ -518,6 +518,7 @@ void connect_scale(uint8_t slot) {
              "Queueing previous scale %u WebSocket for background retirement; invalidated generation=%lu",
              (unsigned)(slot + 1), (unsigned long)(generation - 1));
     if (!retire_transport_async(slot, old_ws, generation - 1)) {
+      c.ws = old_ws;
       c.retry_connection = true;
       c.next_connection_attempt = now() + kReconnectRetryUs;
       disconnected(slot);
