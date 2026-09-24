@@ -36,6 +36,7 @@ static const char *TAG = "ble_client";
 #define UPDATE_FLAG_VALID (1U << 0)
 #define UPDATE_FLAG_WIFI_CONNECTED (1U << 1)
 #define DISPLAY_CONTROL_UNPAIR (1U << 0)
+#define DISPLAY_CONTROL_REPLACE (1U << 1)
 #define DISPLAY_CONTROL_FORCE_REFRESH (1U << 2)
 #define DISPLAY_CONTROL_CALIBRATE_TOUCH (1U << 3)
 #define PAIRING_ADV_MAGIC_0 0x4b
