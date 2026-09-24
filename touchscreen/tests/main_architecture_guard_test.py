@@ -31,6 +31,15 @@ checks = {
         "#define cl_open" not in main,
     "legacy OTA action uses scheduler":
         "touchscreen_ota_request(false, true)" in main,
+    "WebSocket teardown is isolated from the main task":
+        'void transport_retirement_task(void *)' in main and
+        'retire_transport_async' in main and
+        'retirement_pending' in main and
+        'xQueueCreate(8, sizeof(RetiredTransport))' in main and
+        'frames = xQueueCreate(16, sizeof(Frame));' in main,
+    "heartbeat send cannot hold the app loop for one second":
+        'esp_websocket_client_send_bin(c.ws, (char *)out, len,' in main and
+        'pdMS_TO_TICKS(50)' in main,
 }
 
 failed = [name for name, passed in checks.items() if not passed]
