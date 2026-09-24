@@ -162,6 +162,23 @@ bool yes(cJSON *o, const char *k) {
   return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, k));
 }
 int64_t now() { return esp_timer_get_time(); }
+
+bool scale_supports_protocol_keepalive(const char *firmware) {
+  if (!firmware || !firmware[0])
+    return false;
+
+  unsigned major = 0, minor = 0, patch = 0;
+  char extra = 0;
+  if (sscanf(firmware, "V%u.%u.%u%c",
+             &major, &minor, &patch, &extra) != 3)
+    return false;
+
+  if (major != 1)
+    return major > 1;
+  if (minor != 3)
+    return minor > 3;
+  return patch >= 11;
+}
 esp_err_t persist() {
   nvs_handle_t n;
   esp_err_t e = nvs_open("touchscreen", NVS_READWRITE, &n);
@@ -411,7 +428,14 @@ bool send_secure(uint8_t slot, const char *plain) {
   auto &c = connection_for(slot);
   uint8_t out[CL_MAX_FRAME];
   size_t len = 0;
-  esp_err_t e = cl_seal(&c.link, plain, out, &len);
+
+  /*
+   * cl_seal() advances tx_seq. Stage that advancement in a copy and only
+   * commit it after the complete WebSocket frame is accepted for transport.
+   * A mutex/transport failure must never consume an encrypted sequence number.
+   */
+  cl_session_t staged = c.link;
+  esp_err_t e = cl_seal(&staged, plain, out, &len);
   if (e != ESP_OK) {
     ESP_LOGW(TAG, "Could not encrypt scale %u WebSocket message: %s",
              (unsigned)(slot + 1), esp_err_to_name(e));
@@ -420,13 +444,17 @@ bool send_secure(uint8_t slot, const char *plain) {
   if (!c.ws || !esp_websocket_client_is_connected(c.ws))
     return false;
   int sent = esp_websocket_client_send_bin(c.ws, (char *)out, len,
-                                           pdMS_TO_TICKS(50));
+                                           pdMS_TO_TICKS(1000));
   if (sent != (int)len) {
     ESP_LOGW(TAG,
              "Scale %u encrypted WebSocket send incomplete: sent=%d expected=%u",
              (unsigned)(slot + 1), sent, (unsigned)len);
+    c.traffic_ready = false;
+    c.retry_connection = true;
+    c.next_connection_attempt = now();
     return false;
   }
+  c.link.tx_seq = staged.tx_seq;
   return true;
 }
 
@@ -596,7 +624,9 @@ void connect_scale(uint8_t slot) {
   config.task_stack = 6144;
   config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
-  config.network_timeout_ms = 5000;
+  config.network_timeout_ms = 1000;
+  config.ping_interval_sec = 5;
+  config.pingpong_timeout_sec = 12;
   c.ws = esp_websocket_client_init(&config);
   if (!c.ws) {
     ESP_LOGE(TAG, "esp_websocket_client_init failed for scale %u %s",
@@ -2159,7 +2189,7 @@ extern "C" void touchscreen_app_main() {
            secondary_scale.paired, (unsigned)(active_scale_index + 1),
            settings.brightness);
   actions = xQueueCreate(4, sizeof(Action));
-  frames = xQueueCreate(16, sizeof(Frame));
+  frames = xQueueCreate(8, sizeof(Frame));
   retired_transports = xQueueCreate(8, sizeof(RetiredTransport));
   configASSERT(actions && frames && retired_transports);
   BaseType_t retirement_task_created = xTaskCreate(
@@ -2256,11 +2286,13 @@ extern "C" void touchscreen_app_main() {
       }
 
       if (c.ws && esp_websocket_client_is_connected(c.ws) &&
-          current_time - c.last_ping > 3000000) {
+          c.traffic_ready &&
+          !scale_supports_protocol_keepalive(c.state.firmware) &&
+          current_time - c.last_ping > 8000000) {
         c.last_ping = current_time;
-        if (c.traffic_ready &&
-            !send_secure(slot, "{\"type\":\"ping\"}"))
-          ESP_LOGW(TAG, "Scale %u heartbeat send failed",
+        if (!send_secure(slot, "{\"type\":\"ping\"}"))
+          ESP_LOGW(TAG,
+                   "Scale %u legacy heartbeat send failed; reconnect scheduled",
                    (unsigned)(slot + 1));
       }
 
