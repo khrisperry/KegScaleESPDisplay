@@ -1,6 +1,6 @@
 # Touch pairing and reconnect regression tests
 
-Validated locally September 22, 2026. Run `bash tests/run_host_tests.sh` from
+Validated locally September 23, 2026. Run `bash tests/run_host_tests.sh` from
 the Display repository in Linux/WSL, or `bash touchscreen/tests/run_host_tests.sh`
 for the Touch suite alone. Host dependencies are Python 3, C/C++ compilers,
 `libmbedtls-dev`, and `libcjson-dev`. A configured Touch project's managed cJSON
@@ -33,8 +33,13 @@ Covered behavior:
   results/messages are rejected if the Setup screen was rebuilt or destroyed
   before the asynchronous work completes, including leave-and-return flows.
 
-The full Display/Touch host suite and ESP-IDF 6.0.1 Touch build passed. No firmware
-behavior changes were needed for these cases, and nothing was flashed or published.
+The full Display/Touch host suite passed under WSL on September 23, 2026,
+including the UI lifetime generation guard, connection regression suite, controller-link
+cryptography tests, and injected crypto-failure coverage. The ESP-IDF 6.0.1 Touch build
+also passed, and Touch V1.3.5 was flashed and exercised on hardware. Repeatedly leaving
+and returning to Setup while scale discovery was running did not crash, corrupt the UI,
+or apply stale discovery results to the rebuilt screen. Production main remains V1.3.4
+until this dev increment is promoted.
 
 ## Limits and hardware checks
 
