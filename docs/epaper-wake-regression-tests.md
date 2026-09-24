@@ -74,6 +74,12 @@ ACK write remain hardware acceptance scenarios.
    Scale does not remain shown as paired.
 7. Repeat with frequent check-in disabled to verify touch and safety-timer access.
 
-V1.3.5 Dev adds reliable command completion behavior. The host suites cover the
-retry and state-transition rules; the physical BLE timing scenarios above must be
-validated before promotion to production.
+V1.3.5 Dev adds reliable command completion behavior. On September 23, 2026,
+the full-refresh completion path was validated on hardware with Scale V1.3.5 and
+e-paper V1.3.5: the Scale queued command ID 1, delivered flags 0x04, retained the
+command after the initial BLE read, the display completed the full e-paper refresh,
+then reconnected and wrote the matching authenticated completion ACK; the Scale
+accepted it and cleared the command. Legacy compatibility was also validated
+against an e-paper V1.3.2 display, which used the intended clear-on-delivery
+fallback. Remove/replace ACK-before-bond-delete hardware validation remains pending
+before promotion to production.
