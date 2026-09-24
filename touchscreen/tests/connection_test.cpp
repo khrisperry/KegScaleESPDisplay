@@ -176,6 +176,18 @@ static void test_lost_ack_and_ota() {
  puts("PASS: lost/mismatched/late acknowledgements, OTA reconnect gate and Wi-Fi retry scheduling");
 }
 
+static void test_error_without_disconnect_retries() {
+ reset();settings.paired=true;connect_scale(0);
+ assert(starts==1&&!connections[0].retry_connection);
+ queued.clear();
+ socket_event(registered_token,0,WEBSOCKET_EVENT_ERROR,nullptr);
+ assert(queued.size()==1&&queued[0].kind==2);
+ on_frame(queued[0]);
+ assert(connections[0].retry_connection);
+ assert(connections[0].next_connection_attempt==clock_us+kReconnectRetryUs);
+ puts("PASS: WebSocket ERROR without DISCONNECTED still schedules Scale retry");
+}
+
 static void test_fragments_and_slot_isolation() {
  reset();connect_scale(0);void *token=registered_token;
  esp_websocket_event_data_t d{1,0,4,2,"ab"};
@@ -205,4 +217,4 @@ static void test_fragments_and_slot_isolation() {
  assert(c.pending_id==20);
  puts("PASS: WebSocket fragments, slot isolation, Wi-Fi loss without command replay and authenticated results");
 }
-int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_fragments_and_slot_isolation(); }
+int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_error_without_disconnect_retries();test_fragments_and_slot_isolation(); }
