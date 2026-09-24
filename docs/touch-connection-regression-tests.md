@@ -75,7 +75,7 @@ six-character pairing, Save & connect without reboot, auto-discovery, and manual
 Touch OTA/reconnect behavior.
 
 
-## V1.3.6 pairing-rearm isolation fix — hardware validation pending
+## V1.3.6 pairing-rearm isolation fix — hardware validated September 24, 2026
 
 September 24 field-style hardware testing found that the pairing cleanup guard
 re-armed an Add touchscreen window by disconnecting the touchscreen's entire
@@ -89,6 +89,9 @@ to select the repaired slot in Setup; if it is active, only that Scale's
 connection is restarted. `pairing_rearm_isolation_guard_test.py` prevents the
 global Wi-Fi reset path from returning.
 
-Hardware acceptance: keep Scale 1 online, remove Scale 2, open Add touchscreen
-on Scale 2, and verify Scale 1 never disconnects. Then select Scale 2 and
-complete fresh pairing without rebooting or bouncing Wi-Fi.
+Hardware validation passed with Scale 1 active while Scale 2 was removed and
+re-paired. Scale 1 remained connected; no station Wi-Fi disconnect occurred.
+The Scale 2 Add touchscreen window queued a slot-specific pairing reconnect,
+the Touch probed the current Scale 2 hostname, completed a new protocol-1
+handshake, saved the new pairing, authenticated the session, and resumed live
+state without rebooting the touchscreen.
