@@ -2,6 +2,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$root/tools/check_controller_link.py"
+python3 "$root/tests/display_command_ack_guard_test.py"
 test_binary="$(mktemp)"
 trap 'rm -f "$test_binary"' EXIT
 cc -std=c11 -Wall -Wextra -Werror "$root/tests/power_policy_test.c" -o "$test_binary"
