@@ -2127,6 +2127,11 @@ extern "C" void touchscreen_request_auto_discovery() {
 extern "C" void touchscreen_app_main() {
   ESP_LOGI(TAG, "Starting Wi-Fi touchscreen firmware %s",
            esp_app_get_description()->version);
+#ifdef CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK
+  ESP_LOGI(TAG, "WebSocket separate TX lock enabled");
+#else
+  ESP_LOGW(TAG, "WebSocket separate TX lock is NOT enabled; regenerate sdkconfig from defaults");
+#endif
   ESP_LOGI(TAG, "Reset reason=%d", (int)esp_reset_reason());
   esp_err_t e = nvs_flash_init();
   if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
