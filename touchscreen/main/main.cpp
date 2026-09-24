@@ -163,22 +163,6 @@ bool yes(cJSON *o, const char *k) {
 }
 int64_t now() { return esp_timer_get_time(); }
 
-bool scale_supports_protocol_keepalive(const char *firmware) {
-  if (!firmware || !firmware[0])
-    return false;
-
-  unsigned major = 0, minor = 0, patch = 0;
-  char extra = 0;
-  if (sscanf(firmware, "V%u.%u.%u%c",
-             &major, &minor, &patch, &extra) != 3)
-    return false;
-
-  if (major != 1)
-    return major > 1;
-  if (minor != 3)
-    return minor > 3;
-  return patch >= 11;
-}
 esp_err_t persist() {
   nvs_handle_t n;
   esp_err_t e = nvs_open("touchscreen", NVS_READWRITE, &n);
@@ -624,9 +608,7 @@ void connect_scale(uint8_t slot) {
   config.task_stack = 6144;
   config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
-  config.network_timeout_ms = 1000;
-  config.ping_interval_sec = 5;
-  config.pingpong_timeout_sec = 12;
+  config.network_timeout_ms = 5000;
   c.ws = esp_websocket_client_init(&config);
   if (!c.ws) {
     ESP_LOGE(TAG, "esp_websocket_client_init failed for scale %u %s",
@@ -2287,12 +2269,11 @@ extern "C" void touchscreen_app_main() {
 
       if (c.ws && esp_websocket_client_is_connected(c.ws) &&
           c.traffic_ready &&
-          !scale_supports_protocol_keepalive(c.state.firmware) &&
           current_time - c.last_ping > 8000000) {
         c.last_ping = current_time;
         if (!send_secure(slot, "{\"type\":\"ping\"}"))
           ESP_LOGW(TAG,
-                   "Scale %u legacy heartbeat send failed; reconnect scheduled",
+                   "Scale %u heartbeat send failed; reconnect scheduled",
                    (unsigned)(slot + 1));
       }
 
