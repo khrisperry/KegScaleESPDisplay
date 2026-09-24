@@ -144,3 +144,26 @@ switch to the healthy Scale while the failed Scale is being retired, and verify
 the UI remains responsive with no frame-queue flood. The failed Scale should
 reconnect after its old transport is retired without the Scale reporting a
 simultaneous replacement socket.
+
+
+## V1.3.12 mixed-version heartbeat stabilization — hardware validation pending
+
+Touch V1.3.11 with Scale 2 V1.3.11 exposed a regression where the Scale
+connection closed repeatedly on an approximately ten-second cadence. Scale 1
+running V1.3.1 remained connected. The regression correlated with V1.3.11 Scale
+taking ownership of HTTPD WebSocket control frames; ESP-IDF had previously
+handled protocol PING/PONG internally.
+
+Scale V1.3.12 restores ESP-IDF's built-in WebSocket control-frame handling.
+Touch V1.3.12 uses the authenticated encrypted application heartbeat for all
+Scale firmware versions, including V1.3.1, and enables
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK so transmit operations no longer compete
+with the receive loop's client lock. The staged controller-link transmit
+sequence remains: a failed transport send does not consume an encryption
+sequence number.
+
+Hardware acceptance must include one remote/legacy Scale on V1.3.1 and one
+local Scale on V1.3.12. Both must remain connected and switchable for several
+minutes, the local Scale must survive disconnect/reconnect tests, automatic OTA
+check must still start successfully, and logs must not show periodic
+ten-second Scale disconnects or repeated ws-client lock failures.
