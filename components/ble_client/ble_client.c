@@ -2067,6 +2067,109 @@ esp_err_t ble_client_fetch_update_bundle(
     return ESP_OK;
 }
 
+esp_err_t ble_client_acknowledge_control(
+    const ble_client_peer_t *peer,
+    uint16_t command_id,
+    uint8_t completed_flags)
+{
+    if (!s_initialized ||
+        peer == NULL ||
+        command_id == 0 ||
+        completed_flags == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint16_t conn_handle =
+        BLE_HS_CONN_HANDLE_NONE;
+    connect_context_t connection = {0};
+
+    esp_err_t err =
+        connect_peer(
+            peer,
+            &conn_handle,
+            &connection,
+            0);
+
+    if (err == ESP_OK) {
+        err =
+            secure_connection(
+                conn_handle,
+                &connection);
+    }
+
+    uint16_t snapshot_handle = 0;
+    uint16_t keg_name_handle = 0;
+    uint16_t device_info_handle = 0;
+    uint16_t display_config_handle = 0;
+    uint16_t display_update_handle = 0;
+    uint16_t update_bundle_handle = 0;
+    uint16_t display_control_handle = 0;
+    uint16_t display_info_handle = 0;
+    uint16_t touch_config_handle = 0;
+    uint16_t display_command_ack_handle = 0;
+
+    if (err == ESP_OK) {
+        err =
+            discover_handles(
+                conn_handle,
+                &snapshot_handle,
+                &keg_name_handle,
+                &device_info_handle,
+                &display_config_handle,
+                &display_update_handle,
+                &update_bundle_handle,
+                &display_control_handle,
+                &display_info_handle,
+                &touch_config_handle,
+                &display_command_ack_handle);
+    }
+
+    if (err == ESP_OK &&
+        display_command_ack_handle == 0) {
+        err = ESP_ERR_NOT_SUPPORTED;
+    }
+
+    if (err == ESP_OK) {
+        const wire_display_command_ack_t ack = {
+            .protocol_version =
+                BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+            .completed_flags =
+                completed_flags,
+            .command_id =
+                command_id,
+        };
+
+        err =
+            write_value(
+                conn_handle,
+                display_command_ack_handle,
+                &ack,
+                sizeof(ack));
+    }
+
+    if (conn_handle !=
+        BLE_HS_CONN_HANDLE_NONE) {
+        disconnect_peer(conn_handle);
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGI(
+            TAG,
+            "Acknowledged completed display command id=%u flags=0x%02x",
+            (unsigned)command_id,
+            (unsigned)completed_flags);
+    } else {
+        ESP_LOGW(
+            TAG,
+            "Could not acknowledge display command id=%u flags=0x%02x: %s",
+            (unsigned)command_id,
+            (unsigned)completed_flags,
+            esp_err_to_name(err));
+    }
+
+    return err;
+}
+
 esp_err_t ble_client_save_touch_threshold(
     const ble_client_peer_t *peer,
     uint8_t threshold_percent)
