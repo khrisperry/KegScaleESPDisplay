@@ -2,7 +2,6 @@
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
-#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
@@ -186,22 +185,21 @@ void wait_for_pair_window(PendingCleanup *cleanup, unsigned slot) {
            slot + 1);
 }
 
-void rearm_connection_for_pairing(unsigned slot, const char *host) {
+bool rearm_connection_for_pairing(unsigned slot, const char *host) {
   ESP_LOGI(TAG,
-           "Scale %u Add touchscreen window detected for '%s'; re-arming connection state",
+           "Scale %u Add touchscreen window detected for '%s'; queueing slot-specific pairing reconnect",
            slot + 1, host);
-  ui_message("Pairing window found - connecting to scale...");
 
-  esp_err_t e = esp_wifi_disconnect();
-  if (e == ESP_ERR_WIFI_NOT_CONNECT) {
-    e = esp_wifi_connect();
-    if (e != ESP_OK)
-      ESP_LOGW(TAG, "Wi-Fi reconnect request failed while re-arming pairing: %s",
-               esp_err_to_name(e));
-  } else if (e != ESP_OK) {
-    ESP_LOGW(TAG, "Wi-Fi disconnect failed while re-arming pairing: %s",
-             esp_err_to_name(e));
+  Action action{};
+  snprintf(action.kind, sizeof(action.kind), "pairing_rearm");
+  snprintf(action.body, sizeof(action.body), "{\"slot\":%u}", slot);
+  if (xQueueSend(actions, &action, 0) != pdTRUE) {
+    ESP_LOGW(TAG,
+             "Could not queue Scale %u pairing reconnect; will retry without disturbing Wi-Fi",
+             slot + 1);
+    return false;
   }
+  return true;
 }
 
 void pairing_guard_task(void *) {
@@ -314,8 +312,8 @@ void pairing_guard_task(void *) {
       }
 
       if (remote.seconds > 0) {
-        rearm_connection_for_pairing(slot, pending.host);
-        pending = {};
+        if (rearm_connection_for_pairing(slot, pending.host))
+          pending = {};
         continue;
       }
 
