@@ -68,7 +68,11 @@ esp_err_t persist() { ++saves; return save_error; }
 esp_err_t esp_wifi_connect() { ++wifi_connects; return ESP_OK; }
 void esp_websocket_client_stop(void *) { ++stops; }
 void esp_websocket_client_destroy(void *) { ++destroys; }
-bool retire_transport_async(uint8_t, void *, uint32_t) { ++retirements; return true; }
+bool retire_transport_async(uint8_t slot, void *, uint32_t) {
+ ++retirements;
+ connections[slot].retirement_pending = true;
+ return true;
+}
 bool esp_websocket_client_is_connected(void *) { return socket_connected; }
 void *esp_websocket_client_init(const esp_websocket_client_config_t *c) {
  assert(c->disable_auto_reconnect); return init_ok?reinterpret_cast<void *>(1):nullptr;
@@ -125,7 +129,8 @@ static void test_reconnect() {
  c.traffic_ready=true; c.link.master[0]=42;
  on_frame(frame(0,2));assert(!c.traffic_ready&&!c.authenticated&&ended==1&&c.retry_connection);
  assert(c.next_connection_attempt==clock_us+kReconnectRetryUs&&c.link.master[0]==0);
- connect_scale(0); assert(retirements==1&&stops==0&&destroys==0&&starts==2);
+ connect_scale(0); assert(retirements==1&&stops==0&&destroys==0&&starts==1&&c.retirement_pending);
+ c.retirement_pending=false; connect_scale(0); assert(starts==2);
  c.link.master[0]=42;on_frame(frame(0,4,"{\"type\":\"authorized\"}"));
  assert(settings.paired&&settings.master[0]==42&&c.authenticated&&saves==1);
  on_frame(frame(0,2));connect_scale(0);assert(probes==2); // saved pairing skips HTTP
@@ -142,9 +147,10 @@ static void test_reconnect() {
 }
 static void test_stale_and_cancel() {
  reset();connect_scale(0);Frame old=frame(0,4,"{\"type\":\"authorized\"}");void *old_token=registered_token;
- stop_scale_transport(0,false);connect_scale(0);
+ stop_scale_transport(0,false);assert(connections[0].retirement_pending);
  on_frame(old);assert(!settings.paired&&saves==0);
  socket_event(old_token,0,WEBSOCKET_EVENT_CONNECTED,nullptr);assert(queued.empty());
+ connections[0].retirement_pending=false;connect_scale(0);
  socket_event(registered_token,0,WEBSOCKET_EVENT_CONNECTED,nullptr);assert(queued.size()==1);
  on_frame(frame(0,4,"{\"type\":\"pairing_canceled\"}"));
  assert(!connections[0].ws&&!connections[0].retry_connection&&ended==1);
@@ -153,7 +159,7 @@ static void test_stale_and_cancel() {
  reset();settings.paired=true;connect_scale(0);
  Frame removed=frame(0,4,"{\"type\":\"authorized\"}");
  stop_scale_transport(0,false);settings.paired=false;memset(settings.master,0,32);
- connect_scale(0);on_frame(removed);assert(!settings.paired&&saves==0);
+ connections[0].retirement_pending=false;connect_scale(0);on_frame(removed);assert(!settings.paired&&saves==0);
  on_frame(frame(0,1));assert(last_hello.find("public")!=std::string::npos);
  reset();connect_scale(0);save_error=ESP_FAIL;
  on_frame(frame(0,4,"{\"type\":\"authorized\"}"));assert(!settings.paired&&!connections[0].authenticated&&paired_ui==0);
@@ -191,6 +197,18 @@ static void test_error_without_disconnect_retries() {
  puts("PASS: WebSocket ERROR without DISCONNECTED still schedules Scale retry");
 }
 
+static void test_retirement_is_slot_local() {
+ reset();
+ settings.paired=true;
+ secondary_scale.paired=true;
+ connections[1].retirement_pending=true;
+ connect_scale(0);
+ assert(starts==1);
+ assert(!connections[0].retirement_pending);
+ assert(connections[1].retirement_pending);
+ puts("PASS: retiring Scale transport does not block the other Scale slot");
+}
+
 static void test_fragments_and_slot_isolation() {
  reset();connect_scale(0);void *token=registered_token;
  esp_websocket_event_data_t d{1,0,4,2,"ab"};
@@ -220,4 +238,4 @@ static void test_fragments_and_slot_isolation() {
  assert(c.pending_id==20);
  puts("PASS: WebSocket fragments, slot isolation, Wi-Fi loss without command replay and authenticated results");
 }
-int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_error_without_disconnect_retries();test_fragments_and_slot_isolation(); }
+int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
