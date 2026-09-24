@@ -87,3 +87,10 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 # CONFIG_MBEDTLS_IRAM_8BIT_MEM_ALLOC is not set
 
 # mbedTLS dynamic allocations use the board's 8 MB PSRAM.
+
+
+# Let WebSocket transmit operations use a separate mutex from the receive loop.
+# This prevents encrypted heartbeat/command sends from blocking behind the
+# client's receive lock while preserving ESP-IDF's built-in control frames.
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000
