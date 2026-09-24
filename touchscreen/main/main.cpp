@@ -255,13 +255,15 @@ bool retire_transport_async(uint8_t slot,
   retired.handle = handle;
   retired.slot = slot;
   retired.generation = generation;
+  auto &c = connection_for(slot);
+  c.retirement_pending = true;
   if (xQueueSend(retired_transports, &retired, 0) != pdTRUE) {
+    c.retirement_pending = false;
     ESP_LOGE(TAG,
              "Transport retirement queue full for scale %u generation=%lu; deferring reconnect",
              (unsigned)(slot + 1), (unsigned long)generation);
     return false;
   }
-  connection_for(slot).retirement_pending = true;
   return true;
 }
 
@@ -2217,8 +2219,16 @@ extern "C" void touchscreen_app_main() {
   Frame f;
   Action a;
   for (;;) {
-    while (xQueueReceive(frames, &f, 0) == pdTRUE)
+    /*
+     * Process a bounded frame batch, then give UI/actions a turn. A broken
+     * Scale must not be able to starve Switch Scale or Setup actions by
+     * continuously refilling the shared frame queue.
+     */
+    for (unsigned processed = 0; processed < 8; ++processed) {
+      if (xQueueReceive(frames, &f, 0) != pdTRUE)
+        break;
       on_frame(f);
+    }
 
     if (xQueueReceive(actions, &a, pdMS_TO_TICKS(30)) == pdTRUE)
       action(a);
