@@ -27,8 +27,7 @@ with tempfile.TemporaryDirectory(prefix='keg-connection-') as directory:
     (tmp / 'connection_types.inc').write_text('\n'.join(types), encoding='utf-8')
     (tmp / 'connection_functions.inc').write_text(helpers.functions(main, [
         'str', 'num', 'yes', 'wifi_event', 'socket_event', 'disconnected',
-        'stop_scale_transport', 'connect_scale', 'on_frame'
-    ]) + '\n' + helpers.functions(root / 'touchscreen/main/main_wrapper.cpp', [
+        'stop_scale_transport', 'connect_scale', 'on_frame',
         'ota_scale_transport_busy'
     ]), encoding='utf-8')
     if (cjson / 'cJSON.c').exists():
