@@ -95,3 +95,26 @@ The Scale 2 Add touchscreen window queued a slot-specific pairing reconnect,
 the Touch probed the current Scale 2 hostname, completed a new protocol-1
 handshake, saved the new pairing, authenticated the session, and resumed live
 state without rebooting the touchscreen.
+
+
+## V1.3.9 WebSocket ERROR retry fix — hardware validation pending
+
+September 24 support-bundle evidence showed a controller race where a Scale still
+considered socket 52 active while the Touch opened a replacement socket 56. The
+Scale correctly rejected the second socket, then the old socket failed and
+closed a few seconds later. On the Touch, `esp_websocket_client_start()` had
+already returned ESP_OK, so `retry_connection` was false. The later
+`WEBSOCKET_EVENT_ERROR` path only logged and did not queue a disconnect/retry.
+If ESP-IDF did not subsequently emit `WEBSOCKET_EVENT_DISCONNECTED`, that
+Scale slot remained stuck indefinitely despite the Scale being online and
+paired.
+
+V1.3.9 routes `WEBSOCKET_EVENT_ERROR` through the same main-task disconnect
+path as a normal WebSocket disconnect. The slot clears authenticated/session
+state and schedules its normal 10-second reconnect. The host connection suite now
+covers the exact ERROR-without-DISCONNECTED case.
+
+Hardware acceptance: with both saved Scales online, restart either Scale and
+verify the Touch reconnects. Force or observe a rejected/failed WebSocket
+connection and verify the affected slot retries without rebooting the Touch or
+disturbing the other Scale slot.
