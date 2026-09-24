@@ -44,7 +44,7 @@ std::atomic<bool> wifi_ready{true};
 constexpr int64_t kReconnectRetryUs=10000000;
 int frames;
 int64_t clock_us=1000000;
-unsigned stops, destroys, probes, starts, clears, results, ended, paired_ui, state_ui, saves, wifi_connects;
+unsigned stops, destroys, retirements, probes, starts, clears, results, ended, paired_ui, state_ui, saves, wifi_connects;
 bool probe_ok=true, init_ok=true, socket_connected=true;
 esp_err_t start_error=ESP_OK, save_error=ESP_OK, open_error=ESP_OK;
 std::string message, result_error, last_hello;
@@ -68,6 +68,7 @@ esp_err_t persist() { ++saves; return save_error; }
 esp_err_t esp_wifi_connect() { ++wifi_connects; return ESP_OK; }
 void esp_websocket_client_stop(void *) { ++stops; }
 void esp_websocket_client_destroy(void *) { ++destroys; }
+bool retire_transport_async(uint8_t, void *, uint32_t) { ++retirements; return true; }
 bool esp_websocket_client_is_connected(void *) { return socket_connected; }
 void *esp_websocket_client_init(const esp_websocket_client_config_t *c) {
  assert(c->disable_auto_reconnect); return init_ok?reinterpret_cast<void *>(1):nullptr;
@@ -109,7 +110,7 @@ static void reset() {
  for(auto &c: connections) { c.~ScaleConnection(); new (&c) ScaleConnection(); }
  settings={}; secondary_scale={}; strcpy(settings.host,"scale-one"); strcpy(secondary_scale.host,"scale-two");
  active_scale_index=0; wifi_ready=true; clock_us=1000000;
- stops=destroys=probes=starts=clears=results=ended=paired_ui=state_ui=saves=wifi_connects=0;
+ stops=destroys=retirements=probes=starts=clears=results=ended=paired_ui=state_ui=saves=wifi_connects=0;
  probe_ok=init_ok=socket_connected=true; start_error=save_error=open_error=ESP_OK;
  message.clear();result_error.clear();last_hello.clear();queued.clear();
 }
@@ -124,7 +125,7 @@ static void test_reconnect() {
  c.traffic_ready=true; c.link.master[0]=42;
  on_frame(frame(0,2));assert(!c.traffic_ready&&!c.authenticated&&ended==1&&c.retry_connection);
  assert(c.next_connection_attempt==clock_us+kReconnectRetryUs&&c.link.master[0]==0);
- connect_scale(0); assert(stops==1&&destroys==1&&starts==2);
+ connect_scale(0); assert(retirements==1&&stops==0&&destroys==0&&starts==2);
  c.link.master[0]=42;on_frame(frame(0,4,"{\"type\":\"authorized\"}"));
  assert(settings.paired&&settings.master[0]==42&&c.authenticated&&saves==1);
  on_frame(frame(0,2));connect_scale(0);assert(probes==2); // saved pairing skips HTTP
@@ -182,6 +183,8 @@ static void test_error_without_disconnect_retries() {
  queued.clear();
  socket_event(registered_token,0,WEBSOCKET_EVENT_ERROR,nullptr);
  assert(queued.size()==1&&queued[0].kind==2);
+ socket_event(registered_token,0,WEBSOCKET_EVENT_DISCONNECTED,nullptr);
+ assert(queued.size()==1);
  on_frame(queued[0]);
  assert(connections[0].retry_connection);
  assert(connections[0].next_connection_attempt==clock_us+kReconnectRetryUs);
