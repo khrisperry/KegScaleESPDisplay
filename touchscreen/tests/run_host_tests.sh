@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$root/tests/ui_text_guard_test.py"
 python3 "$root/tests/ui_lifetime_guard_test.py"
+python3 "$root/tests/main_architecture_guard_test.py"
 python3 "$root/tests/run_connection_test.py"
 test_binary="$(mktemp)"
 lifetime_binary="$(mktemp)"
