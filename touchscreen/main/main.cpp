@@ -560,8 +560,8 @@ void on_frame(const Frame &f) {
     if (scale_paired(slot)) {
       memcpy(c.link.master, scale_master(slot), 32);
       snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"nonce\":\"%s\"}",
-               nonce_hex);
+               "{\"type\":\"hello\",\"protocol\":1,\"firmware\":\"%s\",\"nonce\":\"%s\"}",
+               esp_app_get_description()->version, nonce_hex);
       ESP_LOGI(TAG, "Sending hello for saved scale %u pairing",
                (unsigned)(slot + 1));
     } else {
@@ -574,8 +574,8 @@ void on_frame(const Frame &f) {
         return;
       }
       snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"public\":\"%s\",\"nonce\":\"%s\"}",
-               c.own_public, nonce_hex);
+               "{\"type\":\"hello\",\"protocol\":1,\"firmware\":\"%s\",\"public\":\"%s\",\"nonce\":\"%s\"}",
+               esp_app_get_description()->version, c.own_public, nonce_hex);
       ESP_LOGI(TAG, "Sending hello for new scale %u pairing",
                (unsigned)(slot + 1));
     }
