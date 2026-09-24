@@ -104,11 +104,21 @@ struct ScaleConnection {
   bool traffic_ready = false;
   bool retry_connection = true;
   std::atomic<uint32_t> generation{0};
+  std::atomic<uint32_t> disconnect_reported_generation{0};
   State state{};
 };
 
 ScaleConnection connections[2];
 QueueHandle_t frames;
+
+struct RetiredTransport {
+  esp_websocket_client_handle_t handle;
+  uint8_t slot;
+  uint32_t generation;
+};
+
+QueueHandle_t retired_transports;
+TaskHandle_t transport_retirement_task_handle;
 std::atomic<bool> wifi_ready{false};
 
 // Keep an unreachable saved scale from monopolizing the application loop.
@@ -212,6 +222,47 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
   }
 }
 
+void transport_retirement_task(void *) {
+  RetiredTransport retired{};
+  for (;;) {
+    if (xQueueReceive(retired_transports, &retired, portMAX_DELAY) != pdTRUE)
+      continue;
+    if (!retired.handle)
+      continue;
+
+    ESP_LOGI(TAG,
+             "Retiring scale %u WebSocket off main task generation=%lu",
+             (unsigned)(retired.slot + 1),
+             (unsigned long)retired.generation);
+    esp_websocket_client_stop(retired.handle);
+    esp_websocket_client_destroy(retired.handle);
+    ESP_LOGI(TAG,
+             "Retired scale %u WebSocket generation=%lu",
+             (unsigned)(retired.slot + 1),
+             (unsigned long)retired.generation);
+  }
+}
+
+bool retire_transport_async(uint8_t slot,
+                            esp_websocket_client_handle_t handle,
+                            uint32_t generation) {
+  if (!handle)
+    return true;
+
+  RetiredTransport retired{
+      .handle = handle,
+      .slot = slot,
+      .generation = generation,
+  };
+  if (xQueueSend(retired_transports, &retired, 0) != pdTRUE) {
+    ESP_LOGE(TAG,
+             "Transport retirement queue full for scale %u generation=%lu; deferring reconnect",
+             (unsigned)(slot + 1), (unsigned long)generation);
+    return false;
+  }
+  return true;
+}
+
 void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
   const uint32_t token =
       static_cast<uint32_t>(reinterpret_cast<uintptr_t>(arg));
@@ -241,33 +292,31 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
     if (xQueueSend(frames, &f, 0) != pdTRUE)
       ESP_LOGW(TAG, "Frame queue full while reporting scale %u connection",
                (unsigned)(slot + 1));
-  } else if (event == WEBSOCKET_EVENT_DISCONNECTED) {
+  } else if (event == WEBSOCKET_EVENT_DISCONNECTED ||
+             event == WEBSOCKET_EVENT_ERROR) {
+    const bool is_error = event == WEBSOCKET_EVENT_ERROR;
     ESP_LOGW(TAG,
-             "Scale %u WebSocket transport disconnected from %s generation=%lu",
-             (unsigned)(slot + 1), c.uri,
-             (unsigned long)event_generation);
-    f.kind = 2;
-    if (xQueueSend(frames, &f, 0) != pdTRUE)
-      ESP_LOGW(TAG, "Frame queue full while reporting scale %u disconnect",
-               (unsigned)(slot + 1));
-    c.assembly = {};
-  } else if (event == WEBSOCKET_EVENT_ERROR) {
-    ESP_LOGW(TAG,
-             "Scale %u WebSocket transport error while connecting to %s generation=%lu; scheduling reconnect",
-             (unsigned)(slot + 1), c.uri,
-             (unsigned long)event_generation);
-    /*
-     * esp_websocket_client_start() can return ESP_OK and later report a
-     * handshake/transport failure only through WEBSOCKET_EVENT_ERROR. Some
-     * failures do not produce a subsequent DISCONNECTED event. Route ERROR
-     * through the same main-task retry path so a rejected second connection
-     * cannot leave this Scale slot permanently stuck.
-     */
-    f.kind = 2;
-    if (xQueueSend(frames, &f, 0) != pdTRUE)
-      ESP_LOGW(TAG,
-               "Frame queue full while reporting scale %u WebSocket error",
-               (unsigned)(slot + 1));
+             "Scale %u WebSocket transport %s from %s generation=%lu%s",
+             (unsigned)(slot + 1),
+             is_error ? "error" : "disconnected",
+             c.uri,
+             (unsigned long)event_generation,
+             is_error ? "; scheduling reconnect" : "");
+
+    const uint32_t already_reported =
+        c.disconnect_reported_generation.exchange(event_generation);
+    if (already_reported != event_generation) {
+      f.kind = 2;
+      if (xQueueSend(frames, &f, 0) != pdTRUE)
+        ESP_LOGW(TAG,
+                 "Frame queue full while reporting scale %u WebSocket %s",
+                 (unsigned)(slot + 1),
+                 is_error ? "error" : "disconnect");
+    } else {
+      ESP_LOGD(TAG,
+               "Scale %u generation=%lu disconnect already queued; suppressing duplicate event",
+               (unsigned)(slot + 1), (unsigned long)event_generation);
+    }
     c.assembly = {};
   } else if (event == WEBSOCKET_EVENT_DATA) {
     auto *d = (esp_websocket_event_data_t *)data;
@@ -331,12 +380,23 @@ void disconnected(uint8_t slot) {
 
 void stop_scale_transport(uint8_t slot, bool retry) {
   auto &c = connection_for(slot);
-  c.generation.fetch_add(1);
-  if (c.ws) {
-    esp_websocket_client_stop(c.ws);
-    esp_websocket_client_destroy(c.ws);
-    c.ws = nullptr;
+  const uint32_t retired_generation = c.generation.fetch_add(1);
+  auto old_ws = c.ws;
+  c.ws = nullptr;
+
+  if (old_ws &&
+      !retire_transport_async(slot, old_ws, retired_generation)) {
+    /*
+     * Do not block the main/UI task trying to stop a wedged WebSocket. Keep
+     * the slot offline and retry later; the retirement worker queue normally
+     * has ample capacity and this path is only a safety valve.
+     */
+    c.retry_connection = retry && scale_host_const(slot)[0];
+    c.next_connection_attempt = now() + kReconnectRetryUs;
+    disconnected(slot);
+    return;
   }
+
   disconnected(slot);
   c.retry_connection = retry && scale_host_const(slot)[0];
   c.next_connection_attempt = now() + kReconnectRetryUs;
@@ -355,7 +415,7 @@ bool send_secure(uint8_t slot, const char *plain) {
   if (!c.ws || !esp_websocket_client_is_connected(c.ws))
     return false;
   int sent = esp_websocket_client_send_bin(c.ws, (char *)out, len,
-                                           pdMS_TO_TICKS(1000));
+                                           pdMS_TO_TICKS(50));
   if (sent != (int)len) {
     ESP_LOGW(TAG,
              "Scale %u encrypted WebSocket send incomplete: sent=%d expected=%u",
@@ -452,12 +512,17 @@ void connect_scale(uint8_t slot) {
            (bool)wifi_ready, scale_paired(slot), (unsigned long)generation);
 
   if (c.ws) {
-    ESP_LOGI(TAG,
-             "Stopping previous scale %u WebSocket before reconnect; invalidated generation=%lu",
-             (unsigned)(slot + 1), (unsigned long)(generation - 1));
-    esp_websocket_client_stop(c.ws);
-    esp_websocket_client_destroy(c.ws);
+    auto old_ws = c.ws;
     c.ws = nullptr;
+    ESP_LOGI(TAG,
+             "Queueing previous scale %u WebSocket for background retirement; invalidated generation=%lu",
+             (unsigned)(slot + 1), (unsigned long)(generation - 1));
+    if (!retire_transport_async(slot, old_ws, generation - 1)) {
+      c.retry_connection = true;
+      c.next_connection_attempt = now() + kReconnectRetryUs;
+      disconnected(slot);
+      return;
+    }
   }
   disconnected(slot);
 
@@ -2074,8 +2139,17 @@ extern "C" void touchscreen_app_main() {
            secondary_scale.paired, (unsigned)(active_scale_index + 1),
            settings.brightness);
   actions = xQueueCreate(4, sizeof(Action));
-  frames = xQueueCreate(8, sizeof(Frame));
-  configASSERT(actions && frames);
+  frames = xQueueCreate(16, sizeof(Frame));
+  retired_transports = xQueueCreate(8, sizeof(RetiredTransport));
+  configASSERT(actions && frames && retired_transports);
+  BaseType_t retirement_task_created = xTaskCreate(
+      transport_retirement_task,
+      "ws_retire",
+      4096,
+      nullptr,
+      4,
+      &transport_retirement_task_handle);
+  configASSERT(retirement_task_created == pdPASS);
   ESP_ERROR_CHECK(psa_crypto_init() == PSA_SUCCESS ? ESP_OK : ESP_FAIL);
   publish_scale_profiles();
   ui_start(settings);
