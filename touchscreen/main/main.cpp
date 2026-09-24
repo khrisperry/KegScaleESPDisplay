@@ -1120,6 +1120,47 @@ void action(const Action &a) {
     return;
   }
 
+  if (!strcmp(a.kind, "pairing_rearm") && o) {
+    const int requested_slot = (int)num(o, "slot");
+    const uint8_t slot = requested_slot == 1 ? 1 : 0;
+
+    if (scale_paired(slot)) {
+      ESP_LOGI(TAG,
+               "Ignoring Scale %u pairing rearm because pairing is already saved",
+               (unsigned)(slot + 1));
+    } else if (!scale_host_const(slot)[0]) {
+      ESP_LOGW(TAG,
+               "Ignoring Scale %u pairing rearm because no host is configured",
+               (unsigned)(slot + 1));
+    } else if (slot != active_scale_index) {
+      /*
+       * Never steal the UI or transport from the selected Scale. The Add
+       * touchscreen window remains open on the inactive Scale; the user can
+       * select that slot in Setup and Save & connect when ready.
+       */
+      ESP_LOGI(TAG,
+               "Scale %u pairing window is ready while Scale %u remains active; leaving active connection untouched",
+               (unsigned)(slot + 1), (unsigned)(active_scale_index + 1));
+      char message[96];
+      snprintf(message, sizeof(message),
+               "Scale %u is ready to pair. Select it in Setup and Save & connect.",
+               (unsigned)(slot + 1));
+      touchscreen_ui_message(message);
+    } else {
+      auto &c = connection_for(slot);
+      ESP_LOGI(TAG,
+               "Re-arming Scale %u pairing connection without resetting Wi-Fi or the other Scale",
+               (unsigned)(slot + 1));
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      touchscreen_ui_message("Pairing window found - connecting to scale...");
+      connect_scale(slot);
+    }
+
+    cJSON_Delete(o);
+    return;
+  }
+
   if (!strcmp(a.kind, "settings") && o) {
     const char *host = str(o, "host");
     const int requested_slot = (int)num(o, "slot");
