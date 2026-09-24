@@ -118,3 +118,29 @@ Hardware acceptance: with both saved Scales online, restart either Scale and
 verify the Touch reconnects. Force or observe a rejected/failed WebSocket
 connection and verify the affected slot retries without rebooting the Touch or
 disturbing the other Scale slot.
+
+
+## V1.3.10 nonblocking transport retirement — hardware validation pending
+
+September 24 Touch V1.3.9 hardware logs showed that the ERROR retry fix worked:
+Scale 2 disconnected, retried after ten seconds, and reauthenticated. A later
+stale-reading recovery then called `esp_websocket_client_stop()` synchronously
+from the Touch application loop while the ESP WebSocket client was already
+failing to acquire its internal lock. During that stop, Scale 1 frames accumulated
+until the shared frame queue overflowed, and UI actions such as Switch Scale were
+no longer serviced reliably.
+
+V1.3.10 moves stop/destroy to a dedicated WebSocket retirement worker. The
+affected Scale slot uses an atomic `retirement_pending` gate and will not open a
+replacement socket until the old handle has actually been destroyed, preventing
+a replacement/old-socket overlap at the Scale. ERROR and DISCONNECTED events are
+deduplicated per connection generation, heartbeat sends use a 50 ms lock timeout,
+the shared frame queue is increased to 16 entries, and the main loop processes at
+most eight Scale frames before servicing UI actions. Retirement of one Scale is
+slot-local and does not prevent the other Scale from connecting or being selected.
+
+Hardware acceptance: connect both saved Scales, disconnect/reboot either Scale,
+switch to the healthy Scale while the failed Scale is being retired, and verify
+the UI remains responsive with no frame-queue flood. The failed Scale should
+reconnect after its old transport is retired without the Scale reporting a
+simultaneous replacement socket.
