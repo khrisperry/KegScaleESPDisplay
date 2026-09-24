@@ -83,6 +83,21 @@ esp_err_t cl_keypair(cl_session_t *, char *out) { strcpy(out,"public"); return E
 esp_err_t cl_agree(cl_session_t *,const char *,const char *,const char *,char *out) { strcpy(out,"ABC123"); return ESP_OK; }
 esp_err_t cl_start(cl_session_t *, const uint8_t *,const uint8_t *,bool) { return ESP_OK; }
 esp_err_t cl_open(cl_session_t *,const uint8_t *in,size_t n,char *out) { memcpy(out,in,n);out[n]=0;return open_error; }
+
+/*
+ * main.cpp V1.3.6 calls these wrapper-free runtime hooks explicitly.
+ * Connection tests intentionally keep their original scope: UI messaging is a
+ * fake, and encrypted-frame opening is the fake cl_open() above. The separate
+ * main_architecture_guard_test.py verifies that production main.cpp is wired to
+ * the real explicit hooks.
+ */
+void touchscreen_ui_message(const char *s) { ui_message(s); }
+esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
+                                      const uint8_t *in, size_t n,
+                                      char *out) {
+  return cl_open(session, in, n, out);
+}
+
 #include "connection_functions.inc"
 
 static void reset() {
