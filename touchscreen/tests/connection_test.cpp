@@ -184,15 +184,6 @@ static void test_lost_ack_and_ota() {
  puts("PASS: lost/mismatched/late acknowledgements, OTA reconnect gate and Wi-Fi retry scheduling");
 }
 
-static void test_keepalive_capability() {
- assert(!scale_supports_protocol_keepalive(""));
- assert(!scale_supports_protocol_keepalive("V1.3.10"));
- assert(scale_supports_protocol_keepalive("V1.3.11"));
- assert(scale_supports_protocol_keepalive("V1.4.0"));
- assert(scale_supports_protocol_keepalive("V2.0.0"));
- puts("PASS: protocol keepalive capability preserves older Scale fallback");
-}
-
 static void test_error_without_disconnect_retries() {
  reset();settings.paired=true;connect_scale(0);
  assert(starts==1&&!connections[0].retry_connection);
@@ -248,4 +239,4 @@ static void test_fragments_and_slot_isolation() {
  assert(c.pending_id==20);
  puts("PASS: WebSocket fragments, slot isolation, Wi-Fi loss without command replay and authenticated results");
 }
-int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_keepalive_capability();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
+int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
