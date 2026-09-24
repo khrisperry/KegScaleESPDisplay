@@ -253,9 +253,22 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
     c.assembly = {};
   } else if (event == WEBSOCKET_EVENT_ERROR) {
     ESP_LOGW(TAG,
-             "Scale %u WebSocket transport error while connecting to %s generation=%lu",
+             "Scale %u WebSocket transport error while connecting to %s generation=%lu; scheduling reconnect",
              (unsigned)(slot + 1), c.uri,
              (unsigned long)event_generation);
+    /*
+     * esp_websocket_client_start() can return ESP_OK and later report a
+     * handshake/transport failure only through WEBSOCKET_EVENT_ERROR. Some
+     * failures do not produce a subsequent DISCONNECTED event. Route ERROR
+     * through the same main-task retry path so a rejected second connection
+     * cannot leave this Scale slot permanently stuck.
+     */
+    f.kind = 2;
+    if (xQueueSend(frames, &f, 0) != pdTRUE)
+      ESP_LOGW(TAG,
+               "Frame queue full while reporting scale %u WebSocket error",
+               (unsigned)(slot + 1));
+    c.assembly = {};
   } else if (event == WEBSOCKET_EVENT_DATA) {
     auto *d = (esp_websocket_event_data_t *)data;
     if (d->op_code != 1 && d->op_code != 2)
