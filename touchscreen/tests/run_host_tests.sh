@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Requires libmbedtls-dev, or explicit MBEDTLS_INCLUDE and MBEDTLS_LIBRARY.
+# Repository .gitattributes keeps this script LF-only for Windows + WSL checkouts.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$root/tests/ui_text_guard_test.py"
 python3 "$root/tests/ui_lifetime_guard_test.py"
