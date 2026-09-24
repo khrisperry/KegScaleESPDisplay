@@ -40,6 +40,16 @@ checks = {
     "heartbeat send cannot hold the app loop for one second":
         'esp_websocket_client_send_bin(c.ws, (char *)out, len,' in main and
         'pdMS_TO_TICKS(50)' in main,
+    "Scale reconnect never stops its WebSocket synchronously":
+        "esp_websocket_client_stop(c.ws)" not in main and
+        "esp_websocket_client_destroy(c.ws)" not in main and
+        "Queueing previous scale %u WebSocket for background retirement" in main,
+    "UI actions get service during frame bursts":
+        "processed < 8" in main and
+        "give UI/actions a turn" in main,
+    "retirement gate is set before work is queued":
+        main.find("c.retirement_pending = true;") <
+        main.find("xQueueSend(retired_transports, &retired, 0)"),
 }
 
 failed = [name for name, passed in checks.items() if not passed]
