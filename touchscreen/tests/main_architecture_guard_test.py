@@ -19,7 +19,10 @@ checks = {
         "touchscreen_apply_settings_live();" in main and
         "#define esp_restart" not in main,
     "UI message interception is explicit":
-        "touchscreen_ui_message(" in main and "#define ui_message" not in main,
+        "static void touchscreen_ui_message(const char *message);" in main and
+        "static void touchscreen_ui_message(const char *message) {" in main and
+        "touchscreen_touchscreen_ui_message" not in main and
+        "#define ui_message" not in main,
     "pairing key cleanup is explicit":
         "touchscreen_pairing_memset(scale_master(slot), 0, 32);" in main and
         "#define memset" not in main,
