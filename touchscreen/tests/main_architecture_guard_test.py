@@ -76,9 +76,9 @@ checks = {
         '"controller_setup_client.cpp"' in cmake and
         '#include "controller_setup_client.h"' in main and
         '#include "controller_setup_client.h"' in pairing_guard and
-        '"/api/controller"' not in main and
-        '"/api/controller"' not in pairing_guard and
-        '"/api/controller"' in setup_client and
+        '/api/controller' not in main and
+        '/api/controller' not in pairing_guard and
+        setup_client.count('/api/controller') == 2 and
         'controller_setup_get(host, 2000, &response)' in main and
         'controller_setup_remove(host, 3000, &status)' in main and
         'controller_setup_get(host, 1500, &response)' in pairing_guard and
