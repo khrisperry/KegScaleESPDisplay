@@ -7,6 +7,8 @@ main = (root / "main" / "main.cpp").read_text(encoding="utf-8")
 transport = (root / "main" / "connection_transport.cpp").read_text(encoding="utf-8")
 transport_header = (root / "main" / "connection_transport.h").read_text(encoding="utf-8")
 discovery = (root / "main" / "setup_discovery.cpp").read_text(encoding="utf-8")
+setup_client = (root / "main" / "controller_setup_client.cpp").read_text(encoding="utf-8")
+pairing_guard = (root / "main" / "pairing_guard.cpp").read_text(encoding="utf-8")
 cmake = (root / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
 defaults = (root / "sdkconfig.defaults").read_text(encoding="utf-8")
 wrapper = root / "main" / "main_wrapper.cpp"
@@ -70,6 +72,17 @@ checks = {
         "Queueing previous scale %u WebSocket for background retirement" in main and
         "esp_websocket_client_stop(retired.handle)" in transport and
         "esp_websocket_client_destroy(retired.handle)" in transport,
+    "Controller setup HTTP is centralized":
+        '"controller_setup_client.cpp"' in cmake and
+        '#include "controller_setup_client.h"' in main and
+        '#include "controller_setup_client.h"' in pairing_guard and
+        '"/api/controller"' not in main and
+        '"/api/controller"' not in pairing_guard and
+        '"/api/controller"' in setup_client and
+        'controller_setup_get(host, 2000, &response)' in main and
+        'controller_setup_remove(host, 3000, &status)' in main and
+        'controller_setup_get(host, 1500, &response)' in pairing_guard and
+        'controller_setup_remove(host, 2000, &http_status)' in pairing_guard,
     "Setup discovery never blocks the application task":
         '"setup_discovery.cpp"' in cmake and
         '#include "setup_discovery.h"' in main and

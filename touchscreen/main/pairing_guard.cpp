@@ -1,6 +1,5 @@
 #include "app.h"
-#include "cJSON.h"
-#include "esp_http_client.h"
+#include "controller_setup_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -87,80 +86,27 @@ bool read_remote_status(const char *host, RemoteControllerStatus *status) {
   if (!host || !host[0] || !status)
     return false;
 
-  char url[192];
-  char body[256] = {};
-  snprintf(url, sizeof(url), "http://%s/api/controller", host);
-
-  esp_http_client_config_t cfg = {};
-  cfg.url = url;
-  cfg.timeout_ms = 1500;
-  esp_http_client_handle_t client = esp_http_client_init(&cfg);
-  if (!client)
+  ControllerSetupResponse response{};
+  const esp_err_t e = controller_setup_get(host, 1500, &response);
+  if (e != ESP_OK || response.http_status != 200 ||
+      response.bytes_received <= 0 || !response.json_valid ||
+      !response.has_paired || !response.has_seconds)
     return false;
 
-  esp_err_t e = esp_http_client_open(client, 0);
-  int http_status = 0;
-  int received = -1;
-  if (e == ESP_OK) {
-    const int64_t headers = esp_http_client_fetch_headers(client);
-    if (headers >= 0) {
-      http_status = esp_http_client_get_status_code(client);
-      received =
-          esp_http_client_read_response(client, body, sizeof(body) - 1);
-    }
-  }
-  esp_http_client_close(client);
-  esp_http_client_cleanup(client);
-
-  if (e != ESP_OK || http_status != 200 || received <= 0)
-    return false;
-
-  cJSON *json = cJSON_Parse(body);
-  cJSON *paired =
-      json ? cJSON_GetObjectItemCaseSensitive(json, "paired") : nullptr;
-  cJSON *connected =
-      json ? cJSON_GetObjectItemCaseSensitive(json, "connected") : nullptr;
-  cJSON *pending =
-      json ? cJSON_GetObjectItemCaseSensitive(json, "pending") : nullptr;
-  cJSON *seconds =
-      json ? cJSON_GetObjectItemCaseSensitive(json, "seconds") : nullptr;
-
-  const bool valid = cJSON_IsBool(paired) && cJSON_IsNumber(seconds);
-  if (valid) {
-    status->paired = cJSON_IsTrue(paired);
-    status->connected = cJSON_IsTrue(connected);
-    status->pending = cJSON_IsTrue(pending);
-    status->seconds = seconds->valuedouble;
-  }
-  cJSON_Delete(json);
-  return valid;
+  status->paired = response.paired;
+  status->connected = response.connected;
+  status->pending = response.pending;
+  status->seconds = response.seconds;
+  return true;
 }
 
 bool remove_remote_pairing(const char *host) {
   if (!host || !host[0])
     return false;
 
-  char url[192];
-  snprintf(url, sizeof(url), "http://%s/api/controller", host);
-  static const char body[] = "{\"action\":\"remove\"}";
-
-  esp_http_client_config_t cfg = {};
-  cfg.url = url;
-  cfg.timeout_ms = 2000;
-  esp_http_client_handle_t client = esp_http_client_init(&cfg);
-  if (!client)
-    return false;
-
-  esp_http_client_set_method(client, HTTP_METHOD_POST);
-  esp_http_client_set_header(client, "Content-Type", "application/json");
-  esp_http_client_set_header(client, "X-Controller-Setup", "1");
-  esp_http_client_set_post_field(client, body, strlen(body));
-
-  const esp_err_t e = esp_http_client_perform(client);
-  const int http_status =
-      e == ESP_OK ? esp_http_client_get_status_code(client) : 0;
-  esp_http_client_cleanup(client);
-
+  int http_status = 0;
+  const esp_err_t e =
+      controller_setup_remove(host, 2000, &http_status);
   ESP_LOGI(TAG, "Cleanup POST host='%s' result=%s status=%d", host,
            esp_err_to_name(e), http_status);
   return e == ESP_OK && http_status == 200;
