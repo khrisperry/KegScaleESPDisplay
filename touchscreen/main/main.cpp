@@ -459,10 +459,12 @@ void on_frame(const Frame &f) {
       return;
     }
 
-    ESP_LOGI(TAG, scale_paired(slot)
-                     ? "Sending hello for saved scale %u pairing"
-                     : "Sending hello for new scale %u pairing",
-             (unsigned)(slot + 1));
+    if (scale_paired(slot))
+      ESP_LOGI(TAG, "Sending hello for saved scale %u pairing",
+               (unsigned)(slot + 1));
+    else
+      ESP_LOGI(TAG, "Sending hello for new scale %u pairing",
+               (unsigned)(slot + 1));
     int sent = esp_websocket_client_send_text(
         c.ws, hello, strlen(hello), pdMS_TO_TICKS(1000));
     if (sent != (int)strlen(hello))
