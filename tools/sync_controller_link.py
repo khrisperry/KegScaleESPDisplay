@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the canonical controller_link consistency check from the companion Scale checkout."""
+"""Synchronize the Touch controller_link mirror from the companion Scale checkout."""
 import argparse
 import os
 from pathlib import Path
@@ -22,7 +22,7 @@ def main():
     syncer = scale / "tools/sync_controller_link.py"
     if not syncer.is_file():
         print(
-            f"FAIL: Scale controller_link tool missing: {syncer}\n"
+            f"FAIL: Scale controller_link sync tool missing: {syncer}\n"
             "Provide the companion Scale checkout with --scale-root or "
             "KEGSCALE_SCALE_ROOT.",
             file=sys.stderr,
@@ -32,7 +32,7 @@ def main():
         [
             sys.executable,
             str(syncer),
-            "--check",
+            "--write",
             "--scale-root",
             str(scale),
             "--display-root",
