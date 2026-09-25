@@ -81,8 +81,8 @@ void *esp_websocket_client_init(const esp_websocket_client_config_t *c) {
 void esp_websocket_register_events(void *, int, void (*)(void *,int,int,void *), void *arg) { registered_token=arg; }
 esp_err_t esp_websocket_client_start(void *) { ++starts; return start_error; }
 int esp_websocket_client_send_text(void *, const char *s, size_t len, int) { last_hello=s; return len; }
+int esp_websocket_client_send_bin(void *, const char *, size_t len, int) { return len; }
 bool scale_accepting_connection(uint8_t) { ++probes; return probe_ok; }
-bool send_secure(uint8_t, const char *) { return true; }
 int xQueueSend(int, const Frame *f, int) { queued.push_back(*f); return pdTRUE; }
 void esp_fill_random(void *p, size_t n) { memset(p, 1, n); }
 size_t heap_caps_get_free_size(int) { return 100000; }
@@ -93,6 +93,9 @@ bool cl_unhex(const char *, uint8_t *out, size_t n) { memset(out,1,n); return tr
 esp_err_t cl_keypair(cl_session_t *, char *out) { strcpy(out,"public"); return ESP_OK; }
 esp_err_t cl_agree(cl_session_t *,const char *,const char *,const char *,char *out) { strcpy(out,"ABC123"); return ESP_OK; }
 esp_err_t cl_start(cl_session_t *, const uint8_t *,const uint8_t *,bool) { return ESP_OK; }
+esp_err_t cl_seal(cl_session_t *s,const char *plain,uint8_t *out,size_t *len) {
+ *len=strlen(plain);memcpy(out,plain,*len);++s->tx_seq;return ESP_OK;
+}
 esp_err_t cl_open(cl_session_t *,const uint8_t *in,size_t n,char *out) { memcpy(out,in,n);out[n]=0;return open_error; }
 
 /*

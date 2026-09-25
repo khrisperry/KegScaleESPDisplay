@@ -8,6 +8,7 @@ transport = (root / "main" / "connection_transport.cpp").read_text(encoding="utf
 transport_header = (root / "main" / "connection_transport.h").read_text(encoding="utf-8")
 discovery = (root / "main" / "setup_discovery.cpp").read_text(encoding="utf-8")
 setup_client = (root / "main" / "controller_setup_client.cpp").read_text(encoding="utf-8")
+session = (root / "main" / "connection_session.cpp").read_text(encoding="utf-8")
 pairing_guard = (root / "main" / "pairing_guard.cpp").read_text(encoding="utf-8")
 cmake = (root / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
 defaults = (root / "sdkconfig.defaults").read_text(encoding="utf-8")
@@ -72,6 +73,23 @@ checks = {
         "Queueing previous scale %u WebSocket for background retirement" in main and
         "esp_websocket_client_stop(retired.handle)" in transport and
         "esp_websocket_client_destroy(retired.handle)" in transport,
+    "Session crypto and handshake are isolated":
+        '"connection_session.cpp"' in cmake and
+        '#include "connection_session.h"' in main and
+        'cl_seal(' not in main and
+        'cl_keypair(' not in main and
+        'cl_agree(' not in main and
+        'cl_start(' not in main and
+        'esp_fill_random(' not in main and
+        'connection_session_reset(slot)' in main and
+        'connection_session_send_secure(slot, plain, now())' in main and
+        'connection_session_prepare_hello(' in main and
+        'connection_session_accept_handshake(' in main and
+        'cl_seal(' in session and
+        'cl_keypair(' in session and
+        'cl_agree(' in session and
+        'cl_start(' in session and
+        'esp_fill_random(' in session,
     "Controller setup HTTP is centralized":
         '"controller_setup_client.cpp"' in cmake and
         '#include "controller_setup_client.h"' in main and

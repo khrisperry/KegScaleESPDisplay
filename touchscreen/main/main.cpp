@@ -3,6 +3,7 @@
 #include "cJSON.h"
 #include "controller_link.h"
 #include "connection_transport.h"
+#include "connection_session.h"
 #include "controller_setup_client.h"
 #include "setup_discovery.h"
 #include "esp_app_desc.h"
@@ -177,19 +178,13 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
 
 void disconnected(uint8_t slot) {
   auto &c = connection_for(slot);
-  const bool was_authenticated = c.authenticated;
-  const bool was_online = c.state.online;
-  c.authenticated = false;
-  c.traffic_ready = false;
-  c.state.online = false;
-  c.last_state = 0;
-  cl_clear(&c.link);
+  const SessionResetSnapshot reset = connection_session_reset(slot);
   if (slot == active_scale_index)
     ui_state(c.state);
-  if (was_authenticated || was_online)
+  if (reset.was_authenticated || reset.was_online)
     ESP_LOGI(TAG,
              "Scale %u session reset: authenticated=%d online=%d",
-             (unsigned)(slot + 1), was_authenticated, was_online);
+             (unsigned)(slot + 1), reset.was_authenticated, reset.was_online);
   if (c.pending_id) {
     ESP_LOGW(TAG,
              "Connection lost with scale %u command id=%lu op='%s' pending",
@@ -228,37 +223,7 @@ void stop_scale_transport(uint8_t slot, bool retry) {
 }
 
 bool send_secure(uint8_t slot, const char *plain) {
-  auto &c = connection_for(slot);
-  uint8_t out[CL_MAX_FRAME];
-  size_t len = 0;
-
-  /*
-   * cl_seal() advances tx_seq. Stage that advancement in a copy and only
-   * commit it after the complete WebSocket frame is accepted for transport.
-   * A mutex/transport failure must never consume an encrypted sequence number.
-   */
-  cl_session_t staged = c.link;
-  esp_err_t e = cl_seal(&staged, plain, out, &len);
-  if (e != ESP_OK) {
-    ESP_LOGW(TAG, "Could not encrypt scale %u WebSocket message: %s",
-             (unsigned)(slot + 1), esp_err_to_name(e));
-    return false;
-  }
-  if (!c.ws || !esp_websocket_client_is_connected(c.ws))
-    return false;
-  int sent = esp_websocket_client_send_bin(c.ws, (char *)out, len,
-                                           pdMS_TO_TICKS(1000));
-  if (sent != (int)len) {
-    ESP_LOGW(TAG,
-             "Scale %u encrypted WebSocket send incomplete: sent=%d expected=%u",
-             (unsigned)(slot + 1), sent, (unsigned)len);
-    c.traffic_ready = false;
-    c.retry_connection = true;
-    c.next_connection_attempt = now();
-    return false;
-  }
-  c.link.tx_seq = staged.tx_seq;
-  return true;
+  return connection_session_send_secure(slot, plain, now());
 }
 
 bool scale_accepting_connection(uint8_t slot) {
@@ -481,31 +446,23 @@ void on_frame(const Frame &f) {
              "Scale %u WebSocket connected; beginning protocol-1 handshake",
              (unsigned)(slot + 1));
     disconnected(slot);
-    char hello[320], nonce_hex[65];
-    esp_fill_random(c.client_nonce, 32);
-    cl_hex(c.client_nonce, 32, nonce_hex);
-    if (scale_paired(slot)) {
-      memcpy(c.link.master, scale_master(slot), 32);
-      snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"firmware\":\"%s\",\"nonce\":\"%s\"}",
-               esp_app_get_description()->version, nonce_hex);
-      ESP_LOGI(TAG, "Sending hello for saved scale %u pairing",
-               (unsigned)(slot + 1));
-    } else {
-      esp_err_t e = cl_keypair(&c.link, c.own_public);
-      if (e != ESP_OK) {
-        ESP_LOGE(TAG, "Scale %u pairing key initialization failed: %s",
-                 (unsigned)(slot + 1), esp_err_to_name(e));
-        if (slot == active_scale_index)
-          touchscreen_ui_message("Pairing initialization failed");
-        return;
-      }
-      snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"firmware\":\"%s\",\"public\":\"%s\",\"nonce\":\"%s\"}",
-               esp_app_get_description()->version, c.own_public, nonce_hex);
-      ESP_LOGI(TAG, "Sending hello for new scale %u pairing",
-               (unsigned)(slot + 1));
+
+    char hello[320] = {};
+    esp_err_t e = connection_session_prepare_hello(
+        slot, scale_paired(slot), scale_master(slot),
+        esp_app_get_description()->version, hello, sizeof(hello));
+    if (e != ESP_OK) {
+      ESP_LOGE(TAG, "Scale %u pairing key initialization failed: %s",
+               (unsigned)(slot + 1), esp_err_to_name(e));
+      if (slot == active_scale_index)
+        touchscreen_ui_message("Pairing initialization failed");
+      return;
     }
+
+    ESP_LOGI(TAG, scale_paired(slot)
+                     ? "Sending hello for saved scale %u pairing"
+                     : "Sending hello for new scale %u pairing",
+             (unsigned)(slot + 1));
     int sent = esp_websocket_client_send_text(
         c.ws, hello, strlen(hello), pdMS_TO_TICKS(1000));
     if (sent != (int)strlen(hello))
@@ -548,9 +505,7 @@ void on_frame(const Frame &f) {
       (!strcmp(type, "pair") || !strcmp(type, "challenge"))) {
     ESP_LOGI(TAG, "Scale %u handshake message type='%s'",
              (unsigned)(slot + 1), type);
-    uint8_t challenge[32];
-    if (num(o, "protocol") != 1 ||
-        !cl_unhex(str(o, "challenge"), challenge, 32)) {
+    if (num(o, "protocol") != 1) {
       ESP_LOGW(TAG, "Scale %u handshake validation failed: protocol=%.0f",
                (unsigned)(slot + 1), num(o, "protocol"));
       cJSON_Delete(o);
@@ -558,43 +513,32 @@ void on_frame(const Frame &f) {
     }
 
     const bool pairing = !strcmp(type, "pair");
-    esp_err_t e = ESP_OK;
-    if (pairing) {
-      char code[13];
-      e = cl_agree(&c.link, str(o, "public"), str(o, "public"),
-                   c.own_public, code);
-      if (e == ESP_OK && slot == active_scale_index) {
-        ESP_LOGI(TAG,
-                 "Scale %u key agreement succeeded; displaying approval code",
-                 (unsigned)(slot + 1));
-        // New Scales include the actual remaining window. For older Scales,
-        // retain the deadline obtained by the setup probe instead of starting
-        // an unrelated timer when the code arrives.
-        const cJSON *seconds_field = cJSON_GetObjectItemCaseSensitive(o, "seconds");
-        const int64_t remaining = c.pairing_deadline_us - now();
-        const uint32_t seconds = cJSON_IsNumber(seconds_field)
-            ? (uint32_t)std::max(0.0, std::min(300.0, num(o, "seconds")))
-            : (remaining > 0 ? (uint32_t)((remaining + 999999) / 1000000) : 0);
-        touchscreen_pairing_window(seconds);
-        ui_pair_code(code);
-      }
-    } else if (!scale_paired(slot)) {
-      ESP_LOGW(TAG,
-               "Scale %u sent saved-pairing challenge but display has no saved pairing",
+    const cJSON *seconds_field =
+        cJSON_GetObjectItemCaseSensitive(o, "seconds");
+    SessionHandshakeResult handshake{};
+    esp_err_t e = connection_session_accept_handshake(
+        slot, scale_paired(slot), pairing, str(o, "challenge"),
+        str(o, "public"), now(), cJSON_IsNumber(seconds_field),
+        num(o, "seconds"), &handshake);
+
+    if (e == ESP_OK && handshake.pairing && slot == active_scale_index) {
+      ESP_LOGI(TAG,
+               "Scale %u key agreement succeeded; displaying approval code",
                (unsigned)(slot + 1));
-      e = ESP_FAIL;
+      touchscreen_pairing_window(handshake.approval_seconds);
+      ui_pair_code(handshake.approval_code);
     }
 
-    if (e == ESP_OK) {
-      e = cl_start(&c.link, challenge, c.client_nonce, false);
-      c.traffic_ready = e == ESP_OK;
-      ESP_LOGI(TAG, "Scale %u traffic-key setup returned %s",
-               (unsigned)(slot + 1), esp_err_to_name(e));
-    }
-    if (e == ESP_OK && !pairing) {
+    if (e == ESP_OK && handshake.send_auth) {
       if (!send_secure(slot, "{\"type\":\"auth\"}"))
         ESP_LOGW(TAG, "Failed sending encrypted scale %u auth proof",
                  (unsigned)(slot + 1));
+    }
+
+    if (e == ESP_ERR_INVALID_STATE && !scale_paired(slot)) {
+      ESP_LOGW(TAG,
+               "Scale %u sent saved-pairing challenge but display has no saved pairing",
+               (unsigned)(slot + 1));
     }
     if (e != ESP_OK && slot == active_scale_index)
       touchscreen_ui_message("Pairing failed. Reopen pairing on the scale.");
