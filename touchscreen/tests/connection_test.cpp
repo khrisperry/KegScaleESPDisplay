@@ -187,6 +187,33 @@ static void test_lost_ack_and_ota() {
  puts("PASS: lost/mismatched/late acknowledgements, OTA reconnect gate and Wi-Fi retry scheduling");
 }
 
+static void test_calibration_session_results() {
+ reset();settings.paired=true;auto &c=connections[0];
+ c.authenticated=c.traffic_ready=c.state.online=true;
+
+ c.pending_id=31;strcpy(c.pending_op,"begin_calibration");
+ on_frame(frame(0,4,"{\"type\":\"result\",\"id\":31,\"ok\":true,\"calibration_session_id\":77}"));
+ assert(c.pending_id==0&&c.calibration_session_id==77&&results==1);
+
+ c.pending_id=32;strcpy(c.pending_op,"tare");
+ on_frame(frame(0,4,"{\"type\":\"result\",\"id\":32,\"ok\":true}"));
+ assert(c.pending_id==0&&c.calibration_session_id==77&&results==2);
+
+ c.pending_id=33;strcpy(c.pending_op,"calibrate");
+ on_frame(frame(0,4,"{\"type\":\"result\",\"id\":33,\"ok\":true}"));
+ assert(c.pending_id==0&&c.calibration_session_id==0&&results==3);
+
+ c.pending_id=34;strcpy(c.pending_op,"begin_calibration");
+ on_frame(frame(0,4,"{\"type\":\"result\",\"id\":34,\"ok\":true}"));
+ assert(c.pending_id==0&&c.calibration_session_id==0&&results==4);
+ assert(result_error.find("valid calibration session")!=std::string::npos);
+
+ c.calibration_session_id=88;
+ on_frame(frame(0,2));
+ assert(c.calibration_session_id==0);
+ puts("PASS: Touch stores, preserves, completes and clears Scale calibration session IDs");
+}
+
 static void test_error_without_disconnect_retries() {
  reset();settings.paired=true;connect_scale(0);
  assert(starts==1&&!connections[0].retry_connection);
@@ -242,4 +269,4 @@ static void test_fragments_and_slot_isolation() {
  assert(c.pending_id==20);
  puts("PASS: WebSocket fragments, slot isolation, Wi-Fi loss without command replay and authenticated results");
 }
-int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
+int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_calibration_session_results();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
