@@ -6,6 +6,7 @@ root = Path(__file__).resolve().parents[1]
 main = (root / "main" / "main.cpp").read_text(encoding="utf-8")
 transport = (root / "main" / "connection_transport.cpp").read_text(encoding="utf-8")
 transport_header = (root / "main" / "connection_transport.h").read_text(encoding="utf-8")
+discovery = (root / "main" / "setup_discovery.cpp").read_text(encoding="utf-8")
 cmake = (root / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
 defaults = (root / "sdkconfig.defaults").read_text(encoding="utf-8")
 wrapper = root / "main" / "main_wrapper.cpp"
@@ -69,6 +70,14 @@ checks = {
         "Queueing previous scale %u WebSocket for background retirement" in main and
         "esp_websocket_client_stop(retired.handle)" in transport and
         "esp_websocket_client_destroy(retired.handle)" in transport,
+    "Setup discovery never blocks the application task":
+        '"setup_discovery.cpp"' in cmake and
+        '#include "setup_discovery.h"' in main and
+        'setup_discovery_start_wifi_scan(a.ui_generation)' in main and
+        'setup_discovery_start_scale_scan(a.ui_generation)' in main and
+        'xTaskCreate(task, task_name' in discovery and
+        'esp_wifi_scan_start(&scan, true)' in discovery and
+        'mdns_query_ptr("_kegscale", "_tcp", 3000, 8, &found)' in discovery,
     "UI actions get service during frame bursts":
         "processed < 8" in main and
         "give UI/actions a turn" in main,

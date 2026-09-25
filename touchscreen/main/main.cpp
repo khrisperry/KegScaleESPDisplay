@@ -3,6 +3,7 @@
 #include "cJSON.h"
 #include "controller_link.h"
 #include "connection_transport.h"
+#include "setup_discovery.h"
 #include "esp_app_desc.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -699,56 +700,6 @@ void on_frame(const Frame &f) {
   cJSON_Delete(o);
 }
 
-unsigned build_scale_discovery_options(mdns_result_t *found, char *options,
-                                       size_t options_size) {
-  if (!options || options_size == 0)
-    return 0;
-  options[0] = 0;
-  const char *manual = "Manual IP / hostname...";
-  const size_t manual_reserve = strlen(manual) + 2;
-  unsigned count = 0;
-
-  for (auto p = found; p; p = p->next) {
-    if (!p->hostname || !p->hostname[0])
-      continue;
-    char host[140];
-    snprintf(host, sizeof(host), "%s.local", p->hostname);
-    bool duplicate = false;
-    const char *scan = options;
-    const size_t host_len = strlen(host);
-    while (*scan) {
-      const char *line_end = strchr(scan, '\n');
-      const size_t line_len =
-          line_end ? (size_t)(line_end - scan) : strlen(scan);
-      if (line_len == host_len && !strncmp(scan, host, host_len)) {
-        duplicate = true;
-        break;
-      }
-      if (!line_end)
-        break;
-      scan = line_end + 1;
-    }
-    if (duplicate)
-      continue;
-
-    const size_t used = strlen(options);
-    const size_t append_len = host_len + (used ? 1 : 0);
-    if (used + append_len + manual_reserve >= options_size)
-      break;
-    if (used)
-      strcat(options, "\n");
-    strcat(options, host);
-    ++count;
-    ESP_LOGI(TAG, "mDNS scale candidate: hostname='%s' port=%u",
-             p->hostname, p->port);
-  }
-
-  if (options[0])
-    strcat(options, "\n");
-  strcat(options, manual);
-  return count;
-}
-
 void normalize_host(const char *host, char *buffer, size_t size) {
   if (!buffer || size == 0)
     return;
@@ -1170,56 +1121,13 @@ void action(const Action &a) {
   } else if (!strcmp(a.kind, "discover_qr")) {
     discover_unpaired_scale_qr(active_scale_index);
   } else if (!strcmp(a.kind, "scan_wifi")) {
-    ESP_LOGI(TAG, "Starting Wi-Fi network scan");
-    wifi_scan_config_t scan = {};
-    esp_err_t scan_err = esp_wifi_scan_start(&scan, true);
-    if (scan_err == ESP_OK) {
-      wifi_ap_record_t aps[20];
-      uint16_t count = 20;
-      esp_wifi_scan_get_ap_records(&count, aps);
-      ESP_LOGI(TAG, "Wi-Fi scan completed: %u access points returned", count);
-      char options[700] = "";
-      for (unsigned i = 0; i < count; ++i) {
-        const char *ssid = (char *)aps[i].ssid;
-        if (!ssid[0] || strchr(ssid, '\n'))
-          continue;
-        if (options[0])
-          strcat(options, "\n");
-        strncat(options, ssid, 32);
-      }
-      ui_networks(options[0] ? options : "No networks found",
-                  a.ui_generation);
-      ui_message_for_generation("Choose your Wi-Fi network", a.ui_generation);
-    } else {
-      ESP_LOGW(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(scan_err));
+    if (!setup_discovery_start_wifi_scan(a.ui_generation))
       ui_message_for_generation(
-          "Wi-Fi scan failed. Enter the SSID manually.", a.ui_generation);
-    }
+          "Wi-Fi scan is already running. Please wait.", a.ui_generation);
   } else if (!strcmp(a.kind, "discover")) {
-    ESP_LOGI(TAG, "Starting mDNS discovery for _kegscale._tcp");
-    mdns_result_t *found = nullptr;
-    esp_err_t e = mdns_query_ptr("_kegscale", "_tcp", 3000, 8, &found);
-    char options[800];
-    const unsigned count =
-        e == ESP_OK ? build_scale_discovery_options(found, options,
-                                                    sizeof(options))
-                    : 0;
-    if (e != ESP_OK)
-      snprintf(options, sizeof(options), "Manual IP / hostname...");
-    ESP_LOGI(TAG, "mDNS discovery completed: result=%s candidates=%u",
-             esp_err_to_name(e), count);
-    ui_discovered_options_for_generation(options, a.ui_generation);
-    if (count > 1)
+    if (!setup_discovery_start_scale_scan(a.ui_generation))
       ui_message_for_generation(
-          "Several scales found. Choose one from the list.", a.ui_generation);
-    else if (count == 1)
-      ui_message_for_generation(
-          "Scale found. Choose it or use Manual IP entry.", a.ui_generation);
-    else
-      ui_message_for_generation(
-          "No scale found. Choose Manual IP / hostname.", a.ui_generation);
-    if (found)
-      mdns_query_results_free(found);
+          "Scale discovery is already running. Please wait.", a.ui_generation);
   } else if (!strcmp(a.kind, "forget")) {
     const int requested_slot = o ? (int)num(o, "slot") : active_scale_index;
     const uint8_t slot = requested_slot == 1 ? 1 : 0;
@@ -1542,7 +1450,7 @@ void auto_discovery_task(void *) {
   char options[800];
   const unsigned count =
       e == ESP_OK
-          ? build_scale_discovery_options(found, options, sizeof(options))
+          ? setup_discovery_build_scale_options(found, options, sizeof(options))
           : 0;
   if (e != ESP_OK)
     snprintf(options, sizeof(options), "Manual IP / hostname...");
