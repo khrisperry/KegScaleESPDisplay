@@ -543,6 +543,7 @@ void ui_update_status(const char *current_version, const char *latest_version,
   ota_view = feed_stale ? OtaView::Stale
                         : (update_available ? OtaView::Available
                                             : OtaView::Current);
+  touchscreen_home_set_update_available(update_available && !feed_stale);
   if (page_id == 4 && !ota_overlay)
     render_update_page();
   bsp_display_unlock();

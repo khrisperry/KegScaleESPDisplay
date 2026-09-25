@@ -43,10 +43,12 @@ lv_obj_t *scale_manual_host = nullptr;
 lv_obj_t *capacity_dropdown = nullptr;
 lv_obj_t *home_nav_button = nullptr;
 lv_obj_t *menu_handle_button = nullptr;
+lv_obj_t *menu_update_badge = nullptr;
 lv_obj_t *menu_scrim = nullptr;
 lv_obj_t *menu_panel = nullptr;
 lv_obj_t *qr_fullscreen = nullptr;
 lv_obj_t *connection_badge = nullptr;
+bool touchscreen_update_available_ui = false;
 // TOUCH_DRAWER_V1
 // TOUCH_SHELL_POLISH_V3
 // TOUCH_LAYOUT_POLISH_V4
@@ -324,6 +326,17 @@ void show_qr_fullscreen(lv_event_t *) {
   lv_obj_move_foreground(qr_fullscreen);
 }
 
+void refresh_menu_update_indicator() {
+  if (!menu_update_badge)
+    return;
+  if (touchscreen_update_available_ui) {
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(menu_update_badge);
+  } else {
+    lv_obj_add_flag(menu_update_badge, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 void close_scale_menu(lv_event_t *) {
   touchscreen_home_set_menu_open(false);
   if (connection_badge)
@@ -409,7 +422,14 @@ void populate_scale_menu() {
   drawer_button("Keg", first_y + gap * 0, 1);
   drawer_button("Scale", first_y + gap * 1, 2);
   drawer_button("Setup", first_y + gap * 2, 3);
-  drawer_button("Update / Diagnostics", first_y + gap * 3, 4);
+  lv_obj_t *update_button =
+      drawer_button(touchscreen_update_available_ui ? "Update Available"
+                                                    : "Update / Diagnostics",
+                    first_y + gap * 3, 4);
+  if (touchscreen_update_available_ui) {
+    lv_obj_set_style_border_color(update_button, lv_color_hex(0xffb347), 0);
+    lv_obj_set_style_border_width(update_button, 2, 0);
+  }
 }
 
 void open_scale_menu(lv_event_t *) {
@@ -482,10 +502,31 @@ void ensure_scale_menu(lv_obj_t *root) {
       lv_obj_set_style_radius(bar, 1, 0);
     }
 
+    // Reuse the OTA result already maintained by touchscreen_ota.cpp. The
+    // badge is purely an attention cue; tapping the hamburger still opens the
+    // normal drawer, where Update Available leads to the firmware page.
+    menu_update_badge = lv_obj_create(menu_handle_button);
+    lv_obj_set_size(menu_update_badge, 16, 16);
+    lv_obj_align(menu_update_badge, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(menu_update_badge, lv_color_hex(0xffb347), 0);
+    lv_obj_set_style_bg_opa(menu_update_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(menu_update_badge, 0, 0);
+    lv_obj_set_style_radius(menu_update_badge, 8, 0);
+    lv_obj_set_style_pad_all(menu_update_badge, 0, 0);
+    lv_obj_t *update_mark = lv_label_create(menu_update_badge);
+    lv_label_set_text(update_mark, "!");
+    lv_obj_set_style_text_font(update_mark, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(update_mark, lv_color_hex(BG), 0);
+    lv_obj_center(update_mark);
+    refresh_menu_update_indicator();
+
     lv_obj_add_event_cb(menu_handle_button, open_scale_menu, LV_EVENT_CLICKED,
                         nullptr);
   }
 
+  refresh_menu_update_indicator();
   lv_obj_move_foreground(menu_handle_button);
 }
 
@@ -1148,6 +1189,11 @@ void build(int page) {
   }
 }
 } // namespace
+
+void touchscreen_home_set_update_available(bool available) {
+  touchscreen_update_available_ui = available;
+  refresh_menu_update_indicator();
+}
 
 // Called from the pairing timeout overlay while already in LVGL UI context.
 // Clear the legacy pairing state and redraw Setup underneath the overlay.

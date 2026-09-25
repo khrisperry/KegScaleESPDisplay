@@ -74,6 +74,10 @@ void ui_update_progress(int percent);
 void ui_update_complete(const char *version);
 void ui_update_error(const char *message, bool installing);
 
+// Called while the LVGL display lock is held. Shows or hides the normal-screen
+// firmware-update attention indicator on the hamburger menu.
+void touchscreen_home_set_update_available(bool available);
+
 esp_err_t touchscreen_ota(bool install);
 void touchscreen_ota_get_preferences(OtaPreferences *preferences);
 esp_err_t touchscreen_ota_save_preferences(const char *channel,
