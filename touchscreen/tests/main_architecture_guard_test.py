@@ -14,6 +14,10 @@ checks = {
         "main_wrapper.cpp" not in cmake,
     "main source-inclusion wrapper removed":
         not wrapper.exists(),
+    "UI source-inclusion wrapper removed":
+        not (root / "main" / "ui_wrapper.cpp").exists() and
+        '"ui.cpp" "ui_text.cpp"' in cmake and
+        '#include "ui.cpp"' not in (root / "main" / "ui.cpp").read_text(encoding="utf-8"),
     "application entrypoint is explicit":
         'extern "C" void touchscreen_app_main()' in main,
     "settings apply is explicit":
