@@ -24,6 +24,7 @@ SessionResetSnapshot connection_session_reset(uint8_t slot) {
   c.traffic_ready = false;
   c.state.online = false;
   c.last_state = 0;
+  c.calibration_session_id = 0;
   cl_clear(&c.link);
   return result;
 }
