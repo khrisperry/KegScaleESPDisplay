@@ -4,6 +4,8 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 main = (root / "main" / "main.cpp").read_text(encoding="utf-8")
+transport = (root / "main" / "connection_transport.cpp").read_text(encoding="utf-8")
+transport_header = (root / "main" / "connection_transport.h").read_text(encoding="utf-8")
 cmake = (root / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
 defaults = (root / "sdkconfig.defaults").read_text(encoding="utf-8")
 wrapper = root / "main" / "main_wrapper.cpp"
@@ -36,12 +38,20 @@ checks = {
         "#define cl_open" not in main,
     "legacy OTA action uses scheduler":
         "touchscreen_ota_request(false, true)" in main,
-    "WebSocket teardown is isolated from the main task":
-        'void transport_retirement_task(void *)' in main and
-        'retire_transport_async' in main and
-        'retirement_pending' in main and
-        'xQueueCreate(8, sizeof(RetiredTransport))' in main and
-        'frames = xQueueCreate(8, sizeof(Frame));' in main,
+    "WebSocket transport is isolated from application policy":
+        '"connection_transport.cpp"' in cmake and
+        '#include "connection_transport.h"' in main and
+        'struct ScaleConnection' not in main and
+        'struct Frame' not in main and
+        'void socket_event(' not in main and
+        'void transport_retirement_task(void *)' in transport and
+        'retire_transport_async' in transport and
+        'xQueueCreate(8, sizeof(RetiredTransport))' in transport and
+        'frames = xQueueCreate(8, sizeof(Frame));' in transport and
+        'connection_transport_init();' in main and
+        'connection_receive_frame(&f, 0)' in main and
+        'struct ScaleConnection' in transport_header and
+        'struct Frame' in transport_header,
     "all Scale versions use authenticated application heartbeat":
         'current_time - c.last_ping > 8000000' in main and
         '!scale_supports_protocol_keepalive' not in main and
@@ -56,7 +66,9 @@ checks = {
     "Scale reconnect never stops its WebSocket synchronously":
         "esp_websocket_client_stop(c.ws)" not in main and
         "esp_websocket_client_destroy(c.ws)" not in main and
-        "Queueing previous scale %u WebSocket for background retirement" in main,
+        "Queueing previous scale %u WebSocket for background retirement" in main and
+        "esp_websocket_client_stop(retired.handle)" in transport and
+        "esp_websocket_client_destroy(retired.handle)" in transport,
     "UI actions get service during frame bursts":
         "processed < 8" in main and
         "give UI/actions a turn" in main,
