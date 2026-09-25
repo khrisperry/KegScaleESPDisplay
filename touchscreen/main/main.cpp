@@ -609,6 +609,17 @@ void connect_scale(uint8_t slot) {
   config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
   config.network_timeout_ms = 5000;
+  /*
+   * We already have protocol-level liveness in both directions:
+   * - Touch sends an authenticated heartbeat every 8 seconds.
+   * - Scale expires the session if it receives nothing for 15 seconds.
+   * - Touch reconnects if Scale state is stale for more than 12 seconds.
+   *
+   * Do not let esp_websocket_client's independent PING/PONG timeout recycle a
+   * healthy authenticated session. Control-frame PINGs may still be sent, but
+   * application liveness remains authoritative.
+   */
+  config.disable_pingpong_discon = true;
   c.ws = esp_websocket_client_init(&config);
   if (!c.ws) {
     ESP_LOGE(TAG, "esp_websocket_client_init failed for scale %u %s",

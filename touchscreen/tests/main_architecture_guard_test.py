@@ -45,6 +45,10 @@ checks = {
     "WebSocket TX uses separate component lock":
         'CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y' in defaults and
         'CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000' in defaults,
+    "authenticated heartbeat owns connection liveness":
+        "config.disable_pingpong_discon = true;" in main and
+        'current_time - c.last_ping > 8000000' in main and
+        'current_time - c.last_state > kStateStaleUs' in main,
     "Scale reconnect never stops its WebSocket synchronously":
         "esp_websocket_client_stop(c.ws)" not in main and
         "esp_websocket_client_destroy(c.ws)" not in main and
