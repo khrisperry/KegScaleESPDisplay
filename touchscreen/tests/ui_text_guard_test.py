@@ -59,4 +59,12 @@ for glyph in ("—", "…", "•"):
             f"legacy UI no longer contains {glyph!r}; update this regression test"
         )
 
+# A locally flashed development build can legitimately be newer than the
+# published feed. Keep downgrade protection, but do not present that as a
+# feed synchronization failure to the user.
+if 'case OtaView::Stale:\n    return "Local build newer";' not in ui:
+    raise SystemExit("newer-than-feed status must identify the local build")
+if '"Feed syncing"' in ui:
+    raise SystemExit("misleading Feed syncing status must remain removed")
+
 print("touchscreen UI text guard: OK")

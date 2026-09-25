@@ -1427,7 +1427,7 @@ const char *status_text() {
   case OtaView::Available:
     return "Update available";
   case OtaView::Stale:
-    return "Feed syncing";
+    return "Local build newer";
   case OtaView::Error:
     return "Check failed";
   default:
