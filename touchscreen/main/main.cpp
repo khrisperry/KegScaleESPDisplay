@@ -84,9 +84,9 @@ constexpr int64_t kReconnectRetryUs = 10000000LL;
 constexpr int64_t kStateStaleUs = 12000000LL;
 
 int scale_index_for_link(cl_session_t *session) {
-  if (session == &connections[0].link)
+  if (session == &connection_for(0).link)
     return 0;
-  if (session == &connections[1].link)
+  if (session == &connection_for(1).link)
     return 1;
   return -1;
 }

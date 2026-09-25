@@ -73,8 +73,10 @@ checks = {
         "processed < 8" in main and
         "give UI/actions a turn" in main,
     "retirement gate is set before work is queued":
-        main.find("c.retirement_pending = true;") <
-        main.find("xQueueSend(retired_transports, &retired, 0)"),
+        transport.find("c.retirement_pending = true;") >= 0 and
+        transport.find("xQueueSend(retired_transports, &retired, 0)") >= 0 and
+        transport.find("c.retirement_pending = true;") <
+        transport.find("xQueueSend(retired_transports, &retired, 0)"),
 }
 
 failed = [name for name, passed in checks.items() if not passed]
