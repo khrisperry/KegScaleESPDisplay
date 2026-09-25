@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -36,6 +37,7 @@ struct esp_websocket_client_config_t {
  const char *uri; int buffer_size, task_stack; bool disable_auto_reconnect;
  int reconnect_timeout_ms, network_timeout_ms;
  size_t ping_interval_sec; int pingpong_timeout_sec;
+ bool disable_pingpong_discon;
 };
 Settings settings{};
 StoredScaleProfile secondary_scale{};
@@ -76,7 +78,9 @@ bool retire_transport_async(uint8_t slot, void *, uint32_t) {
 }
 bool esp_websocket_client_is_connected(void *) { return socket_connected; }
 void *esp_websocket_client_init(const esp_websocket_client_config_t *c) {
- assert(c->disable_auto_reconnect); return init_ok?reinterpret_cast<void *>(1):nullptr;
+ assert(c->disable_auto_reconnect);
+ assert(c->disable_pingpong_discon);
+ return init_ok?reinterpret_cast<void *>(1):nullptr;
 }
 void esp_websocket_register_events(void *, int, void (*)(void *,int,int,void *), void *arg) { registered_token=arg; }
 esp_err_t esp_websocket_client_start(void *) { ++starts; return start_error; }
