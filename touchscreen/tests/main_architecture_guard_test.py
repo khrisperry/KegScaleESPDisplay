@@ -90,6 +90,13 @@ checks = {
         'cl_agree(' in session and
         'cl_start(' in session and
         'esp_fill_random(' in session,
+    "Calibration ownership uses Scale-issued session IDs":
+        "uint32_t calibration_session_id = 0;" in transport_header and
+        "c.calibration_session_id = 0;" in session and
+        'num(o, "calibration_session_id")' in main and
+        'o, "calibration_session_id", c.calibration_session_id' in main and
+        "Cancel calibration before switching scales." in main and
+        "Calibration session is no longer active. Start calibration again." in main,
     "Controller setup HTTP is centralized":
         '"controller_setup_client.cpp"' in cmake and
         '#include "controller_setup_client.h"' in main and
