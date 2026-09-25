@@ -1,4 +1,6 @@
 #include "app.h"
+#include "ui_lifetime.h"
+#include "ui_text.h"
 #include "esp_lcd_touch.h"
 #include "bsp/esp32_s3_touch_lcd_4b.h"
 #include "bsp/touch.h"
@@ -19,9 +21,7 @@
 void touchscreen_home_render_now();
 void touchscreen_home_set_menu_open(bool open);
 void touchscreen_home_set_keyboard_open(bool open);
-// Implemented by ui_wrapper.cpp. Render the custom OTA page synchronously so
-// the legacy Firmware & diagnostics page never flashes first.
-void touchscreen_update_page_render_now();
+// Firmware update UI is rendered directly by this module.
 namespace {
 Settings initial{};
 State current{};
@@ -42,24 +42,29 @@ lv_obj_t *scale_manual_host = nullptr;
 lv_obj_t *capacity_dropdown = nullptr;
 lv_obj_t *home_nav_button = nullptr;
 lv_obj_t *menu_handle_button = nullptr;
+lv_obj_t *menu_update_badge = nullptr;
 lv_obj_t *menu_scrim = nullptr;
 lv_obj_t *menu_panel = nullptr;
 lv_obj_t *qr_fullscreen = nullptr;
 lv_obj_t *connection_badge = nullptr;
+bool touchscreen_update_available_ui = false;
 // TOUCH_DRAWER_V1
 // TOUCH_SHELL_POLISH_V3
 // TOUCH_LAYOUT_POLISH_V4
 // TOUCH_DRAWER_REFINEMENTS_V2_4
 char discovered_scale_options[800] = "Manual IP / hostname...";
+TouchscreenUiGeneration content_generation{1};
 bool ui_initialized = false;
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
 // TOUCH_BUTTON_STYLE_V5
 void build(int page);
+void render_update_page();
 void focus(lv_event_t *e);
-void message(const char *s) { lv_label_set_text(notice, s); }
+void message(const char *s) { touchscreen_text::label_set_text(notice, s); }
 bool submit(const char *kind, cJSON *json) {
   Action a{};
+  a.ui_generation = touchscreen_ui_generation_current(&content_generation);
   snprintf(a.kind, sizeof(a.kind), "%s", kind);
   char *s = json ? cJSON_PrintUnformatted(json) : nullptr;
   bool valid = !s || strlen(s) < sizeof(a.body);
@@ -74,7 +79,7 @@ bool submit(const char *kind, cJSON *json) {
 lv_obj_t *label(lv_obj_t *parent, const char *s, int x, int y, int width,
                 const lv_font_t *font = &lv_font_montserrat_18) {
   auto o = lv_label_create(parent);
-  lv_label_set_text(o, s);
+  touchscreen_text::label_set_text(o, s);
   lv_obj_set_pos(o, x, y);
   lv_obj_set_width(o, width);
   lv_obj_set_style_text_font(o, font, 0);
@@ -101,7 +106,7 @@ lv_obj_t *button(lv_obj_t *parent, const char *s, int x, int y, int width,
   lv_obj_set_style_border_color(o, lv_color_hex(ACCENT), LV_STATE_PRESSED);
 
   auto t = lv_label_create(o);
-  lv_label_set_text(t, s);
+  touchscreen_text::label_set_text(t, s);
   lv_obj_set_style_text_color(t, lv_color_hex(TEXT), 0);
   lv_obj_center(t);
   lv_obj_add_event_cb(o, cb, LV_EVENT_CLICKED, data);
@@ -321,6 +326,17 @@ void show_qr_fullscreen(lv_event_t *) {
   lv_obj_move_foreground(qr_fullscreen);
 }
 
+void refresh_menu_update_indicator() {
+  if (!menu_update_badge)
+    return;
+  if (touchscreen_update_available_ui) {
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(menu_update_badge);
+  } else {
+    lv_obj_add_flag(menu_update_badge, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 void close_scale_menu(lv_event_t *) {
   touchscreen_home_set_menu_open(false);
   if (connection_badge)
@@ -406,7 +422,14 @@ void populate_scale_menu() {
   drawer_button("Keg", first_y + gap * 0, 1);
   drawer_button("Scale", first_y + gap * 1, 2);
   drawer_button("Setup", first_y + gap * 2, 3);
-  drawer_button("Update / Diagnostics", first_y + gap * 3, 4);
+  lv_obj_t *update_button =
+      drawer_button(touchscreen_update_available_ui ? "Update Available"
+                                                    : "Update / Diagnostics",
+                    first_y + gap * 3, 4);
+  if (touchscreen_update_available_ui) {
+    lv_obj_set_style_border_color(update_button, lv_color_hex(0xffb347), 0);
+    lv_obj_set_style_border_width(update_button, 2, 0);
+  }
 }
 
 void open_scale_menu(lv_event_t *) {
@@ -479,10 +502,31 @@ void ensure_scale_menu(lv_obj_t *root) {
       lv_obj_set_style_radius(bar, 1, 0);
     }
 
+    // Reuse the OTA result already maintained by touchscreen_ota.cpp. The
+    // badge is purely an attention cue; tapping the hamburger still opens the
+    // normal drawer, where Update Available leads to the firmware page.
+    menu_update_badge = lv_obj_create(menu_handle_button);
+    lv_obj_set_size(menu_update_badge, 16, 16);
+    lv_obj_align(menu_update_badge, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(menu_update_badge, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(menu_update_badge, lv_color_hex(0xffb347), 0);
+    lv_obj_set_style_bg_opa(menu_update_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(menu_update_badge, 0, 0);
+    lv_obj_set_style_radius(menu_update_badge, 8, 0);
+    lv_obj_set_style_pad_all(menu_update_badge, 0, 0);
+    lv_obj_t *update_mark = lv_label_create(menu_update_badge);
+    touchscreen_text::label_set_text(update_mark, "!");
+    lv_obj_set_style_text_font(update_mark, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(update_mark, lv_color_hex(BG), 0);
+    lv_obj_center(update_mark);
+    refresh_menu_update_indicator();
+
     lv_obj_add_event_cb(menu_handle_button, open_scale_menu, LV_EVENT_CLICKED,
                         nullptr);
   }
 
+  refresh_menu_update_indicator();
   lv_obj_move_foreground(menu_handle_button);
 }
 
@@ -509,7 +553,7 @@ void update_home_nav_button() {
              two_scales_ready() ? "Switch Scale  >" : "Home");
   }
 
-  lv_label_set_text(text, caption);
+  touchscreen_text::label_set_text(text, caption);
   lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
   lv_obj_set_width(text, lv_obj_get_width(home_nav_button) - 18);
   lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
@@ -570,7 +614,7 @@ void select_host_option_for_slot(bool prefer_discovered) {
   lv_dropdown_get_selected_str(scale_host_dropdown, option, sizeof(option));
   const bool manual = is_manual_host_option(option);
   if (manual && scale_manual_host)
-    lv_textarea_set_text(scale_manual_host, saved);
+    touchscreen_text::textarea_set_text(scale_manual_host, saved);
   set_manual_host_visible(manual);
 }
 
@@ -584,7 +628,7 @@ void load_saved_host_options() {
   } else {
     snprintf(options, sizeof(options), "Manual IP / hostname...");
   }
-  lv_dropdown_set_options(scale_host_dropdown, options);
+  touchscreen_text::dropdown_set_options(scale_host_dropdown, options);
   select_host_option_for_slot(false);
 }
 
@@ -594,7 +638,7 @@ void scale_host_selection_changed(lv_event_t *event) {
                                selected, sizeof(selected));
   const bool manual = is_manual_host_option(selected);
   if (manual && scale_manual_host && !lv_textarea_get_text(scale_manual_host)[0])
-    lv_textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
+    touchscreen_text::textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
   set_manual_host_visible(manual);
 }
 
@@ -604,7 +648,7 @@ void scale_slot_changed(lv_event_t *event) {
   setup_scale_slot = selected == 1 ? 1 : 0;
   if (scale_host_dropdown &&
       strcmp(discovered_scale_options, "Manual IP / hostname...")) {
-    lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+    touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
     select_host_option_for_slot(true);
   } else {
     load_saved_host_options();
@@ -620,7 +664,7 @@ void toggle_password_visibility(lv_event_t *event) {
   lv_textarea_set_password_mode(password, !currently_hidden);
 
   if (lv_obj_t *button_text = lv_obj_get_child(button, 0))
-    lv_label_set_text(button_text, currently_hidden ? "HIDE" : "SHOW");
+    touchscreen_text::label_set_text(button_text, currently_hidden ? "HIDE" : "SHOW");
 
   if (keyboard) {
     lv_keyboard_set_textarea(keyboard, password);
@@ -663,7 +707,7 @@ lv_obj_t *field(const char *title, const char *value, int y,
   lv_obj_set_size(o, 424, 46);
   lv_textarea_set_one_line(o, true);
   lv_textarea_set_max_length(o, limit);
-  lv_textarea_set_text(o, value);
+  touchscreen_text::textarea_set_text(o, value);
   if (numeric)
     lv_textarea_set_accepted_chars(o, "0123456789.");
   // Open the editor after a tap, not the press that begins a scroll.
@@ -730,7 +774,7 @@ void capacity_preset_changed(lv_event_t *event) {
   snprintf(value, sizeof(value), "%.2f",
            (double)capacity_preset_value(selected));
   lv_obj_remove_state(fields[1], LV_STATE_DISABLED);
-  lv_textarea_set_text(fields[1], value);
+  touchscreen_text::textarea_set_text(fields[1], value);
   lv_obj_add_state(fields[1], LV_STATE_DISABLED);
 }
 
@@ -805,7 +849,7 @@ void select_network(lv_event_t *e) {
   char ssid[33];
   lv_dropdown_get_selected_str((lv_obj_t *)lv_event_get_target(e), ssid,
                                sizeof(ssid));
-  lv_textarea_set_text(fields[0], ssid);
+  touchscreen_text::textarea_set_text(fields[0], ssid);
 }
 void save_settings(lv_event_t *) {
   dismiss_keyboard();
@@ -848,6 +892,7 @@ void forget(lv_event_t *) {
   scale_host_dropdown = nullptr;
   scale_manual_label = nullptr;
   scale_manual_host = nullptr;
+  touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
   label(content, "Remove scale pairing?", 8, 12, 424,
         &lv_font_montserrat_24);
@@ -878,27 +923,27 @@ void dashboard() {
   if (!headline)
     return;
   if (page_id == 0) {
-    lv_label_set_text(headline,
+    touchscreen_text::label_set_text(headline,
                       current.name[0] ? current.name : "Set up your keg");
     if (!current.online) {
-      lv_label_set_text(detail, "--");
+      touchscreen_text::label_set_text(detail, "--");
       lv_arc_set_value(arc, 0);
-      lv_label_set_text(connection, "Not connected");
+      touchscreen_text::label_set_text(connection, "Not connected");
       return;
     }
     if (current.ready)
-      lv_label_set_text_fmt(detail, "%.0f", (double)floorf(current.servings));
+      touchscreen_text::label_set_text_fmt(detail, "%.0f", (double)floorf(current.servings));
     else
-      lv_label_set_text(detail, "--");
+      touchscreen_text::label_set_text(detail, "--");
     lv_arc_set_value(arc, current.ready ? (int)current.percent : 0);
-    lv_label_set_text_fmt(connection,
+    touchscreen_text::label_set_text_fmt(connection,
                           "Connected\n%.2f gal | %.1f oz | %.2f lb | %s",
                           (double)current.gallons, (double)current.serving,
                           (double)current.weight,
                           current.stable ? "Stable" : "Settling");
 
   } else if (page_id == 2) {
-    lv_label_set_text_fmt(
+    touchscreen_text::label_set_text_fmt(
         headline, "Scale: %.3f lb   %s", (double)current.weight,
         current.online ? (current.stable ? "Stable" : "Settling")
                        : "Not connected");
@@ -908,6 +953,7 @@ void build(int page) {
   dismiss_keyboard();
   page_id = page;
   update_home_nav_button();
+  touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
   lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
   headline = detail = connection = arc = networks = nullptr;
@@ -946,7 +992,7 @@ void build(int page) {
       lv_obj_set_size(o, width, 40);
       lv_textarea_set_one_line(o, true);
       lv_textarea_set_max_length(o, limit);
-      lv_textarea_set_text(o, value);
+      touchscreen_text::textarea_set_text(o, value);
       if (numeric)
         lv_textarea_set_accepted_chars(o, "0123456789.");
       lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
@@ -962,7 +1008,7 @@ void build(int page) {
     capacity_dropdown = lv_dropdown_create(content);
     lv_obj_set_pos(capacity_dropdown, 8, 116);
     lv_obj_set_size(capacity_dropdown, 128, 40);
-    lv_dropdown_set_options(
+    touchscreen_text::dropdown_set_options(
         capacity_dropdown,
         "Custom\n1/2 barrel\n1/4 barrel\n1/6 barrel\nCorny keg");
 
@@ -975,7 +1021,7 @@ void build(int page) {
     lv_textarea_set_one_line(fields[1], true);
     lv_textarea_set_max_length(fields[1], 8);
     lv_textarea_set_accepted_chars(fields[1], "0123456789.");
-    lv_textarea_set_text(fields[1], capacity_value);
+    touchscreen_text::textarea_set_text(fields[1], capacity_value);
     lv_obj_remove_flag(fields[1], LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(fields[1], focus, LV_EVENT_SHORT_CLICKED, nullptr);
 
@@ -1041,7 +1087,7 @@ void build(int page) {
       lv_obj_set_size(o, width, 40);
       lv_textarea_set_one_line(o, true);
       lv_textarea_set_max_length(o, limit);
-      lv_textarea_set_text(o, value);
+      touchscreen_text::textarea_set_text(o, value);
       if (password)
         lv_textarea_set_password_mode(o, true);
       lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
@@ -1064,7 +1110,7 @@ void build(int page) {
              scale_paired_ui[1] ? " - Paired"
                                 : (scale_hosts_ui[1][0] ? " - Configured"
                                                         : " - Not configured"));
-    lv_dropdown_set_options(scale_slot_dropdown, scale_options);
+    touchscreen_text::dropdown_set_options(scale_slot_dropdown, scale_options);
     lv_dropdown_set_selected(scale_slot_dropdown, setup_scale_slot);
     lv_obj_add_event_cb(scale_slot_dropdown, scale_slot_changed,
                         LV_EVENT_VALUE_CHANGED, nullptr);
@@ -1086,7 +1132,7 @@ void build(int page) {
     lv_textarea_set_one_line(scale_manual_host, true);
     lv_textarea_set_max_length(scale_manual_host, 127);
     lv_textarea_set_placeholder_text(scale_manual_host, "Manual host");
-    lv_textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
+    touchscreen_text::textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
     lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(scale_manual_host, focus, LV_EVENT_SHORT_CLICKED,
                         nullptr);
@@ -1096,7 +1142,7 @@ void build(int page) {
     networks = lv_dropdown_create(content);
     lv_obj_set_pos(networks, 8, 144);
     lv_obj_set_size(networks, 424, 36);
-    lv_dropdown_set_options(networks, "Select Wi-Fi network");
+    touchscreen_text::dropdown_set_options(networks, "Select Wi-Fi network");
     lv_obj_add_event_cb(networks, select_network, LV_EVENT_VALUE_CHANGED,
                         nullptr);
 
@@ -1118,7 +1164,7 @@ void build(int page) {
     lv_obj_set_style_pad_all(password_toggle, 0, 0);
 
     lv_obj_t *password_toggle_text = lv_label_create(password_toggle);
-    lv_label_set_text(password_toggle_text, "SHOW");
+    touchscreen_text::label_set_text(password_toggle_text, "SHOW");
     lv_obj_set_style_text_font(password_toggle_text, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(password_toggle_text, lv_color_hex(TEXT), 0);
     lv_obj_center(password_toggle_text);
@@ -1139,10 +1185,377 @@ void build(int page) {
   } else {
     // Page 4 belongs entirely to the new OTA UI. Render it immediately rather
     // than drawing the legacy Firmware & diagnostics page first.
-    touchscreen_update_page_render_now();
+    render_update_page();
   }
 }
+
+enum class OtaView {
+  Idle,
+  Checking,
+  Preparing,
+  Current,
+  Available,
+  Stale,
+  Error,
+};
+
+OtaView ota_view = OtaView::Idle;
+char ota_current[32] = {};
+char ota_latest[32] = {};
+char ota_error_text[120] = {};
+bool update_page_customized = false;
+lv_obj_t *ota_channel_dropdown = nullptr;
+lv_obj_t *ota_auto_install_switch = nullptr;
+lv_obj_t *ota_warning_label = nullptr;
+lv_obj_t *ota_last_check_value = nullptr;
+lv_obj_t *ota_overlay = nullptr;
+lv_obj_t *ota_overlay_title = nullptr;
+lv_obj_t *ota_overlay_percent = nullptr;
+lv_obj_t *ota_overlay_status = nullptr;
+lv_obj_t *ota_overlay_bar = nullptr;
+const uint32_t WARNING = 0xffb347;
+
+void copy_text(char *dest, size_t size, const char *source) {
+  if (!dest || !size)
+    return;
+  snprintf(dest, size, "%s", source ? source : "");
+}
+
+const char *channel_from_selection(uint16_t selected) {
+  if (selected == 0)
+    return "production";
+  if (selected == 1)
+    return "beta";
+  return "dev";
+}
+
+uint16_t selection_from_channel(const char *channel) {
+  if (channel && !strcmp(channel, "production"))
+    return 0;
+  if (channel && !strcmp(channel, "beta"))
+    return 1;
+  return 2;
+}
+
+const char *channel_display_name(const char *channel) {
+  if (channel && !strcmp(channel, "production"))
+    return "Production";
+  if (channel && !strcmp(channel, "beta"))
+    return "Beta";
+  return "Development";
+}
+
+void format_last_check(char *buffer, size_t size) {
+  if (!touchscreen_ota_has_checked()) {
+    snprintf(buffer, size, "Not checked yet");
+    return;
+  }
+  uint64_t seconds = touchscreen_ota_last_check_age_seconds();
+  if (seconds < 60)
+    snprintf(buffer, size, "Just now");
+  else if (seconds < 3600)
+    snprintf(buffer, size, "%llu min ago",
+             (unsigned long long)(seconds / 60));
+  else if (seconds < 86400)
+    snprintf(buffer, size, "%llu hr ago",
+             (unsigned long long)(seconds / 3600));
+  else
+    snprintf(buffer, size, "%llu day%s ago",
+             (unsigned long long)(seconds / 86400),
+             seconds / 86400 == 1 ? "" : "s");
+}
+
+void clear_ota_overlay() {
+  if (ota_overlay)
+    lv_obj_delete(ota_overlay);
+  ota_overlay = nullptr;
+  ota_overlay_title = nullptr;
+  ota_overlay_percent = nullptr;
+  ota_overlay_status = nullptr;
+  ota_overlay_bar = nullptr;
+}
+
+void update_channel_warning() {
+  if (!ota_channel_dropdown || !ota_warning_label)
+    return;
+  const uint16_t selected = lv_dropdown_get_selected(ota_channel_dropdown);
+  if (selected == 0) {
+    touchscreen_text::label_set_text(
+        ota_warning_label,
+        "Stable releases. Recommended for normal use.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(ACCENT), 0);
+  } else if (selected == 1) {
+    touchscreen_text::label_set_text(
+        ota_warning_label,
+        "Pre-release validation builds. May contain unfinished changes.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
+  } else {
+    touchscreen_text::label_set_text(
+        ota_warning_label,
+        "Experimental builds. Use Development only when instructed.");
+    lv_obj_set_style_text_color(ota_warning_label, lv_color_hex(WARNING), 0);
+  }
+}
+
+void channel_changed(lv_event_t *) { update_channel_warning(); }
+
+void render_update_page();
+
+void check_update(lv_event_t *) {
+  ota_view = OtaView::Checking;
+  ota_error_text[0] = 0;
+  render_update_page();
+  esp_err_t e = touchscreen_ota_request(false, true);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              e == ESP_ERR_INVALID_STATE
+                  ? "An update check is already running."
+                  : "Could not start the update check. Please try again.");
+    render_update_page();
+  }
+}
+
+void install_update(lv_event_t *) {
+  ota_view = OtaView::Preparing;
+  render_update_page();
+  esp_err_t e = touchscreen_ota_request(true, true);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              e == ESP_ERR_INVALID_STATE
+                  ? "An update operation is already running."
+                  : "Could not start the firmware update. Please try again.");
+    render_update_page();
+  }
+}
+
+void save_update_settings(lv_event_t *) {
+  if (!ota_channel_dropdown || !ota_auto_install_switch)
+    return;
+  const char *channel =
+      channel_from_selection(lv_dropdown_get_selected(ota_channel_dropdown));
+  const bool auto_install =
+      lv_obj_has_state(ota_auto_install_switch, LV_STATE_CHECKED);
+  esp_err_t e = touchscreen_ota_save_preferences(channel, auto_install);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              "Could not save update settings.");
+    render_update_page();
+    return;
+  }
+
+  ota_view = OtaView::Checking;
+  ota_latest[0] = 0;
+  message("Update settings saved");
+  render_update_page();
+  e = touchscreen_ota_request(false, true);
+  if (e != ESP_OK) {
+    ota_view = OtaView::Error;
+    copy_text(ota_error_text, sizeof(ota_error_text),
+              "Settings saved, but the update check could not start.");
+    render_update_page();
+  }
+}
+void close_ota_overlay(lv_event_t *) {
+  clear_ota_overlay();
+  update_page_customized = false;
+  build(4);
+}
+
+void create_install_overlay(const char *version) {
+  clear_ota_overlay();
+
+  ota_overlay = lv_obj_create(lv_screen_active());
+  lv_obj_set_pos(ota_overlay, 0, 0);
+  lv_obj_set_size(ota_overlay, 480, 480);
+  lv_obj_remove_flag(ota_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(ota_overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(ota_overlay, lv_color_hex(BG), 0);
+  lv_obj_set_style_bg_opa(ota_overlay, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(ota_overlay, 0, 0);
+  lv_obj_set_style_radius(ota_overlay, 0, 0);
+  lv_obj_set_style_pad_all(ota_overlay, 0, 0);
+
+  ota_overlay_title =
+      label(ota_overlay, "Updating Firmware", 24, 42, 432,
+            &lv_font_montserrat_24);
+  auto version_label =
+      label(ota_overlay, version && version[0] ? version : "Preparing update",
+            24, 96, 432, &lv_font_montserrat_20);
+  lv_obj_set_style_text_color(version_label, lv_color_hex(ACCENT), 0);
+
+  ota_overlay_percent =
+      label(ota_overlay, "0%", 24, 150, 432, &lv_font_montserrat_48);
+  lv_obj_set_style_text_align(ota_overlay_percent, LV_TEXT_ALIGN_CENTER, 0);
+
+  ota_overlay_bar = lv_bar_create(ota_overlay);
+  lv_obj_set_pos(ota_overlay_bar, 36, 225);
+  lv_obj_set_size(ota_overlay_bar, 408, 24);
+  lv_bar_set_range(ota_overlay_bar, 0, 100);
+  lv_bar_set_value(ota_overlay_bar, 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(ota_overlay_bar, lv_color_hex(CARD), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(ota_overlay_bar, lv_color_hex(ACCENT),
+                            LV_PART_INDICATOR);
+  lv_obj_set_style_radius(ota_overlay_bar, 12, LV_PART_MAIN);
+  lv_obj_set_style_radius(ota_overlay_bar, 12, LV_PART_INDICATOR);
+
+  ota_overlay_status =
+      label(ota_overlay, "Preparing secure download...", 36, 285, 408,
+            &lv_font_montserrat_18);
+  lv_obj_set_style_text_align(ota_overlay_status, LV_TEXT_ALIGN_CENTER, 0);
+
+  auto warning = label(
+      ota_overlay,
+      "Keep power connected. The touchscreen is locked while firmware is being "
+      "downloaded, verified, and installed.",
+      36, 350, 408, &lv_font_montserrat_16);
+  lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, 0);
+
+  lv_obj_move_foreground(ota_overlay);
+}
+
+const char *status_text() {
+  switch (ota_view) {
+  case OtaView::Checking:
+    return "Checking...";
+  case OtaView::Preparing:
+    return "Preparing update...";
+  case OtaView::Current:
+    return "Up to date";
+  case OtaView::Available:
+    return "Update available";
+  case OtaView::Stale:
+    return "Local build newer";
+  case OtaView::Error:
+    return "Check failed";
+  default:
+    return touchscreen_ota_has_checked() ? "Checked" : "Not checked";
+  }
+}
+
+void render_update_page() {
+  if (page_id != 4 || ota_overlay)
+    return;
+
+  update_page_customized = true;
+  lv_obj_clean(content);
+  lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
+  headline = detail = connection = arc = networks = nullptr;
+  memset(fields, 0, sizeof(fields));
+  ota_channel_dropdown = nullptr;
+  ota_auto_install_switch = nullptr;
+  ota_warning_label = nullptr;
+  ota_last_check_value = nullptr;
+
+  OtaPreferences preferences{};
+  touchscreen_ota_get_preferences(&preferences);
+  const char *running = esp_app_get_description()->version;
+
+  // Everything on this page stays inside the normal 334-pixel content area.
+  label(content, "Firmware updates", 8, 0, 424, &lv_font_montserrat_24);
+
+  // Current / Latest / Status summary.
+  label(content, "CURRENT", 8, 37, 128, &lv_font_montserrat_14);
+  auto current_value =
+      label(content, running, 8, 55, 128, &lv_font_montserrat_18);
+
+  label(content, "LATEST", 148, 37, 128, &lv_font_montserrat_14);
+  auto latest_value =
+      label(content, ota_latest[0] ? ota_latest : "--", 148, 55, 128,
+            &lv_font_montserrat_18);
+
+  label(content, "STATUS", 288, 37, 136, &lv_font_montserrat_14);
+  auto status_value =
+      label(content, status_text(), 288, 55, 136, &lv_font_montserrat_16);
+
+  lv_obj_set_style_text_color(current_value, lv_color_hex(TEXT), 0);
+  lv_obj_set_style_text_color(latest_value, lv_color_hex(TEXT), 0);
+  if (ota_view == OtaView::Current || ota_view == OtaView::Available)
+    lv_obj_set_style_text_color(status_value, lv_color_hex(ACCENT), 0);
+  else if (ota_view == OtaView::Error || ota_view == OtaView::Stale)
+    lv_obj_set_style_text_color(status_value, lv_color_hex(WARNING), 0);
+
+  // Channel and automatic-install preference share one row.
+  label(content, "Channel", 8, 91, 72, &lv_font_montserrat_14);
+  ota_channel_dropdown = lv_dropdown_create(content);
+  lv_obj_set_pos(ota_channel_dropdown, 78, 82);
+  lv_obj_set_size(ota_channel_dropdown, 205, 38);
+  touchscreen_text::dropdown_set_options(ota_channel_dropdown,
+                          "Production\nBeta\nDevelopment");
+  lv_dropdown_set_selected(ota_channel_dropdown,
+                           selection_from_channel(preferences.channel));
+  lv_obj_add_event_cb(ota_channel_dropdown, channel_changed,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  label(content, "Auto install", 294, 91, 80, &lv_font_montserrat_14);
+  ota_auto_install_switch = lv_switch_create(content);
+  lv_obj_set_pos(ota_auto_install_switch, 374, 85);
+  lv_obj_set_size(ota_auto_install_switch, 58, 30);
+  if (preferences.auto_install)
+    lv_obj_add_state(ota_auto_install_switch, LV_STATE_CHECKED);
+
+  ota_warning_label =
+      label(content, "", 8, 127, 424, &lv_font_montserrat_14);
+  lv_obj_set_height(ota_warning_label, 38);
+  update_channel_warning();
+
+  label(content, "Auto checks: after Wi-Fi starts, then every 24 hours.",
+        8, 165, 424, &lv_font_montserrat_14);
+
+  button(content, "Save settings", 8, 188, 205, save_update_settings);
+  button(content, "Check now", 227, 188, 205, check_update);
+
+  if (ota_view == OtaView::Available) {
+    char install_text[64];
+    snprintf(install_text, sizeof(install_text), "Install %s",
+             ota_latest[0] ? ota_latest : "update");
+    button(content, install_text, 8, 240, 424, install_update);
+  }
+
+  // Keep the operational details visible even when an install button appears.
+  char last_check[48];
+  format_last_check(last_check, sizeof(last_check));
+  label(content, "Last check", 8, 291, 88, &lv_font_montserrat_14);
+  ota_last_check_value =
+      label(content, last_check, 98, 291, 128, &lv_font_montserrat_14);
+
+  char footer[192];
+  snprintf(footer, sizeof(footer),
+           "Scale %s  |  %s  |  Protocol 1/1",
+           current.firmware[0] ? current.firmware : "unknown",
+           channel_display_name(preferences.channel));
+  label(content, footer, 8, 312, 424, &lv_font_montserrat_14);
+}
+void update_page_watch(lv_timer_t *) {
+  if (ota_overlay)
+    return;
+  if (page_id != 4) {
+    update_page_customized = false;
+    ota_channel_dropdown = nullptr;
+    ota_auto_install_switch = nullptr;
+    ota_warning_label = nullptr;
+    ota_last_check_value = nullptr;
+    return;
+  }
+  if (!update_page_customized) {
+    render_update_page();
+    return;
+  }
+  if (ota_last_check_value) {
+    char last_check[48];
+    format_last_check(last_check, sizeof(last_check));
+    touchscreen_text::label_set_text(ota_last_check_value, last_check);
+  }
+}
+
 } // namespace
+
+void touchscreen_home_set_update_available(bool available) {
+  touchscreen_update_available_ui = available;
+  refresh_menu_update_indicator();
+}
 
 // Called from the pairing timeout overlay while already in LVGL UI context.
 // Clear the legacy pairing state and redraw Setup underneath the overlay.
@@ -1233,6 +1646,7 @@ void ui_start(const Settings &s) {
   ui_initialized = true;
   build(s.ssid[0] && scale_hosts_ui[active_scale_ui][0] ? 0 : 3);
   bsp_display_unlock();
+  lv_timer_create(update_page_watch, 1000, nullptr);
 }
 void ui_state(const State &s) {
   if (!bsp_display_lock(1000))
@@ -1245,7 +1659,7 @@ void ui_state(const State &s) {
   current = s;
   update_home_nav_button();
   if (connection_badge) {
-    lv_label_set_text(connection_badge, current.online ? "Connected" : "Offline");
+    touchscreen_text::label_set_text(connection_badge, current.online ? "Connected" : "Offline");
     lv_obj_set_style_bg_color(
         connection_badge,
         lv_color_hex(current.online ? 0x247a5a : 0x7a3b3b), 0);
@@ -1265,6 +1679,22 @@ void ui_message(const char *s) {
     message("");
   else
     message(s);
+  bsp_display_unlock();
+}
+
+void ui_message_for_generation(const char *s, uint32_t generation) {
+  if (!bsp_display_lock(1000))
+    return;
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation)) {
+    ESP_LOGI("display",
+             "Ignoring stale UI message generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  message(s ? s : "");
   bsp_display_unlock();
 }
 void ui_pair_code(const char *code) {
@@ -1312,27 +1742,50 @@ void ui_discovered_options(const char *options) {
   snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
            options && options[0] ? options : "Manual IP / hostname...");
   if (page_id == 3 && scale_host_dropdown) {
-    lv_dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+    touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
     select_host_option_for_slot(true);
   }
   message("Choose a scale from the list, or use Manual IP / hostname.");
   bsp_display_unlock();
 }
-void ui_networks(const char *options) {
+
+void ui_discovered_options_for_generation(const char *options,
+                                          uint32_t generation) {
   if (!bsp_display_lock(1000))
     return;
-  if (page_id == 3 && networks)
-    lv_dropdown_set_options(networks, options);
-  message("Choose your Wi-Fi network");
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
+      page_id != 3 || !scale_host_dropdown) {
+    ESP_LOGI("display",
+             "Ignoring stale scale discovery result generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
+           options && options[0] ? options : "Manual IP / hostname...");
+  touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
+  select_host_option_for_slot(true);
   bsp_display_unlock();
 }
-void ui_update_progress(int percent) {
-  char b[80];
-  snprintf(b, sizeof(b), "Updating touchscreen: %d%% — keep power connected",
-           percent);
-  ui_message(b);
-}
 
+void ui_networks(const char *options, uint32_t generation) {
+  if (!bsp_display_lock(1000))
+    return;
+  if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
+      page_id != 3 || !networks) {
+    ESP_LOGI("display",
+             "Ignoring stale Wi-Fi scan result generation=%lu current=%lu page=%d",
+             (unsigned long)generation,
+             (unsigned long)touchscreen_ui_generation_current(&content_generation),
+             page_id);
+    bsp_display_unlock();
+    return;
+  }
+  touchscreen_text::dropdown_set_options(networks, options);
+  bsp_display_unlock();
+}
 void ui_paired(void) {
   if (!bsp_display_lock(1000))
     return;
@@ -1367,5 +1820,110 @@ void ui_scale_profiles(const char *primary_host, bool primary_paired,
   update_home_nav_button();
   if (page_id == 3)
     build(3);
+  bsp_display_unlock();
+}
+
+void ui_settings_applied(const Settings &settings) {
+  if (!bsp_display_lock(1000))
+    return;
+  initial = settings;
+  if (page_id == 3)
+    build(3);
+  bsp_display_unlock();
+}
+
+void ui_update_checking(void) {
+  if (!bsp_display_lock(1000))
+    return;
+  ota_view = OtaView::Checking;
+  ota_error_text[0] = 0;
+  if (page_id == 4)
+    render_update_page();
+  bsp_display_unlock();
+}
+
+void ui_update_status(const char *current_version, const char *latest_version,
+                      bool update_available, bool feed_stale) {
+  if (!bsp_display_lock(1000))
+    return;
+  copy_text(ota_current, sizeof(ota_current), current_version);
+  copy_text(ota_latest, sizeof(ota_latest), latest_version);
+  ota_error_text[0] = 0;
+  ota_view = feed_stale ? OtaView::Stale
+                        : (update_available ? OtaView::Available
+                                            : OtaView::Current);
+  touchscreen_home_set_update_available(update_available && !feed_stale);
+  if (page_id == 4 && !ota_overlay)
+    render_update_page();
+  bsp_display_unlock();
+}
+
+void ui_update_installing(const char *version) {
+  if (!bsp_display_lock(1000))
+    return;
+  create_install_overlay(version);
+  bsp_display_unlock();
+}
+
+void ui_update_progress(int percent) {
+  if (percent < 0)
+    percent = 0;
+  if (percent > 100)
+    percent = 100;
+  if (!bsp_display_lock(1000))
+    return;
+  if (!ota_overlay)
+    create_install_overlay(ota_latest);
+  if (ota_overlay_percent)
+    touchscreen_text::label_set_text_fmt(ota_overlay_percent, "%d%%", percent);
+  if (ota_overlay_bar)
+    lv_bar_set_value(ota_overlay_bar, percent, LV_ANIM_OFF);
+  if (ota_overlay_status)
+    touchscreen_text::label_set_text(ota_overlay_status,
+                      percent < 100 ? "Downloading and verifying firmware..."
+                                    : "Finalizing update...");
+  bsp_display_unlock();
+}
+
+void ui_update_complete(const char *version) {
+  if (!bsp_display_lock(1000))
+    return;
+  if (!ota_overlay)
+    create_install_overlay(version);
+  if (ota_overlay_title)
+    touchscreen_text::label_set_text(ota_overlay_title, "Update Complete");
+  if (ota_overlay_percent)
+    touchscreen_text::label_set_text(ota_overlay_percent, "100%");
+  if (ota_overlay_bar)
+    lv_bar_set_value(ota_overlay_bar, 100, LV_ANIM_OFF);
+  if (ota_overlay_status)
+    touchscreen_text::label_set_text(ota_overlay_status,
+                      "Firmware verified. Restarting touchscreen...");
+  bsp_display_unlock();
+}
+
+void ui_update_error(const char *error, bool installing) {
+  if (!bsp_display_lock(1000))
+    return;
+  copy_text(ota_error_text, sizeof(ota_error_text),
+            error && error[0] ? error : "The update could not be completed.");
+
+  if (installing || ota_overlay) {
+    if (!ota_overlay)
+      create_install_overlay(ota_latest);
+    lv_obj_clean(ota_overlay);
+    ota_overlay_title =
+        label(ota_overlay, "Update Failed", 24, 68, 432,
+              &lv_font_montserrat_24);
+    label(ota_overlay, ota_error_text, 36, 145, 408, &lv_font_montserrat_18);
+    label(ota_overlay,
+          "No firmware change was activated. Check Wi-Fi and try again.",
+          36, 230, 408, &lv_font_montserrat_16);
+    button(ota_overlay, "Back to Firmware", 36, 340, 408, close_ota_overlay);
+  } else {
+    ota_view = OtaView::Error;
+    if (page_id == 4)
+      render_update_page();
+  }
   bsp_display_unlock();
 }

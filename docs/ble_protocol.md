@@ -22,6 +22,7 @@ While unpaired, the display continuously scans. If exactly one scale advertises 
 | Display control | `8f7a0008-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted read; remove/unpair command |
 | Display information | `8f7a0009-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted firmware and battery-voltage report |
 | Touch configuration | `8f7a000a-3f7b-4c61-a2b8-6d2f5b71c001` | Runtime threshold; legacy authenticated writeback |
+| Display command acknowledgement | `8f7a000b-3f7b-4c61-a2b8-6d2f5b71c001` | Authenticated encrypted completion write |
 
 ## 20-byte snapshot
 
@@ -148,7 +149,26 @@ The update offer is non-secret and may be read during the normal wake cycle. If 
 The Wi-Fi/OTA bundle requires authenticated encryption and the scale additionally verifies that the connected peer is the specifically authorized bonded display. It includes the SSID, password, HTTPS URL, image size, version, hardware ID, and SHA-256 digest. Credentials remain in RAM only and are cleared after Wi-Fi is stopped.
 
 The display-control characteristic is also restricted to the exact authorized
-bond. Flag bit 0 requests unpair, bit 1 identifies replacement, bit 2 requests
-an immediate full-screen refresh, and bit 3 is reserved for retired guided touch calibration. A
-full refresh redraws the current keg screen and resets the changed-region
+bond. It remains 4 bytes: protocol version, flags, and a 16-bit command ID in the
+two bytes that were reserved by earlier protocol-1 firmware. Flag bit 0 requests
+unpair, bit 1 identifies replacement, bit 2 requests an immediate full-screen
+refresh, and bit 3 is reserved for retired guided touch calibration.
+
+When the Scale exposes the command-acknowledgement characteristic and the control
+packet has a non-zero command ID, the display treats the command as reliably
+queued. A full refresh is acknowledged only after the panel update succeeds.
+A failed acknowledgement leaves the Scale command pending so it is offered again
+on a later wake.
+
+For unpair/replacement, the display writes the completion acknowledgement while
+the existing bond is still authenticated. It deletes the local bond only after
+that acknowledgement succeeds. If the write fails, the display remains paired
+and retries the Scale's still-pending command later. The Scale completes its bond
+cleanup when the acknowledged display disconnects.
+
+Older Scale firmware has no acknowledgement characteristic and leaves the command
+ID at zero. In that case V1.3.5 display firmware follows the legacy behavior, so
+either side can be upgraded first without breaking the existing bond.
+
+A full refresh redraws the current keg screen and resets the changed-region
 partial-refresh counter.

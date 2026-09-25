@@ -6,11 +6,17 @@ Run under Linux/WSL with a C compiler, Python 3, and `libmbedtls-dev`:
 bash tests/run_host_tests.sh
 ```
 
-The full runner first requires the companion Scale checkout and checks that
-both shared controller source/header copies are byte-identical. By default,
+The Scale repository is the canonical owner of `controller_link`; Touch keeps
+a byte-for-byte vendored mirror so standalone/offline firmware builds remain
+self-contained. The full runner requires the companion Scale checkout and checks
+that source, public header, and component CMake files are identical. By default,
 Scale is the sibling `KegScaleESP` directory; set `KEGSCALE_SCALE_ROOT` for a
-different location. A missing checkout/checker or mismatch stops validation.
-For just this gate on Windows, run `python tools/check_controller_link.py`.
+different location. A missing checkout/tool or mismatch stops validation.
+
+For the read-only gate on Windows, run
+`python tools/check_controller_link.py`. After an intentional canonical
+protocol change, run `python tools/sync_controller_link.py` from the Display
+repository to refresh the Touch mirror from Scale.
 
 The runner includes existing power/touch calibration tests, the OTA tests, the
 touchscreen text guard, the real controller protocol tests, and PSA fault

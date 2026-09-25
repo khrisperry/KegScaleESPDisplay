@@ -15,6 +15,9 @@ struct Settings {
 struct Action {
   char kind[24];
   char body[1024];
+  // UI content generation that created this action. Async Setup results must
+  // match it before touching widgets created by that screen generation.
+  uint32_t ui_generation;
 };
 
 struct State {
@@ -49,11 +52,14 @@ extern QueueHandle_t actions;
 void ui_start(const Settings &settings);
 void ui_state(const State &state);
 void ui_message(const char *message);
+void ui_message_for_generation(const char *message, uint32_t generation);
 void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
 void ui_discovered_options(const char *options);
-void ui_networks(const char *options);
+void ui_discovered_options_for_generation(const char *options,
+                                          uint32_t generation);
+void ui_networks(const char *options, uint32_t generation);
 void ui_paired(void);
 void ui_settings_applied(const Settings &settings);
 void ui_scale_profiles(const char *primary_host, bool primary_paired,
@@ -67,6 +73,10 @@ void ui_update_installing(const char *version);
 void ui_update_progress(int percent);
 void ui_update_complete(const char *version);
 void ui_update_error(const char *message, bool installing);
+
+// Called while the LVGL display lock is held. Shows or hides the normal-screen
+// firmware-update attention indicator on the hamburger menu.
+void touchscreen_home_set_update_available(bool available);
 
 esp_err_t touchscreen_ota(bool install);
 void touchscreen_ota_get_preferences(OtaPreferences *preferences);

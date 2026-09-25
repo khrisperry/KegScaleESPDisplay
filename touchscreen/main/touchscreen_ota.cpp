@@ -197,8 +197,8 @@ esp_err_t touchscreen_ota(bool install) {
   const int version_cmp = compare_versions(version, current);
   if (version_cmp <= 0) {
     if (version_cmp < 0) {
-      ESP_LOGW(TAG,
-               "Ignoring stale OTA feed to prevent downgrade: current=%s feed=%s",
+      ESP_LOGI(TAG,
+               "Running firmware is newer than OTA feed; downgrade blocked: current=%s feed=%s",
                current, version);
       ui_update_status(current, version, false, true);
     } else {

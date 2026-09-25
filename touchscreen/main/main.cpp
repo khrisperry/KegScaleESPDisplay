@@ -2,10 +2,15 @@
 #include "ble_client.h"
 #include "cJSON.h"
 #include "controller_link.h"
+#include "connection_transport.h"
+#include "connection_session.h"
+#include "controller_setup_client.h"
+#include "setup_discovery.h"
 #include "esp_app_desc.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_heap_caps.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include "esp_log.h"
@@ -17,6 +22,7 @@
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "esp_wifi.h"
+#include "freertos/task.h"
 #include "mdns.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -27,6 +33,16 @@
 #include <strings.h>
 
 QueueHandle_t actions;
+
+static void touchscreen_apply_settings_live();
+static void touchscreen_ui_message(const char *message);
+static bool touchscreen_remove_scale_pairing(const char *host);
+static void *touchscreen_pairing_memset(void *dest, int value, size_t count);
+static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
+                                             const uint8_t *in, size_t len,
+                                             char *out);
+extern "C" void touchscreen_request_auto_discovery();
+
 namespace {
 const char *TAG = "wifi_touchscreen";
 Settings settings{};
@@ -62,41 +78,6 @@ void publish_scale_profiles() {
   ui_scale_profiles(settings.host, settings.paired, secondary_scale.host,
                     secondary_scale.paired, active_scale_index);
 }
-struct Frame {
-  uint8_t slot;
-  uint32_t generation;
-  int kind;
-  size_t length;
-  uint8_t bytes[CL_MAX_FRAME + 1];
-};
-
-struct ScaleConnection {
-  cl_session_t link{};
-  esp_websocket_client_handle_t ws = nullptr;
-  Frame assembly{};
-  char own_public[131] = {};
-  char uri[180] = {};
-  char pending_op[32] = {};
-  uint8_t client_nonce[32] = {};
-  uint32_t request_id = 0;
-  uint32_t pending_id = 0;
-  int64_t last_state = 0;
-  int64_t pending_since = 0;
-  int64_t last_ping = 0;
-  int64_t last_reading = 0;
-  int64_t last_age_update = 0;
-  int64_t next_connection_attempt = 0;
-  int64_t pairing_deadline_us = 0;
-  int64_t cancel_pairing_deadline_us = 0;
-  bool authenticated = false;
-  bool traffic_ready = false;
-  bool retry_connection = true;
-  std::atomic<uint32_t> generation{0};
-  State state{};
-};
-
-ScaleConnection connections[2];
-QueueHandle_t frames;
 std::atomic<bool> wifi_ready{false};
 
 // Keep an unreachable saved scale from monopolizing the application loop.
@@ -105,16 +86,10 @@ std::atomic<bool> wifi_ready{false};
 constexpr int64_t kReconnectRetryUs = 10000000LL;
 constexpr int64_t kStateStaleUs = 12000000LL;
 
-ScaleConnection &connection_for(uint8_t slot) {
-  return connections[slot == 1 ? 1 : 0];
-}
-const ScaleConnection &connection_for_const(uint8_t slot) {
-  return connections[slot == 1 ? 1 : 0];
-}
 int scale_index_for_link(cl_session_t *session) {
-  if (session == &connections[0].link)
+  if (session == &connection_for(0).link)
     return 0;
-  if (session == &connections[1].link)
+  if (session == &connection_for(1).link)
     return 1;
   return -1;
 }
@@ -139,6 +114,7 @@ bool yes(cJSON *o, const char *k) {
   return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, k));
 }
 int64_t now() { return esp_timer_get_time(); }
+
 esp_err_t persist() {
   nvs_handle_t n;
   esp_err_t e = nvs_open("touchscreen", NVS_READWRITE, &n);
@@ -200,98 +176,15 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
   }
 }
 
-void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
-  const uint32_t token =
-      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(arg));
-  const uint8_t slot = token & 1U;
-  const uint32_t event_generation = token >> 1;
-  if (slot > 1)
-    return;
-  auto &c = connection_for(slot);
-  const uint32_t current_generation = c.generation.load();
-  if (event_generation != current_generation) {
-    ESP_LOGD(TAG,
-             "Ignoring stale scale %u WebSocket event=%ld generation=%lu current=%lu",
-             (unsigned)(slot + 1), (long)event,
-             (unsigned long)event_generation,
-             (unsigned long)current_generation);
-    return;
-  }
-
-  Frame f{};
-  f.slot = slot;
-  f.generation = event_generation;
-  if (event == WEBSOCKET_EVENT_CONNECTED) {
-    ESP_LOGI(TAG, "Scale %u WebSocket transport connected to %s generation=%lu",
-             (unsigned)(slot + 1), c.uri,
-             (unsigned long)event_generation);
-    f.kind = 1;
-    if (xQueueSend(frames, &f, 0) != pdTRUE)
-      ESP_LOGW(TAG, "Frame queue full while reporting scale %u connection",
-               (unsigned)(slot + 1));
-  } else if (event == WEBSOCKET_EVENT_DISCONNECTED) {
-    ESP_LOGW(TAG,
-             "Scale %u WebSocket transport disconnected from %s generation=%lu",
-             (unsigned)(slot + 1), c.uri,
-             (unsigned long)event_generation);
-    f.kind = 2;
-    if (xQueueSend(frames, &f, 0) != pdTRUE)
-      ESP_LOGW(TAG, "Frame queue full while reporting scale %u disconnect",
-               (unsigned)(slot + 1));
-    c.assembly = {};
-  } else if (event == WEBSOCKET_EVENT_ERROR) {
-    ESP_LOGW(TAG,
-             "Scale %u WebSocket transport error while connecting to %s generation=%lu",
-             (unsigned)(slot + 1), c.uri,
-             (unsigned long)event_generation);
-  } else if (event == WEBSOCKET_EVENT_DATA) {
-    auto *d = (esp_websocket_event_data_t *)data;
-    if (d->op_code != 1 && d->op_code != 2)
-      return;
-    if (d->payload_offset == 0) {
-      c.assembly = {};
-      c.assembly.slot = slot;
-      c.assembly.generation = event_generation;
-      c.assembly.kind = d->op_code == 1 ? 3 : 4;
-    }
-    if (d->payload_len > CL_MAX_FRAME || d->payload_offset < 0 ||
-        d->data_len < 0 || (size_t)d->payload_offset != c.assembly.length ||
-        c.assembly.length + d->data_len > CL_MAX_FRAME) {
-      ESP_LOGW(TAG,
-               "Rejected scale %u WebSocket fragment: opcode=%d payload_len=%d offset=%d data_len=%d assembled=%u",
-               (unsigned)(slot + 1), d->op_code, d->payload_len,
-               d->payload_offset, d->data_len, (unsigned)c.assembly.length);
-      return;
-    }
-    memcpy(c.assembly.bytes + c.assembly.length, d->data_ptr, d->data_len);
-    c.assembly.length += d->data_len;
-    if (c.assembly.length == (size_t)d->payload_len) {
-      ESP_LOGD(TAG,
-               "Complete scale %u WebSocket message received: opcode=%d len=%u",
-               (unsigned)(slot + 1), d->op_code,
-               (unsigned)c.assembly.length);
-      if (xQueueSend(frames, &c.assembly, 0) != pdTRUE)
-        ESP_LOGW(TAG, "Frame queue full; dropping scale %u WebSocket message",
-                 (unsigned)(slot + 1));
-    }
-  }
-}
-
 void disconnected(uint8_t slot) {
   auto &c = connection_for(slot);
-  const bool was_authenticated = c.authenticated;
-  const bool was_online = c.state.online;
-  c.authenticated = false;
-  c.traffic_ready = false;
-  c.state.online = false;
-  c.last_state = 0;
-  cl_clear(&c.link);
+  const SessionResetSnapshot reset = connection_session_reset(slot);
   if (slot == active_scale_index)
     ui_state(c.state);
-  if (was_authenticated || was_online)
+  if (reset.was_authenticated || reset.was_online)
     ESP_LOGI(TAG,
              "Scale %u session reset: authenticated=%d online=%d",
-             (unsigned)(slot + 1), was_authenticated, was_online);
+             (unsigned)(slot + 1), reset.was_authenticated, reset.was_online);
   if (c.pending_id) {
     ESP_LOGW(TAG,
              "Connection lost with scale %u command id=%lu op='%s' pending",
@@ -306,117 +199,107 @@ void disconnected(uint8_t slot) {
 
 void stop_scale_transport(uint8_t slot, bool retry) {
   auto &c = connection_for(slot);
-  c.generation.fetch_add(1);
-  if (c.ws) {
-    esp_websocket_client_stop(c.ws);
-    esp_websocket_client_destroy(c.ws);
-    c.ws = nullptr;
+  const uint32_t retired_generation = c.generation.fetch_add(1);
+  auto old_ws = c.ws;
+  c.ws = nullptr;
+
+  if (old_ws &&
+      !retire_transport_async(slot, old_ws, retired_generation)) {
+    /*
+     * Do not block the main/UI task trying to stop a wedged WebSocket. Restore
+     * ownership of the handle so the next retry can queue it again instead of
+     * leaking the transport.
+     */
+    c.ws = old_ws;
+    c.retry_connection = retry && scale_host_const(slot)[0];
+    c.next_connection_attempt = now() + kReconnectRetryUs;
+    disconnected(slot);
+    return;
   }
+
   disconnected(slot);
   c.retry_connection = retry && scale_host_const(slot)[0];
   c.next_connection_attempt = now() + kReconnectRetryUs;
 }
 
 bool send_secure(uint8_t slot, const char *plain) {
-  auto &c = connection_for(slot);
-  uint8_t out[CL_MAX_FRAME];
-  size_t len = 0;
-  esp_err_t e = cl_seal(&c.link, plain, out, &len);
-  if (e != ESP_OK) {
-    ESP_LOGW(TAG, "Could not encrypt scale %u WebSocket message: %s",
-             (unsigned)(slot + 1), esp_err_to_name(e));
-    return false;
-  }
-  if (!c.ws || !esp_websocket_client_is_connected(c.ws))
-    return false;
-  int sent = esp_websocket_client_send_bin(c.ws, (char *)out, len,
-                                           pdMS_TO_TICKS(1000));
-  if (sent != (int)len) {
-    ESP_LOGW(TAG,
-             "Scale %u encrypted WebSocket send incomplete: sent=%d expected=%u",
-             (unsigned)(slot + 1), sent, (unsigned)len);
-    return false;
-  }
-  return true;
+  return connection_session_send_secure(slot, plain, now());
 }
 
 bool scale_accepting_connection(uint8_t slot) {
   const char *host = scale_host_const(slot);
-  char url[180], body[512] = {};
-  snprintf(url, sizeof(url), "http://%s/api/controller", host);
-  ESP_LOGI(TAG, "Probing scale %u setup endpoint: %s",
-           (unsigned)(slot + 1), url);
-  esp_http_client_config_t cfg = {};
-  cfg.url = url;
-  cfg.timeout_ms = 2000;
-  auto client = esp_http_client_init(&cfg);
-  if (!client) {
-    ESP_LOGE(TAG, "Could not allocate HTTP client for scale %u probe",
-             (unsigned)(slot + 1));
-    return false;
-  }
-  esp_err_t err = esp_http_client_open(client, 0);
-  int status = 0, received = -1;
-  int64_t headers = -1;
-  if (err == ESP_OK) {
-    headers = esp_http_client_fetch_headers(client);
-    if (headers >= 0) {
-      status = esp_http_client_get_status_code(client);
-      received = esp_http_client_read_response(client, body, sizeof(body) - 1);
-    }
-  }
+  ESP_LOGI(TAG, "Probing scale %u controller setup endpoint for host='%s'",
+           (unsigned)(slot + 1), host);
+
+  ControllerSetupResponse response{};
+  const esp_err_t err = controller_setup_get(host, 2000, &response);
+
   ESP_LOGI(TAG,
            "Scale %u setup probe result: host='%s' open=%s headers=%lld status=%d bytes=%d",
            (unsigned)(slot + 1), host, esp_err_to_name(err),
-           (long long)headers, status, received);
-  if (received > 0)
+           (long long)response.headers, response.http_status,
+           response.bytes_received);
+  if (response.bytes_received > 0)
     ESP_LOGI(TAG, "Scale %u setup response: %s",
-             (unsigned)(slot + 1), body);
-  esp_http_client_close(client);
-  esp_http_client_cleanup(client);
+             (unsigned)(slot + 1), response.body);
 
-  if (status != 200 || received <= 0) {
+  if (response.http_status != 200 || response.bytes_received <= 0) {
     if (slot == active_scale_index)
-      ui_message(status == 404
-                     ? "Update scale firmware to enable Wi-Fi touchscreen setup."
-                     : "Scale unreachable. Check its address and Wi-Fi network.");
+      touchscreen_ui_message(
+          response.http_status == 404
+              ? "Update scale firmware to enable Wi-Fi touchscreen setup."
+              : "Scale unreachable. Check its address and Wi-Fi network.");
     return false;
   }
 
-  auto o = cJSON_Parse(body);
-  if (!o || !cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(o, "paired"))) {
+  if (!response.json_valid || !response.has_paired) {
     ESP_LOGW(TAG, "Scale %u setup response was not expected controller JSON",
              (unsigned)(slot + 1));
-    cJSON_Delete(o);
     if (slot == active_scale_index)
-      ui_message("Address did not return scale setup. Check the scale address.");
+      touchscreen_ui_message(
+          "Address did not return scale setup. Check the scale address.");
     return false;
   }
 
-  const bool paired = yes(o, "paired");
-  const bool pending = yes(o, "pending");
-  const double seconds = num(o, "seconds");
-  connection_for(slot).pairing_deadline_us = now() + (int64_t)(seconds * 1000000);
-  const bool connected = yes(o, "connected");
+  const bool paired = response.paired;
+  const bool pending = response.pending;
+  const double seconds = response.has_seconds ? response.seconds : 0;
+  connection_for(slot).pairing_deadline_us =
+      now() + (int64_t)(seconds * 1000000);
+  const bool connected = response.connected;
   const bool ready = paired == scale_paired(slot) && (paired || seconds > 0);
+
   ESP_LOGI(TAG,
            "Scale %u controller status: scale_paired=%d display_paired=%d connected=%d pending=%d pairing_seconds=%.0f ready=%d",
            (unsigned)(slot + 1), paired, scale_paired(slot), connected,
            pending, seconds, ready);
+
   if (slot == active_scale_index) {
     if (paired && !scale_paired(slot))
-      ui_message("On scale: remove old Wi-Fi touchscreen, then Add touchscreen.");
+      touchscreen_ui_message(
+          "On scale: remove old Wi-Fi touchscreen, then Add touchscreen.");
     else if (!paired && scale_paired(slot))
-      ui_message("In Setup: Remove pairing, then Add touchscreen on the scale.");
+      touchscreen_ui_message(
+          "In Setup: Remove pairing, then Add touchscreen on the scale.");
     else if (!ready)
-      ui_message("On scale: Wi-Fi touchscreen setup > Add touchscreen.");
+      touchscreen_ui_message(
+          "On scale: Wi-Fi touchscreen setup > Add touchscreen.");
   }
-  cJSON_Delete(o);
   return ready;
 }
 
 void connect_scale(uint8_t slot) {
   auto &c = connection_for(slot);
+
+  if (c.retirement_pending) {
+    c.retry_connection = true;
+    c.next_connection_attempt = now();
+    ESP_LOGD(TAG,
+             "Scale %u reconnect deferred until previous WebSocket retirement completes",
+             (unsigned)(slot + 1));
+    return;
+  }
+
   const uint32_t generation = c.generation.fetch_add(1) + 1;
   c.retry_connection = true;
   c.next_connection_attempt = now() + kReconnectRetryUs;
@@ -427,12 +310,22 @@ void connect_scale(uint8_t slot) {
            (bool)wifi_ready, scale_paired(slot), (unsigned long)generation);
 
   if (c.ws) {
-    ESP_LOGI(TAG,
-             "Stopping previous scale %u WebSocket before reconnect; invalidated generation=%lu",
-             (unsigned)(slot + 1), (unsigned long)(generation - 1));
-    esp_websocket_client_stop(c.ws);
-    esp_websocket_client_destroy(c.ws);
+    auto old_ws = c.ws;
     c.ws = nullptr;
+    ESP_LOGI(TAG,
+             "Queueing previous scale %u WebSocket for background retirement; invalidated generation=%lu",
+             (unsigned)(slot + 1), (unsigned long)(generation - 1));
+    if (!retire_transport_async(slot, old_ws, generation - 1)) {
+      c.ws = old_ws;
+      c.retry_connection = true;
+      c.next_connection_attempt = now() + kReconnectRetryUs;
+      disconnected(slot);
+      return;
+    }
+    disconnected(slot);
+    c.retry_connection = true;
+    c.next_connection_attempt = now();
+    return;
   }
   disconnected(slot);
 
@@ -446,7 +339,7 @@ void connect_scale(uint8_t slot) {
     ESP_LOGW(TAG, "Scale %u connection deferred: Wi-Fi has no IP yet",
              (unsigned)(slot + 1));
     if (slot == active_scale_index)
-      ui_message("Waiting for Wi-Fi. Check SSID and password in Setup.");
+      touchscreen_ui_message("Waiting for Wi-Fi. Check SSID and password in Setup.");
     return;
   }
   if (!scale_paired(slot)) {
@@ -487,12 +380,23 @@ void connect_scale(uint8_t slot) {
   config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
   config.network_timeout_ms = 5000;
+  /*
+   * We already have protocol-level liveness in both directions:
+   * - Touch sends an authenticated heartbeat every 8 seconds.
+   * - Scale expires the session if it receives nothing for 15 seconds.
+   * - Touch reconnects if Scale state is stale for more than 12 seconds.
+   *
+   * Do not let esp_websocket_client's independent PING/PONG timeout recycle a
+   * healthy authenticated session. Control-frame PINGs may still be sent, but
+   * application liveness remains authoritative.
+   */
+  config.disable_pingpong_discon = true;
   c.ws = esp_websocket_client_init(&config);
   if (!c.ws) {
     ESP_LOGE(TAG, "esp_websocket_client_init failed for scale %u %s",
              (unsigned)(slot + 1), c.uri);
     if (slot == active_scale_index)
-      ui_message("Could not start scale WebSocket connection");
+      touchscreen_ui_message("Could not start scale WebSocket connection");
     return;
   }
 
@@ -507,7 +411,7 @@ void connect_scale(uint8_t slot) {
            (unsigned)(slot + 1), esp_err_to_name(e), c.retry_connection,
            (unsigned long)generation);
   if (e != ESP_OK && slot == active_scale_index)
-    ui_message("Could not start scale WebSocket connection");
+    touchscreen_ui_message("Could not start scale WebSocket connection");
 }
 
 void on_frame(const Frame &f) {
@@ -533,7 +437,7 @@ void on_frame(const Frame &f) {
     if (slot == active_scale_index && !scale_paired(slot))
       touchscreen_pairing_ended();
     if (slot == active_scale_index)
-      ui_message("Disconnected — reconnecting to scale");
+      touchscreen_ui_message("Disconnected — reconnecting to scale");
     return;
   }
 
@@ -542,31 +446,25 @@ void on_frame(const Frame &f) {
              "Scale %u WebSocket connected; beginning protocol-1 handshake",
              (unsigned)(slot + 1));
     disconnected(slot);
-    char hello[320], nonce_hex[65];
-    esp_fill_random(c.client_nonce, 32);
-    cl_hex(c.client_nonce, 32, nonce_hex);
-    if (scale_paired(slot)) {
-      memcpy(c.link.master, scale_master(slot), 32);
-      snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"nonce\":\"%s\"}",
-               nonce_hex);
+
+    char hello[320] = {};
+    esp_err_t e = connection_session_prepare_hello(
+        slot, scale_paired(slot), scale_master(slot),
+        esp_app_get_description()->version, hello, sizeof(hello));
+    if (e != ESP_OK) {
+      ESP_LOGE(TAG, "Scale %u pairing key initialization failed: %s",
+               (unsigned)(slot + 1), esp_err_to_name(e));
+      if (slot == active_scale_index)
+        touchscreen_ui_message("Pairing initialization failed");
+      return;
+    }
+
+    if (scale_paired(slot))
       ESP_LOGI(TAG, "Sending hello for saved scale %u pairing",
                (unsigned)(slot + 1));
-    } else {
-      esp_err_t e = cl_keypair(&c.link, c.own_public);
-      if (e != ESP_OK) {
-        ESP_LOGE(TAG, "Scale %u pairing key initialization failed: %s",
-                 (unsigned)(slot + 1), esp_err_to_name(e));
-        if (slot == active_scale_index)
-          ui_message("Pairing initialization failed");
-        return;
-      }
-      snprintf(hello, sizeof(hello),
-               "{\"type\":\"hello\",\"protocol\":1,\"public\":\"%s\",\"nonce\":\"%s\"}",
-               c.own_public, nonce_hex);
+    else
       ESP_LOGI(TAG, "Sending hello for new scale %u pairing",
                (unsigned)(slot + 1));
-    }
     int sent = esp_websocket_client_send_text(
         c.ws, hello, strlen(hello), pdMS_TO_TICKS(1000));
     if (sent != (int)strlen(hello))
@@ -578,12 +476,12 @@ void on_frame(const Frame &f) {
 
   char plain[CL_MAX_PLAIN];
   if (f.kind == 4) {
-    esp_err_t e = cl_open(&c.link, f.bytes, f.length, plain);
+    esp_err_t e = touchscreen_pairing_cl_open(&c.link, f.bytes, f.length, plain);
     if (e != ESP_OK) {
       ESP_LOGW(TAG, "Scale %u encrypted frame authentication failed: %s",
                (unsigned)(slot + 1), esp_err_to_name(e));
       if (slot == active_scale_index)
-        ui_message("Scale authentication failed");
+        touchscreen_ui_message("Scale authentication failed");
       return;
     }
   } else {
@@ -609,9 +507,7 @@ void on_frame(const Frame &f) {
       (!strcmp(type, "pair") || !strcmp(type, "challenge"))) {
     ESP_LOGI(TAG, "Scale %u handshake message type='%s'",
              (unsigned)(slot + 1), type);
-    uint8_t challenge[32];
-    if (num(o, "protocol") != 1 ||
-        !cl_unhex(str(o, "challenge"), challenge, 32)) {
+    if (num(o, "protocol") != 1) {
       ESP_LOGW(TAG, "Scale %u handshake validation failed: protocol=%.0f",
                (unsigned)(slot + 1), num(o, "protocol"));
       cJSON_Delete(o);
@@ -619,52 +515,41 @@ void on_frame(const Frame &f) {
     }
 
     const bool pairing = !strcmp(type, "pair");
-    esp_err_t e = ESP_OK;
-    if (pairing) {
-      char code[13];
-      e = cl_agree(&c.link, str(o, "public"), str(o, "public"),
-                   c.own_public, code);
-      if (e == ESP_OK && slot == active_scale_index) {
-        ESP_LOGI(TAG,
-                 "Scale %u key agreement succeeded; displaying approval code",
-                 (unsigned)(slot + 1));
-        // New Scales include the actual remaining window. For older Scales,
-        // retain the deadline obtained by the setup probe instead of starting
-        // an unrelated timer when the code arrives.
-        const cJSON *seconds_field = cJSON_GetObjectItemCaseSensitive(o, "seconds");
-        const int64_t remaining = c.pairing_deadline_us - now();
-        const uint32_t seconds = cJSON_IsNumber(seconds_field)
-            ? (uint32_t)std::max(0.0, std::min(300.0, num(o, "seconds")))
-            : (remaining > 0 ? (uint32_t)((remaining + 999999) / 1000000) : 0);
-        touchscreen_pairing_window(seconds);
-        ui_pair_code(code);
-      }
-    } else if (!scale_paired(slot)) {
-      ESP_LOGW(TAG,
-               "Scale %u sent saved-pairing challenge but display has no saved pairing",
+    const cJSON *seconds_field =
+        cJSON_GetObjectItemCaseSensitive(o, "seconds");
+    SessionHandshakeResult handshake{};
+    esp_err_t e = connection_session_accept_handshake(
+        slot, scale_paired(slot), pairing, str(o, "challenge"),
+        str(o, "public"), now(), cJSON_IsNumber(seconds_field),
+        num(o, "seconds"), &handshake);
+
+    if (e == ESP_OK && handshake.pairing && slot == active_scale_index) {
+      ESP_LOGI(TAG,
+               "Scale %u key agreement succeeded; displaying approval code",
                (unsigned)(slot + 1));
-      e = ESP_FAIL;
+      touchscreen_pairing_window(handshake.approval_seconds);
+      ui_pair_code(handshake.approval_code);
     }
 
-    if (e == ESP_OK) {
-      e = cl_start(&c.link, challenge, c.client_nonce, false);
-      c.traffic_ready = e == ESP_OK;
-      ESP_LOGI(TAG, "Scale %u traffic-key setup returned %s",
-               (unsigned)(slot + 1), esp_err_to_name(e));
-    }
-    if (e == ESP_OK && !pairing) {
+    if (e == ESP_OK && handshake.send_auth) {
       if (!send_secure(slot, "{\"type\":\"auth\"}"))
         ESP_LOGW(TAG, "Failed sending encrypted scale %u auth proof",
                  (unsigned)(slot + 1));
     }
+
+    if (e == ESP_ERR_INVALID_STATE && !scale_paired(slot)) {
+      ESP_LOGW(TAG,
+               "Scale %u sent saved-pairing challenge but display has no saved pairing",
+               (unsigned)(slot + 1));
+    }
     if (e != ESP_OK && slot == active_scale_index)
-      ui_message("Pairing failed. Reopen pairing on the scale.");
+      touchscreen_ui_message("Pairing failed. Reopen pairing on the scale.");
   } else if (f.kind == 4 && !strcmp(type, "pairing_canceled") && !scale_paired(slot)) {
     c.cancel_pairing_deadline_us = 0;
     stop_scale_transport(slot, false);
     if (slot == active_scale_index) {
       touchscreen_pairing_ended();
-      ui_message("Pairing canceled. Start again from the Scale when ready.");
+      touchscreen_ui_message("Pairing canceled. Start again from the Scale when ready.");
     }
   } else if (f.kind == 4 && !strcmp(type, "authorized")) {
     c.cancel_pairing_deadline_us = 0;
@@ -679,7 +564,7 @@ void on_frame(const Frame &f) {
         ESP_LOGE(TAG, "Could not save scale %u pairing: %s",
                  (unsigned)(slot + 1), esp_err_to_name(e));
         if (slot == active_scale_index)
-          ui_message("Could not save pairing. Retry setup.");
+          touchscreen_ui_message("Could not save pairing. Retry setup.");
         cJSON_Delete(o);
         return;
       }
@@ -691,7 +576,7 @@ void on_frame(const Frame &f) {
     c.retry_connection = false;
     if (slot == active_scale_index) {
       ui_paired();
-      ui_message("Connected to scale");
+      touchscreen_ui_message("Connected to scale");
     }
     ESP_LOGI(TAG,
              "Scale %u session authenticated; internal_free=%u largest_internal=%u",
@@ -733,12 +618,41 @@ void on_frame(const Frame &f) {
       ui_state(c.state);
   } else if (f.kind == 4 && c.authenticated && !strcmp(type, "result") &&
              num(o, "id") == c.pending_id && c.pending_id) {
+    bool result_ok = yes(o, "ok");
+    const char *result_error = str(o, "error");
+    char session_error[96] = {};
+
+    if (!strcmp(c.pending_op, "begin_calibration") && result_ok) {
+      const double session_value = num(o, "calibration_session_id");
+      if (!std::isfinite(session_value) || session_value < 1 ||
+          session_value > UINT32_MAX || floor(session_value) != session_value) {
+        result_ok = false;
+        snprintf(session_error, sizeof(session_error),
+                 "Scale did not return a valid calibration session. Start again.");
+        result_error = session_error;
+        c.calibration_session_id = 0;
+      } else {
+        c.calibration_session_id = (uint32_t)session_value;
+      }
+    } else if (result_ok &&
+               (!strcmp(c.pending_op, "calibrate") ||
+                !strcmp(c.pending_op, "cancel_calibration"))) {
+      c.calibration_session_id = 0;
+    } else if (!result_ok && c.calibration_session_id &&
+               (!strcmp(c.pending_op, "tare") ||
+                !strcmp(c.pending_op, "calibrate") ||
+                !strcmp(c.pending_op, "cancel_calibration")) &&
+               strstr(result_error, "session expired")) {
+      c.calibration_session_id = 0;
+    }
+
     ESP_LOGI(TAG,
-             "Scale %u command result: id=%lu op='%s' ok=%d",
+             "Scale %u command result: id=%lu op='%s' ok=%d calibration_session=%lu",
              (unsigned)(slot + 1), (unsigned long)c.pending_id,
-             c.pending_op, yes(o, "ok"));
+             c.pending_op, result_ok,
+             (unsigned long)c.calibration_session_id);
     if (slot == active_scale_index)
-      ui_result(yes(o, "ok"), c.pending_op, str(o, "error"));
+      ui_result(result_ok, c.pending_op, result_error);
     c.pending_id = 0;
   } else {
     ESP_LOGD(TAG,
@@ -747,56 +661,6 @@ void on_frame(const Frame &f) {
              (unsigned long)c.pending_id);
   }
   cJSON_Delete(o);
-}
-
-unsigned build_scale_discovery_options(mdns_result_t *found, char *options,
-                                       size_t options_size) {
-  if (!options || options_size == 0)
-    return 0;
-  options[0] = 0;
-  const char *manual = "Manual IP / hostname...";
-  const size_t manual_reserve = strlen(manual) + 2;
-  unsigned count = 0;
-
-  for (auto p = found; p; p = p->next) {
-    if (!p->hostname || !p->hostname[0])
-      continue;
-    char host[140];
-    snprintf(host, sizeof(host), "%s.local", p->hostname);
-    bool duplicate = false;
-    const char *scan = options;
-    const size_t host_len = strlen(host);
-    while (*scan) {
-      const char *line_end = strchr(scan, '\n');
-      const size_t line_len =
-          line_end ? (size_t)(line_end - scan) : strlen(scan);
-      if (line_len == host_len && !strncmp(scan, host, host_len)) {
-        duplicate = true;
-        break;
-      }
-      if (!line_end)
-        break;
-      scan = line_end + 1;
-    }
-    if (duplicate)
-      continue;
-
-    const size_t used = strlen(options);
-    const size_t append_len = host_len + (used ? 1 : 0);
-    if (used + append_len + manual_reserve >= options_size)
-      break;
-    if (used)
-      strcat(options, "\n");
-    strcat(options, host);
-    ++count;
-    ESP_LOGI(TAG, "mDNS scale candidate: hostname='%s' port=%u",
-             p->hostname, p->port);
-  }
-
-  if (options[0])
-    strcat(options, "\n");
-  strcat(options, manual);
-  return count;
 }
 
 void normalize_host(const char *host, char *buffer, size_t size) {
@@ -1098,12 +962,53 @@ void action(const Action &a) {
       } else {
         stop_scale_transport(slot, false);
         touchscreen_pairing_ended();
-        ui_message("Pairing stopped here. The Scale window will expire automatically.");
+        touchscreen_ui_message("Pairing stopped here. The Scale window will expire automatically.");
       }
     } else {
       touchscreen_pairing_ended();
-      ui_message("Pairing already completed; saved connection kept.");
+      touchscreen_ui_message("Pairing already completed; saved connection kept.");
     }
+    cJSON_Delete(o);
+    return;
+  }
+
+  if (!strcmp(a.kind, "pairing_rearm") && o) {
+    const int requested_slot = (int)num(o, "slot");
+    const uint8_t slot = requested_slot == 1 ? 1 : 0;
+
+    if (scale_paired(slot)) {
+      ESP_LOGI(TAG,
+               "Ignoring Scale %u pairing rearm because pairing is already saved",
+               (unsigned)(slot + 1));
+    } else if (!scale_host_const(slot)[0]) {
+      ESP_LOGW(TAG,
+               "Ignoring Scale %u pairing rearm because no host is configured",
+               (unsigned)(slot + 1));
+    } else if (slot != active_scale_index) {
+      /*
+       * Never steal the UI or transport from the selected Scale. The Add
+       * touchscreen window remains open on the inactive Scale; the user can
+       * select that slot in Setup and Save & connect when ready.
+       */
+      ESP_LOGI(TAG,
+               "Scale %u pairing window is ready while Scale %u remains active; leaving active connection untouched",
+               (unsigned)(slot + 1), (unsigned)(active_scale_index + 1));
+      char message[96];
+      snprintf(message, sizeof(message),
+               "Scale %u is ready to pair. Select it in Setup and Save & connect.",
+               (unsigned)(slot + 1));
+      touchscreen_ui_message(message);
+    } else {
+      auto &c = connection_for(slot);
+      ESP_LOGI(TAG,
+               "Re-arming Scale %u pairing connection without resetting Wi-Fi or the other Scale",
+               (unsigned)(slot + 1));
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      touchscreen_ui_message("Pairing window found - connecting to scale...");
+      connect_scale(slot);
+    }
+
     cJSON_Delete(o);
     return;
   }
@@ -1127,12 +1032,12 @@ void action(const Action &a) {
         strlen(str(o, "password")) > 64) {
       ESP_LOGW(TAG,
                "Rejected settings update: invalid host/SSID/password length");
-      ui_message("Enter a hostname or IPv4 address without http:// or a port");
+      touchscreen_ui_message("Enter a hostname or IPv4 address without http:// or a port");
     } else if (duplicate_host) {
       ESP_LOGW(TAG,
                "Rejected scale %u settings: host '%s' is already assigned to scale %u",
                (unsigned)(slot + 1), host, (unsigned)(other + 1));
-      ui_message("That scale is already assigned to the other slot.");
+      touchscreen_ui_message("That scale is already assigned to the other slot.");
     } else {
       const Settings previous_settings = settings;
       const StoredScaleProfile previous_secondary = secondary_scale;
@@ -1147,7 +1052,7 @@ void action(const Action &a) {
 
       if (host_changed) {
         scale_paired(slot) = false;
-        memset(scale_master(slot), 0, 32);
+        touchscreen_pairing_memset(scale_master(slot), 0, 32);
         snprintf(scale_host(slot), 128, "%s", host);
         stop_scale_transport(slot, false);
       }
@@ -1161,9 +1066,9 @@ void action(const Action &a) {
         publish_scale_profiles();
         publish_active_state();
         ESP_LOGI(TAG, "Settings saved; applying touchscreen configuration");
-        ui_message("Settings saved — restarting");
+        touchscreen_ui_message("Settings saved — restarting");
         vTaskDelay(pdMS_TO_TICKS(100));
-        esp_restart();
+        touchscreen_apply_settings_live();
       } else {
         settings = previous_settings;
         secondary_scale = previous_secondary;
@@ -1173,56 +1078,19 @@ void action(const Action &a) {
         restore_connection.next_connection_attempt = now();
         publish_scale_profiles();
         publish_active_state();
-        ui_message("Could not save settings");
+        touchscreen_ui_message("Could not save settings");
       }
     }
   } else if (!strcmp(a.kind, "discover_qr")) {
     discover_unpaired_scale_qr(active_scale_index);
   } else if (!strcmp(a.kind, "scan_wifi")) {
-    ESP_LOGI(TAG, "Starting Wi-Fi network scan");
-    wifi_scan_config_t scan = {};
-    esp_err_t scan_err = esp_wifi_scan_start(&scan, true);
-    if (scan_err == ESP_OK) {
-      wifi_ap_record_t aps[20];
-      uint16_t count = 20;
-      esp_wifi_scan_get_ap_records(&count, aps);
-      ESP_LOGI(TAG, "Wi-Fi scan completed: %u access points returned", count);
-      char options[700] = "";
-      for (unsigned i = 0; i < count; ++i) {
-        const char *ssid = (char *)aps[i].ssid;
-        if (!ssid[0] || strchr(ssid, '\n'))
-          continue;
-        if (options[0])
-          strcat(options, "\n");
-        strncat(options, ssid, 32);
-      }
-      ui_networks(options[0] ? options : "No networks found");
-    } else {
-      ESP_LOGW(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(scan_err));
-      ui_message("Wi-Fi scan failed. Enter the SSID manually.");
-    }
+    if (!setup_discovery_start_wifi_scan(a.ui_generation))
+      ui_message_for_generation(
+          "Wi-Fi scan is already running. Please wait.", a.ui_generation);
   } else if (!strcmp(a.kind, "discover")) {
-    ESP_LOGI(TAG, "Starting mDNS discovery for _kegscale._tcp");
-    mdns_result_t *found = nullptr;
-    esp_err_t e = mdns_query_ptr("_kegscale", "_tcp", 3000, 8, &found);
-    char options[800];
-    const unsigned count =
-        e == ESP_OK ? build_scale_discovery_options(found, options,
-                                                    sizeof(options))
-                    : 0;
-    if (e != ESP_OK)
-      snprintf(options, sizeof(options), "Manual IP / hostname...");
-    ESP_LOGI(TAG, "mDNS discovery completed: result=%s candidates=%u",
-             esp_err_to_name(e), count);
-    ui_discovered_options(options);
-    if (count > 1)
-      ui_message("Several scales found. Choose one from the list.");
-    else if (count == 1)
-      ui_message("Scale found. Choose it or use Manual IP entry.");
-    else
-      ui_message("No scale found. Choose Manual IP / hostname.");
-    if (found)
-      mdns_query_results_free(found);
+    if (!setup_discovery_start_scale_scan(a.ui_generation))
+      ui_message_for_generation(
+          "Scale discovery is already running. Please wait.", a.ui_generation);
   } else if (!strcmp(a.kind, "forget")) {
     const int requested_slot = o ? (int)num(o, "slot") : active_scale_index;
     const uint8_t slot = requested_slot == 1 ? 1 : 0;
@@ -1231,23 +1099,25 @@ void action(const Action &a) {
     ESP_LOGI(TAG, "Removing saved touchscreen-side pairing for scale %u",
              (unsigned)(slot + 1));
     scale_paired(slot) = false;
-    memset(scale_master(slot), 0, 32);
+    touchscreen_pairing_memset(scale_master(slot), 0, 32);
     stop_scale_transport(slot, false);
     if (removed_active && scale_slot_ready(other))
       active_scale_index = other;
     if (persist() == ESP_OK) {
       publish_scale_profiles();
       publish_active_state();
-      ui_message("Pairing removed. Use Add touchscreen to pair this scale again.");
+      touchscreen_ui_message("Pairing removed. Use Add touchscreen to pair this scale again.");
     } else {
-      ui_message("Could not remove pairing");
+      touchscreen_ui_message("Could not remove pairing");
     }
   } else if (!strcmp(a.kind, "switch_scale")) {
     auto &current = connection_for(active_scale_index);
     if (!scale_slot_ready(0) || !scale_slot_ready(1)) {
-      ui_message("Configure and pair both scales before switching.");
+      touchscreen_ui_message("Configure and pair both scales before switching.");
     } else if (current.pending_id) {
-      ui_message("Wait for the current scale operation to finish");
+      touchscreen_ui_message("Wait for the current scale operation to finish");
+    } else if (current.calibration_session_id) {
+      touchscreen_ui_message("Cancel calibration before switching scales.");
     } else {
       const uint8_t previous = active_scale_index;
       active_scale_index = active_scale_index == 0 ? 1 : 0;
@@ -1258,7 +1128,7 @@ void action(const Action &a) {
                connection_for(active_scale_index).state.online);
       if (persist() != ESP_OK) {
         active_scale_index = previous;
-        ui_message("Could not save active scale selection");
+        touchscreen_ui_message("Could not save active scale selection");
       } else {
         publish_scale_profiles();
         publish_active_state();
@@ -1266,11 +1136,11 @@ void action(const Action &a) {
         if (!selected.state.online) {
           selected.retry_connection = true;
           selected.next_connection_attempt = now();
-          ui_message(active_scale_index == 0
+          touchscreen_ui_message(active_scale_index == 0
                          ? "Scale 1 selected — reconnecting..."
                          : "Scale 2 selected — reconnecting...");
         } else {
-          ui_message(active_scale_index == 0 ? "Scale 1 selected"
+          touchscreen_ui_message(active_scale_index == 0 ? "Scale 1 selected"
                                              : "Scale 2 selected");
         }
       }
@@ -1278,31 +1148,44 @@ void action(const Action &a) {
   } else if (!strcmp(a.kind, "ota")) {
     auto &current = connection_for(active_scale_index);
     if (current.pending_id) {
-      ui_message("Wait for the current operation to finish");
+      touchscreen_ui_message("Wait for the current operation to finish");
     } else {
       ESP_LOGI(TAG, "Starting touchscreen OTA check without dropping scale sessions");
-      esp_err_t e = touchscreen_ota(false);
+      esp_err_t e = touchscreen_ota_request(false, true);
       ESP_LOGI(TAG, "Touchscreen OTA returned %s", esp_err_to_name(e));
       if (e != ESP_OK)
-        ui_message(esp_err_to_name(e));
+        touchscreen_ui_message(esp_err_to_name(e));
     }
   } else if (!strcmp(a.kind, "command") && o) {
     const uint8_t slot = active_scale_index;
     auto &c = connection_for(slot);
+    const char *op = str(o, "op");
+    const bool calibration_followup =
+        !strcmp(op, "tare") ||
+        !strcmp(op, "calibrate") ||
+        !strcmp(op, "cancel_calibration");
+
     if (!c.authenticated || !c.state.online) {
       ESP_LOGW(TAG,
                "Cannot send scale %u command '%s': authenticated=%d online=%d",
-               (unsigned)(slot + 1), str(o, "op"), c.authenticated,
+               (unsigned)(slot + 1), op, c.authenticated,
                c.state.online);
-      ui_result(false, str(o, "op"),
+      ui_result(false, op,
                 "Scale disconnected. Reconnect before making changes.");
     } else if (c.pending_id) {
-      ui_message("Wait for the previous operation to finish");
+      touchscreen_ui_message("Wait for the previous operation to finish");
+    } else if (calibration_followup && !c.calibration_session_id) {
+      ui_result(false, op,
+                "Calibration session is no longer active. Start calibration again.");
     } else {
+      if (calibration_followup) {
+        cJSON_AddNumberToObject(
+            o, "calibration_session_id", c.calibration_session_id);
+      }
       cJSON_AddStringToObject(o, "type", "command");
       cJSON_AddNumberToObject(o, "id", ++c.request_id);
       char *plain = cJSON_PrintUnformatted(o);
-      snprintf(c.pending_op, sizeof(c.pending_op), "%s", str(o, "op"));
+      snprintf(c.pending_op, sizeof(c.pending_op), "%s", op);
       c.pending_id = c.request_id;
       c.pending_since = now();
       ESP_LOGI(TAG, "Sending scale %u command: id=%lu op='%s'",
@@ -1323,9 +1206,630 @@ void action(const Action &a) {
   cJSON_Delete(o);
 }
 } // namespace
-extern "C" void app_main() {
+
+// Runtime services formerly layered through main_wrapper.cpp. They now use
+// explicit hooks from main.cpp so the application compiles as a normal source
+// file without source inclusion or macro interception.
+namespace {
+std::atomic<bool> discovery_running{false};
+std::atomic<bool> ota_running{false};
+std::atomic<bool> ota_install_requested{false};
+std::atomic<bool> ota_foreground_requested{true};
+std::atomic<bool> ota_scheduler_started{false};
+std::atomic<bool> ota_preferences_loaded{false};
+std::atomic<int> ota_channel_index{2}; // dev for existing development devices
+std::atomic<bool> ota_auto_install{true};
+std::atomic<int64_t> ota_last_check_us{0};
+
+constexpr uint32_t kOtaTaskStackBytes = 12 * 1024;
+constexpr UBaseType_t kOtaTaskPriority = 4;
+constexpr uint32_t kInitialOtaCheckDelayMs = 30000;
+constexpr uint32_t kOtaReconnectDeferMs = 2000;
+constexpr uint32_t kDailyOtaCheckMs = 24U * 60U * 60U * 1000U;
+constexpr const char *kOtaNvsNamespace = "touch_ota";
+constexpr const char *kOtaChannelKey = "channel";
+constexpr const char *kOtaAutoInstallKey = "auto_install";
+
+const char *channel_name(int index) {
+  switch (index) {
+  case 0:
+    return "production";
+  case 1:
+    return "beta";
+  default:
+    return "dev";
+  }
+}
+
+int channel_index(const char *channel) {
+  if (channel && !strcmp(channel, "production"))
+    return 0;
+  if (channel && !strcmp(channel, "beta"))
+    return 1;
+  if (channel && !strcmp(channel, "dev"))
+    return 2;
+  return -1;
+}
+
+void load_ota_preferences() {
+  if (ota_preferences_loaded.exchange(true))
+    return;
+
+  int index = 2;
+  bool auto_install = true;
+  nvs_handle_t nvs;
+  esp_err_t e = nvs_open(kOtaNvsNamespace, NVS_READONLY, &nvs);
+  if (e == ESP_OK) {
+    char channel[16] = {};
+    size_t length = sizeof(channel);
+    if (nvs_get_str(nvs, kOtaChannelKey, channel, &length) == ESP_OK) {
+      int saved = channel_index(channel);
+      if (saved >= 0)
+        index = saved;
+    }
+    uint8_t saved_auto = 1;
+    if (nvs_get_u8(nvs, kOtaAutoInstallKey, &saved_auto) == ESP_OK)
+      auto_install = saved_auto != 0;
+    nvs_close(nvs);
+  }
+
+  ota_channel_index = index;
+  ota_auto_install = auto_install;
+  ESP_LOGI(TAG, "Loaded touchscreen OTA settings: channel=%s auto_install=%d",
+           channel_name(index), auto_install);
+}
+
+bool wifi_settings_changed() {
+  wifi_config_t active = {};
+  if (esp_wifi_get_config(WIFI_IF_STA, &active) != ESP_OK)
+    return true;
+  return strncmp((const char *)active.sta.ssid, settings.ssid,
+                 sizeof(active.sta.ssid)) != 0 ||
+         strncmp((const char *)active.sta.password, settings.password,
+                 sizeof(active.sta.password)) != 0;
+}
+
+bool scale_host_changed(uint8_t slot) {
+  const auto &c = connection_for_const(slot);
+  char desired[180] = {};
+  if (scale_host_const(slot)[0])
+    snprintf(desired, sizeof(desired), "ws://%s/ws/controller",
+             scale_host_const(slot));
+  return strcmp(c.uri, desired) != 0;
+}
+
+/*
+ * HTTPS OTA and a reconnecting WebSocket both consume internal networking
+ * resources. When the active scale has a saved pairing, give reconnect
+ * priority and do not start TLS until that saved session is authenticated and
+ * delivering state again.
+ *
+ * An unconfigured or unpaired touchscreen is not blocked here; OTA still
+ * remains available during initial setup. A live unpaired pairing WebSocket is
+ * treated as busy so OTA does not compete with the approval handshake.
+ */
+bool ota_scale_transport_busy() {
+  if (!wifi_ready.load())
+    return true;
+
+  const uint8_t slot = active_scale_index;
+  if (!scale_host_const(slot)[0])
+    return false;
+
+  const auto &c = connection_for_const(slot);
+
+  if (c.pending_id)
+    return true;
+
+  if (scale_paired(slot))
+    return !c.authenticated || !c.state.online;
+
+  return c.ws && esp_websocket_client_is_connected(c.ws);
+}
+
+void ota_task(void *) {
+  const bool install = ota_install_requested.load();
+  const bool foreground = ota_foreground_requested.load();
+  vTaskDelay(pdMS_TO_TICKS(250));
+  ESP_LOGI(TAG,
+           "Touchscreen OTA worker started: mode=%s foreground=%d stack high-water=%u bytes",
+           install ? "install" : "check", foreground,
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+
+  if (foreground && !install)
+    ui_update_checking();
+
+  esp_err_t result = ::touchscreen_ota(install);
+  ota_last_check_us = esp_timer_get_time();
+
+  ESP_LOGI(TAG,
+           "Touchscreen OTA worker finished: mode=%s result=%s stack high-water=%u bytes",
+           install ? "install" : "check", esp_err_to_name(result),
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  if (result != ESP_OK) {
+    ui_update_error(install ? "Firmware update failed. Check Wi-Fi and try again."
+                            : "Could not check for updates. Check Wi-Fi and try again.",
+                    install);
+  }
+
+  ota_running = false;
+  vTaskDelete(nullptr);
+}
+
+void ota_scheduler_task(void *) {
+  /* Wait until the legacy application has initialized NVS and networking. */
+  while (!actions)
+    vTaskDelay(pdMS_TO_TICKS(250));
+  load_ota_preferences();
+
+  while (!wifi_ready)
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  vTaskDelay(pdMS_TO_TICKS(kInitialOtaCheckDelayMs));
+
+  bool reconnect_wait_logged = false;
+  for (;;) {
+    if (!wifi_ready) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
+    }
+
+    if (ota_scale_transport_busy()) {
+      if (!reconnect_wait_logged) {
+        const auto &c = connection_for_const(active_scale_index);
+        ESP_LOGI(TAG,
+                 "Automatic OTA check deferred until scale %u reconnect settles "
+                 "(paired=%d authenticated=%d online=%d)",
+                 (unsigned)(active_scale_index + 1),
+                 scale_paired(active_scale_index), c.authenticated,
+                 c.state.online);
+        reconnect_wait_logged = true;
+      }
+      vTaskDelay(pdMS_TO_TICKS(kOtaReconnectDeferMs));
+      continue;
+    }
+
+    if (reconnect_wait_logged) {
+      ESP_LOGI(TAG,
+               "Scale connection settled; automatic OTA check may proceed");
+      reconnect_wait_logged = false;
+    }
+
+    const bool install = ota_auto_install.load();
+    esp_err_t e = touchscreen_ota_request(install, false);
+    if (e == ESP_ERR_INVALID_STATE)
+      ESP_LOGI(TAG,
+               "Automatic OTA check deferred because networking/update work is busy");
+    else if (e != ESP_OK)
+      ESP_LOGW(TAG, "Could not schedule automatic OTA check: %s",
+               esp_err_to_name(e));
+
+    /*
+     * Only start the normal daily interval once we have actually attempted
+     * this cycle. If the scale was reconnecting above, we stay in the short
+     * defer loop rather than losing the check for 24 hours.
+     */
+    vTaskDelay(pdMS_TO_TICKS(kDailyOtaCheckMs));
+  }
+}
+
+void auto_discovery_task(void *) {
+  for (int i = 0; i < 40 && !wifi_ready; ++i)
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+  if (!wifi_ready || active_host_const()[0]) {
+    discovery_running = false;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  touchscreen_ui_message("Wi-Fi connected - looking for your scale...");
+  mdns_result_t *found = nullptr;
+  esp_err_t e = mdns_query_ptr("_kegscale", "_tcp", 3000, 8, &found);
+  char options[800];
+  const unsigned count =
+      e == ESP_OK
+          ? setup_discovery_build_scale_options(found, options, sizeof(options))
+          : 0;
+  if (e != ESP_OK)
+    snprintf(options, sizeof(options), "Manual IP / hostname...");
+
+  if (e == ESP_OK && count == 1) {
+    char host[128] = {};
+    const char *line_end = strchr(options, '\n');
+    const size_t length =
+        line_end ? std::min(sizeof(host) - 1,
+                            (size_t)(line_end - options))
+                 : std::min(sizeof(host) - 1, strlen(options));
+    memcpy(host, options, length);
+    host[length] = 0;
+    snprintf(active_host(), 128, "%s", host);
+    if (persist() == ESP_OK) {
+      publish_scale_profiles();
+      ui_settings_applied(settings);
+      touchscreen_ui_message("Scale found automatically - connecting...");
+      auto &c = connection_for(active_scale_index);
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      connect_scale(active_scale_index);
+    } else {
+      touchscreen_ui_message("Scale found, but its address could not be saved");
+    }
+  } else if (count > 1) {
+    ui_discovered_options(options);
+    touchscreen_ui_message("Several scales found - choose one in Setup");
+  } else {
+    ui_discovered_options(options);
+    touchscreen_ui_message("No scale found - choose Manual IP / hostname");
+  }
+
+  if (found)
+    mdns_query_results_free(found);
+  discovery_running = false;
+  vTaskDelete(nullptr);
+}
+} // namespace
+
+static bool touchscreen_remove_scale_pairing(const char *host) {
+  if (!host || !host[0] || !wifi_ready)
+    return false;
+
+  int status = 0;
+  const esp_err_t e = controller_setup_remove(host, 3000, &status);
+  ESP_LOGI(TAG, "Scale pairing removal request: host='%s' result=%s status=%d",
+           host, esp_err_to_name(e), status);
+  return e == ESP_OK && status == 200;
+}
+
+static void *touchscreen_pairing_memset(void *dest, int value, size_t count) {
+  const int slot = scale_index_for_master(dest);
+  const bool clearing_pairing = slot >= 0 && value == 0 && count == 32;
+  if (clearing_pairing && scale_host_const((uint8_t)slot)[0]) {
+    if (touchscreen_remove_scale_pairing(scale_host_const((uint8_t)slot)))
+      ESP_LOGI(TAG, "Matching scale %u pairing removed",
+               (unsigned)(slot + 1));
+    else
+      ESP_LOGW(TAG,
+               "Could not immediately remove scale %u pairing; mismatch cleanup will retry when reachable",
+               (unsigned)(slot + 1));
+  }
+  return std::memset(dest, value, count);
+}
+
+static esp_err_t touchscreen_pairing_cl_open(cl_session_t *session,
+                                             const uint8_t *in, size_t len,
+                                             char *out) {
+  esp_err_t e = cl_open(session, in, len, out);
+  if (e != ESP_OK || !out)
+    return e;
+
+  cJSON *message = cJSON_Parse(out);
+  if (message && !strcmp(str(message, "type"), "unpair")) {
+    const int found_slot = scale_index_for_link(session);
+    if (found_slot >= 0) {
+      const uint8_t slot = (uint8_t)found_slot;
+      const uint8_t other = slot == 0 ? 1 : 0;
+      const bool removed_active = slot == active_scale_index;
+      ESP_LOGI(TAG, "Scale %u requested synchronized touchscreen unpair",
+               (unsigned)(slot + 1));
+      scale_paired(slot) = false;
+      std::memset(scale_master(slot), 0, 32);
+      auto &c = connection_for(slot);
+      c.retry_connection = false;
+      c.state.online = false;
+      c.authenticated = false;
+      c.traffic_ready = false;
+      if (removed_active && scale_slot_ready(other))
+        active_scale_index = other;
+
+      esp_err_t saved = persist();
+      publish_scale_profiles();
+      if (saved != ESP_OK)
+        ESP_LOGE(TAG, "Could not persist scale %u requested unpair: %s",
+                 (unsigned)(slot + 1), esp_err_to_name(saved));
+
+      if (removed_active) {
+        publish_active_state();
+        ::ui_message(scale_slot_ready(other)
+                         ? "Pairing removed; switched to the other scale."
+                         : "Pairing removed on scale. Open Setup to pair again.");
+      }
+    }
+  }
+  cJSON_Delete(message);
+  return e;
+}
+
+void touchscreen_ota_get_preferences(OtaPreferences *preferences) {
+  if (!preferences)
+    return;
+  load_ota_preferences();
+  snprintf(preferences->channel, sizeof(preferences->channel), "%s",
+           channel_name(ota_channel_index.load()));
+  preferences->auto_install = ota_auto_install.load();
+}
+
+esp_err_t touchscreen_ota_save_preferences(const char *channel,
+                                           bool auto_install) {
+  const int index = channel_index(channel);
+  if (index < 0)
+    return ESP_ERR_INVALID_ARG;
+
+  nvs_handle_t nvs;
+  esp_err_t e = nvs_open(kOtaNvsNamespace, NVS_READWRITE, &nvs);
+  if (e != ESP_OK)
+    return e;
+  e = nvs_set_str(nvs, kOtaChannelKey, channel_name(index));
+  if (e == ESP_OK)
+    e = nvs_set_u8(nvs, kOtaAutoInstallKey, auto_install ? 1 : 0);
+  if (e == ESP_OK)
+    e = nvs_commit(nvs);
+  nvs_close(nvs);
+  if (e != ESP_OK)
+    return e;
+
+  ota_channel_index = index;
+  ota_auto_install = auto_install;
+  ota_preferences_loaded = true;
+  ESP_LOGI(TAG, "Saved touchscreen OTA settings: channel=%s auto_install=%d",
+           channel_name(index), auto_install);
+  return ESP_OK;
+}
+
+void touchscreen_ota_get_channel(char *channel, size_t size) {
+  if (!channel || !size)
+    return;
+  load_ota_preferences();
+  snprintf(channel, size, "%s", channel_name(ota_channel_index.load()));
+}
+
+bool touchscreen_ota_has_checked(void) { return ota_last_check_us.load() > 0; }
+
+uint64_t touchscreen_ota_last_check_age_seconds(void) {
+  const int64_t checked = ota_last_check_us.load();
+  if (checked <= 0)
+    return 0;
+  const int64_t age = esp_timer_get_time() - checked;
+  return age > 0 ? (uint64_t)(age / 1000000LL) : 0;
+}
+
+bool touchscreen_ota_auto_install_enabled(void) {
+  load_ota_preferences();
+  return ota_auto_install.load();
+}
+
+void touchscreen_set_ota_install_mode(bool install) {
+  ota_install_requested = install;
+}
+
+esp_err_t touchscreen_ota_request(bool install, bool foreground) {
+  if (ota_scale_transport_busy()) {
+    const auto &c = connection_for_const(active_scale_index);
+    ESP_LOGI(TAG,
+             "Touchscreen OTA %s deferred: scale %u connection is busy "
+             "(paired=%d authenticated=%d online=%d)",
+             install ? "install" : "check",
+             (unsigned)(active_scale_index + 1),
+             scale_paired(active_scale_index), c.authenticated,
+             c.state.online);
+    if (foreground || install)
+      ui_update_error(
+          "Scale is reconnecting. Wait for it to connect, then try the update again.",
+          install);
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  if (ota_running.exchange(true)) {
+    ESP_LOGW(TAG,
+             "Touchscreen OTA request ignored because an update is already running");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  ota_install_requested = install;
+  ota_foreground_requested = foreground;
+  const size_t internal_free =
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t internal_largest = heap_caps_get_largest_free_block(
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const size_t psram_free =
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  ESP_LOGI(TAG,
+           "Scheduling touchscreen OTA worker: mode=%s foreground=%d caller stack high-water=%u bytes; internal_free=%u largest_internal=%u psram_free=%u requested_stack=%u",
+           install ? "install" : "check", foreground,
+           (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+           (unsigned)internal_free, (unsigned)internal_largest,
+           (unsigned)psram_free, (unsigned)kOtaTaskStackBytes);
+
+  BaseType_t created = xTaskCreate(ota_task, "touchscreen_ota",
+                                   kOtaTaskStackBytes, nullptr,
+                                   kOtaTaskPriority, nullptr);
+  if (created != pdPASS) {
+    ota_running = false;
+    ESP_LOGE(TAG,
+             "Could not create touchscreen OTA worker task: largest_internal=%u requested_stack=%u",
+             (unsigned)internal_largest, (unsigned)kOtaTaskStackBytes);
+    if (foreground || install)
+      ui_update_error(install ? "Not enough memory to start the firmware update."
+                              : "Not enough memory to check for updates.",
+                      install);
+    return ESP_ERR_NO_MEM;
+  }
+  return ESP_OK;
+}
+
+void touchscreen_start_ota_scheduler(void) {
+  if (ota_scheduler_started.exchange(true))
+    return;
+  BaseType_t created = xTaskCreate(ota_scheduler_task, "touch_ota_schedule", 4096,
+                                   nullptr, 2, nullptr);
+  if (created != pdPASS) {
+    ota_scheduler_started = false;
+    ESP_LOGW(TAG, "Could not create touchscreen OTA scheduler task");
+  }
+}
+
+static void touchscreen_ui_message(const char *message) {
+  if (message && !strcmp(message, "Settings saved — restarting")) {
+    ::ui_message("Applying settings...");
+    return;
+  }
+
+  if (message &&
+      !strcmp(message,
+              "In Setup: Remove pairing, then Add touchscreen on the scale.")) {
+    const uint8_t slot = active_scale_index;
+    if (scale_paired(slot)) {
+      scale_paired(slot) = false;
+      std::memset(scale_master(slot), 0, 32);
+      if (persist() == ESP_OK) {
+        publish_scale_profiles();
+        ESP_LOGI(TAG,
+                 "Cleared stale local scale %u pairing after scale-side removal",
+                 (unsigned)(slot + 1));
+      } else {
+        ESP_LOGE(TAG, "Could not persist stale-pairing cleanup");
+      }
+    }
+    auto &c = connection_for(slot);
+    c.retry_connection = false;
+    c.state.online = false;
+    c.authenticated = false;
+    c.traffic_ready = false;
+    ui_state(c.state);
+    ::ui_message("Pairing removed on scale. Open Setup to pair again.");
+    return;
+  }
+
+  if (message &&
+      !strcmp(message,
+              "On scale: remove old Wi-Fi touchscreen, then Add touchscreen.")) {
+    const uint8_t slot = active_scale_index;
+    if (touchscreen_remove_scale_pairing(scale_host_const(slot))) {
+      ESP_LOGI(TAG,
+               "Cleared stale scale %u pairing after touchscreen-side removal",
+               (unsigned)(slot + 1));
+      ::ui_message(
+          "Old scale pairing cleared. Select Add touchscreen to pair again.");
+    } else {
+      ::ui_message(
+          "Scale still has the old pairing. Cleanup will retry automatically.");
+    }
+    return;
+  }
+
+  ::ui_message(message);
+}
+
+static void touchscreen_apply_settings_live() {
+  const uint8_t slot = active_scale_index;
+  const bool wifi_changed = wifi_settings_changed();
+  const bool host_changed = scale_host_changed(slot);
+  ui_settings_applied(settings);
+
+  if (!wifi_changed && !host_changed) {
+    publish_scale_profiles();
+    publish_active_state();
+
+    // "Save & connect" is also an explicit reconnect request. If the selected
+    // scale is configured but the session is not fully authenticated/online,
+    // restart the connection even when SSID and hostname did not change.
+    //
+    // This is especially important after the full-screen pairing code times
+    // out: the old WebSocket can still be sitting in an unfinished handshake.
+    // connect_scale() increments the generation, tears down that stale socket,
+    // probes the scale setup window again, and starts a fresh handshake.
+    auto &c = connection_for(slot);
+    const bool has_scale = scale_host_const(slot)[0] != 0;
+    const bool needs_connection =
+        has_scale &&
+        (!scale_paired(slot) || !c.authenticated || !c.state.online);
+
+    if (needs_connection) {
+      ESP_LOGI(
+          TAG,
+          "Save & connect requested for scale %u with unchanged settings; "
+          "restarting connection (paired=%d authenticated=%d online=%d)",
+          (unsigned)(slot + 1), scale_paired(slot), c.authenticated,
+          c.state.online);
+      c.retry_connection = true;
+      c.next_connection_attempt = now();
+      touchscreen_ui_message(scale_paired(slot)
+                                 ? "Reconnecting to scale..."
+                                 : "Starting scale pairing...");
+      connect_scale(slot);
+    } else {
+      touchscreen_ui_message("Settings saved");
+    }
+    return;
+  }
+
+  if (wifi_changed) {
+    wifi_config_t desired = {};
+    const size_t ssid_len = strnlen(settings.ssid, sizeof(desired.sta.ssid));
+    const size_t password_len =
+        strnlen(settings.password, sizeof(desired.sta.password));
+    memcpy(desired.sta.ssid, settings.ssid, ssid_len);
+    memcpy(desired.sta.password, settings.password, password_len);
+
+    esp_err_t e = esp_wifi_set_config(WIFI_IF_STA, &desired);
+    if (e != ESP_OK) {
+      ESP_LOGW(TAG, "Could not apply Wi-Fi settings live: %s",
+               esp_err_to_name(e));
+      touchscreen_ui_message("Settings saved, but Wi-Fi could not be applied");
+      return;
+    }
+
+    wifi_ready = false;
+    for (uint8_t i = 0; i < 2; ++i)
+      stop_scale_transport(i, scale_host_const(i)[0]);
+
+    esp_err_t d = esp_wifi_disconnect();
+    if (d == ESP_ERR_WIFI_NOT_CONNECT && settings.ssid[0])
+      esp_wifi_connect();
+
+    touchscreen_ui_message(settings.ssid[0]
+                               ? "Wi-Fi settings saved - reconnecting..."
+                               : "Wi-Fi settings saved");
+    if (!active_host_const()[0])
+      touchscreen_request_auto_discovery();
+    return;
+  }
+
+  if (host_changed) {
+    auto &c = connection_for(slot);
+    c.retry_connection = scale_host_const(slot)[0];
+    c.next_connection_attempt = now();
+    touchscreen_ui_message(scale_host_const(slot)[0]
+                               ? "Scale setting saved - connecting..."
+                               : "Scale address cleared");
+    if (scale_host_const(slot)[0])
+      connect_scale(slot);
+    else
+      touchscreen_request_auto_discovery();
+  } else {
+    publish_active_state();
+    touchscreen_ui_message("Scale selection saved");
+  }
+}
+
+extern "C" void touchscreen_request_auto_discovery() {
+  if (active_host_const()[0] || discovery_running.exchange(true))
+    return;
+  BaseType_t created = xTaskCreate(auto_discovery_task, "scale_discovery", 6144,
+                                   nullptr, 4, nullptr);
+  if (created != pdPASS) {
+    discovery_running = false;
+    ESP_LOGW(TAG, "Could not create automatic scale discovery task");
+  }
+}
+
+extern "C" void touchscreen_app_main() {
   ESP_LOGI(TAG, "Starting Wi-Fi touchscreen firmware %s",
            esp_app_get_description()->version);
+#ifdef CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK
+  ESP_LOGI(TAG, "WebSocket separate TX lock enabled");
+#else
+  ESP_LOGW(TAG, "WebSocket separate TX lock is NOT enabled; regenerate sdkconfig from defaults");
+#endif
   ESP_LOGI(TAG, "Reset reason=%d", (int)esp_reset_reason());
   esp_err_t e = nvs_flash_init();
   if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1370,8 +1874,8 @@ extern "C" void app_main() {
            secondary_scale.paired, (unsigned)(active_scale_index + 1),
            settings.brightness);
   actions = xQueueCreate(4, sizeof(Action));
-  frames = xQueueCreate(8, sizeof(Frame));
-  configASSERT(actions && frames);
+  configASSERT(actions);
+  connection_transport_init();
   ESP_ERROR_CHECK(psa_crypto_init() == PSA_SUCCESS ? ESP_OK : ESP_FAIL);
   publish_scale_profiles();
   ui_start(settings);
@@ -1421,8 +1925,16 @@ extern "C" void app_main() {
   Frame f;
   Action a;
   for (;;) {
-    while (xQueueReceive(frames, &f, 0) == pdTRUE)
+    /*
+     * Process a bounded frame batch, then give UI/actions a turn. A broken
+     * Scale must not be able to starve Switch Scale or Setup actions by
+     * continuously refilling the shared frame queue.
+     */
+    for (unsigned processed = 0; processed < 8; ++processed) {
+      if (!connection_receive_frame(&f, 0))
+        break;
       on_frame(f);
+    }
 
     if (xQueueReceive(actions, &a, pdMS_TO_TICKS(30)) == pdTRUE)
       action(a);
@@ -1437,23 +1949,25 @@ extern "C" void app_main() {
           stop_scale_transport(slot, false);
           if (slot == active_scale_index) {
             touchscreen_pairing_ended();
-            ui_message("Pairing stopped here. Check the Scale before retrying.");
+            touchscreen_ui_message("Pairing stopped here. Check the Scale before retrying.");
           }
         }
       }
 
       if (c.retry_connection && scale_host_const(slot)[0] &&
+          !c.retirement_pending &&
           current_time >= c.next_connection_attempt) {
         connect_scale(slot);
         continue;
       }
 
       if (c.ws && esp_websocket_client_is_connected(c.ws) &&
-          current_time - c.last_ping > 3000000) {
+          c.traffic_ready &&
+          current_time - c.last_ping > 8000000) {
         c.last_ping = current_time;
-        if (c.traffic_ready &&
-            !send_secure(slot, "{\"type\":\"ping\"}"))
-          ESP_LOGW(TAG, "Scale %u heartbeat send failed",
+        if (!send_secure(slot, "{\"type\":\"ping\"}"))
+          ESP_LOGW(TAG,
+                   "Scale %u heartbeat send failed; reconnect scheduled",
                    (unsigned)(slot + 1));
       }
 
@@ -1473,7 +1987,7 @@ extern "C" void app_main() {
         c.state.online = false;
         if (slot == active_scale_index) {
           ui_state(c.state);
-          ui_message("Reading is stale — reconnecting");
+          touchscreen_ui_message("Reading is stale — reconnecting");
         }
         connect_scale(slot);
         continue;

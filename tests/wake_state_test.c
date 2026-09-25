@@ -24,10 +24,10 @@ static uint8_t s_touch_threshold_percent=15;
 static bool s_periodic_checkin_enabled, s_lightweight_fetch;
 static uint32_t s_scale_screen_magic;
 static unsigned causes, disables, touch_arms, sleeps, resets, renders, notices, clears;
-static unsigned fetches, saves, forgot, pairing_clears, pairing_starts, full, partial, panel_sleep;
+static unsigned fetches, saves, forgot, pairing_clears, pairing_starts, full, partial, panel_sleep, command_acks;
 static uint64_t timer_us;
 static bool compatible=true, forced, fetched_full;
-static esp_err_t screen_error, fetch_error, save_error;
+static esp_err_t screen_error, fetch_error, save_error, command_ack_error;
 static unsigned fail_fetches;
 static size_t strlcpy(char *d,const char *s,size_t n) { size_t len=strlen(s);snprintf(d,n,"%s",s);return len; }
 static unsigned esp_sleep_get_wakeup_causes(void) { return causes; }
@@ -46,6 +46,9 @@ esp_err_t ble_client_fetch_mode(const ble_client_peer_t *p,ble_client_scale_stat
 bool ble_client_state_is_compatible(const ble_client_peer_t *p,const ble_client_scale_state_t *s) { (void)p;(void)s;return compatible; }
 static esp_err_t pairing_save(const ble_client_peer_t *p) { (void)p;saves++;return save_error; }
 esp_err_t ble_client_forget_peer(const ble_client_peer_t *p) { (void)p;forgot++;return ESP_OK; }
+esp_err_t ble_client_acknowledge_control(const ble_client_peer_t *p,uint16_t id,uint8_t flags) {
+ (void)p;assert(id);assert(flags);command_acks++;return command_ack_error;
+}
 static esp_err_t pairing_clear(void) { pairing_clears++;return ESP_OK; }
 static void enter_pairing_mode(void) { pairing_starts++; }
 static void clear_touch_ack_area(void) {}
@@ -73,8 +76,12 @@ int main(void) {
  assert(render_if_needed(&pairing.peer,&state,80)&&renders==1);
  assert(!render_if_needed(&pairing.peer,&state,80));
  state.total_weight_lbs=31;state.flags=0;assert(!render_if_needed(&pairing.peer,&state,80));
- state.force_refresh_requested=true;assert(render_if_needed(&pairing.peer,&state,80)&&forced);
- state.force_refresh_requested=false;state.flags=BLE_SCALE_FLAG_STABLE;
+ state.force_refresh_requested=true;assert(render_if_needed(&pairing.peer,&state,80)&&forced&&!command_acks);
+ state.command_ack_supported=true;state.control_command_id=17;state.control_flags=4;
+ assert(render_if_needed(&pairing.peer,&state,80)&&command_acks==1);
+ command_ack_error=ESP_FAIL;assert(render_if_needed(&pairing.peer,&state,80)&&command_acks==2);
+ command_ack_error=ESP_OK;
+ state.force_refresh_requested=false;state.command_ack_supported=false;state.control_command_id=0;state.control_flags=0;state.flags=BLE_SCALE_FLAG_STABLE;
  state.sequence++;screen_error=ESP_FAIL;assert(!render_if_needed(&pairing.peer,&state,80)&&s_retained.sequence!=state.sequence);
  screen_error=ESP_OK;assert(render_if_needed(&pairing.peer,&state,80));
  state.total_weight_lbs+=.49f;assert(!should_refresh(&pairing.peer,&state,80));
@@ -106,7 +113,11 @@ int main(void) {
  assert(fetch_paired_state_once(&pairing,&state)==ESP_OK&&!fetched_full&&!s_retained.consecutive_scale_failures);
  s_lightweight_fetch=false;assert(fetch_paired_state_once(&pairing,&state)==ESP_OK&&fetched_full);
  assert(!handle_unpair_request(&pairing,&state));state.unpair_requested=true;
- assert(handle_unpair_request(&pairing,&state)&&forgot==1&&pairing_clears==1&&pairing_starts==1&&!s_retained.magic);
- puts("PASS: production wake configuration/backoff, timer-only pour delay, refresh retention, offline recovery, partial/full selection, pairing retry and unpair transition");
+ state.command_ack_supported=true;state.control_command_id=33;state.control_flags=1;
+ command_ack_error=ESP_FAIL;
+ assert(!handle_unpair_request(&pairing,&state)&&forgot==0&&pairing_clears==0&&pairing_starts==0);
+ command_ack_error=ESP_OK;
+ assert(handle_unpair_request(&pairing,&state)&&command_acks==4&&forgot==1&&pairing_clears==1&&pairing_starts==1&&!s_retained.magic);
+ puts("PASS: production wake configuration/backoff, timer-only pour delay, refresh retention, reliable command ACK retry, offline recovery, partial/full selection, pairing retry and unpair transition");
  return 0;
 }

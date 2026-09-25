@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Requires libmbedtls-dev, or explicit MBEDTLS_INCLUDE and MBEDTLS_LIBRARY.
+# Repository .gitattributes keeps this script LF-only for Windows + WSL checkouts.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$root/tests/ui_text_guard_test.py"
+python3 "$root/tests/ui_lifetime_guard_test.py"
+python3 "$root/tests/main_architecture_guard_test.py"
+python3 "$root/tests/pairing_rearm_isolation_guard_test.py"
 python3 "$root/tests/run_connection_test.py"
 test_binary="$(mktemp)"
-trap 'rm -f "$test_binary"' EXIT
+lifetime_binary="$(mktemp)"
+trap 'rm -f "$test_binary" "$lifetime_binary"' EXIT
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$root/main" "$root/tests/ui_lifetime_test.cpp" -o "$lifetime_binary"
+"$lifetime_binary"
 cc -std=c11 -Wall -Wextra -Werror \
   -I"${MBEDTLS_INCLUDE:-/usr/include}" -I"$root/tests/host" \
   -I"$root/components/controller_link/include" \
