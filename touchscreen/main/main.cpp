@@ -618,12 +618,41 @@ void on_frame(const Frame &f) {
       ui_state(c.state);
   } else if (f.kind == 4 && c.authenticated && !strcmp(type, "result") &&
              num(o, "id") == c.pending_id && c.pending_id) {
+    bool result_ok = yes(o, "ok");
+    const char *result_error = str(o, "error");
+    char session_error[96] = {};
+
+    if (!strcmp(c.pending_op, "begin_calibration") && result_ok) {
+      const double session_value = num(o, "calibration_session_id");
+      if (!std::isfinite(session_value) || session_value < 1 ||
+          session_value > UINT32_MAX || floor(session_value) != session_value) {
+        result_ok = false;
+        snprintf(session_error, sizeof(session_error),
+                 "Scale did not return a valid calibration session. Start again.");
+        result_error = session_error;
+        c.calibration_session_id = 0;
+      } else {
+        c.calibration_session_id = (uint32_t)session_value;
+      }
+    } else if (result_ok &&
+               (!strcmp(c.pending_op, "calibrate") ||
+                !strcmp(c.pending_op, "cancel_calibration"))) {
+      c.calibration_session_id = 0;
+    } else if (!result_ok && c.calibration_session_id &&
+               (!strcmp(c.pending_op, "tare") ||
+                !strcmp(c.pending_op, "calibrate") ||
+                !strcmp(c.pending_op, "cancel_calibration")) &&
+               strstr(result_error, "session expired")) {
+      c.calibration_session_id = 0;
+    }
+
     ESP_LOGI(TAG,
-             "Scale %u command result: id=%lu op='%s' ok=%d",
+             "Scale %u command result: id=%lu op='%s' ok=%d calibration_session=%lu",
              (unsigned)(slot + 1), (unsigned long)c.pending_id,
-             c.pending_op, yes(o, "ok"));
+             c.pending_op, result_ok,
+             (unsigned long)c.calibration_session_id);
     if (slot == active_scale_index)
-      ui_result(yes(o, "ok"), c.pending_op, str(o, "error"));
+      ui_result(result_ok, c.pending_op, result_error);
     c.pending_id = 0;
   } else {
     ESP_LOGD(TAG,
@@ -1087,6 +1116,8 @@ void action(const Action &a) {
       touchscreen_ui_message("Configure and pair both scales before switching.");
     } else if (current.pending_id) {
       touchscreen_ui_message("Wait for the current scale operation to finish");
+    } else if (current.calibration_session_id) {
+      touchscreen_ui_message("Cancel calibration before switching scales.");
     } else {
       const uint8_t previous = active_scale_index;
       active_scale_index = active_scale_index == 0 ? 1 : 0;
@@ -1128,20 +1159,33 @@ void action(const Action &a) {
   } else if (!strcmp(a.kind, "command") && o) {
     const uint8_t slot = active_scale_index;
     auto &c = connection_for(slot);
+    const char *op = str(o, "op");
+    const bool calibration_followup =
+        !strcmp(op, "tare") ||
+        !strcmp(op, "calibrate") ||
+        !strcmp(op, "cancel_calibration");
+
     if (!c.authenticated || !c.state.online) {
       ESP_LOGW(TAG,
                "Cannot send scale %u command '%s': authenticated=%d online=%d",
-               (unsigned)(slot + 1), str(o, "op"), c.authenticated,
+               (unsigned)(slot + 1), op, c.authenticated,
                c.state.online);
-      ui_result(false, str(o, "op"),
+      ui_result(false, op,
                 "Scale disconnected. Reconnect before making changes.");
     } else if (c.pending_id) {
       touchscreen_ui_message("Wait for the previous operation to finish");
+    } else if (calibration_followup && !c.calibration_session_id) {
+      ui_result(false, op,
+                "Calibration session is no longer active. Start calibration again.");
     } else {
+      if (calibration_followup) {
+        cJSON_AddNumberToObject(
+            o, "calibration_session_id", c.calibration_session_id);
+      }
       cJSON_AddStringToObject(o, "type", "command");
       cJSON_AddNumberToObject(o, "id", ++c.request_id);
       char *plain = cJSON_PrintUnformatted(o);
-      snprintf(c.pending_op, sizeof(c.pending_op), "%s", str(o, "op"));
+      snprintf(c.pending_op, sizeof(c.pending_op), "%s", op);
       c.pending_id = c.request_id;
       c.pending_since = now();
       ESP_LOGI(TAG, "Sending scale %u command: id=%lu op='%s'",
