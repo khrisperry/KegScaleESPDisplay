@@ -27,6 +27,7 @@ struct ScaleConnection {
   uint8_t client_nonce[32] = {};
   uint32_t request_id = 0;
   uint32_t pending_id = 0;
+  uint32_t calibration_session_id = 0;
   int64_t last_state = 0;
   int64_t pending_since = 0;
   int64_t last_ping = 0;
