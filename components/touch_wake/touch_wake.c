@@ -28,7 +28,7 @@ static const char *TAG = "touch_wake";
  * display is untouched. Keep user/calibration settings intact, but apply a
  * conservative floor only when arming deep-sleep touch wake.
  */
-#define TOUCH_SLEEP_GUARD_PERCENT 8
+#define TOUCH_SLEEP_GUARD_PERCENT 6
 
 typedef struct {
     touch_sensor_handle_t sensor;
