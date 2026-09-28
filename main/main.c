@@ -31,7 +31,7 @@
 static const char *TAG = "display";
 
 /* Bumped when retained scale-offline tracking was added. */
-#define RETAINED_MAGIC 0x4B534454U
+#define RETAINED_MAGIC 0x4B534455U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
 #define SCALE_OFFLINE_FAILURE_THRESHOLD 5U
 #define BATTERY_ADC_SAMPLES 16
