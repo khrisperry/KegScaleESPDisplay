@@ -23,6 +23,12 @@ cc -std=c11 -Wall -Wextra -Werror \
   "${MBEDTLS_LIBRARY:--lmbedcrypto}" -o "$test_binary"
 "$test_binary"
 cc -std=c11 -Wall -Wextra -Werror \
+  -I"${MBEDTLS_INCLUDE:-/usr/include}" -I"$root/tests/host" -I"$root/main" \
+  "$root/main/ota_signature.c" \
+  "$root/tests/ota_signature_crypto_test.c" \
+  "${MBEDTLS_LIBRARY:--lmbedcrypto}" -o "$test_binary"
+"$test_binary"
+cc -std=c11 -Wall -Wextra -Werror \
   -I"${MBEDTLS_INCLUDE:-/usr/include}" -I"$root/tests/host" \
   -I"$root/components/controller_link/include" \
   "$root/components/controller_link/controller_link.c" \
