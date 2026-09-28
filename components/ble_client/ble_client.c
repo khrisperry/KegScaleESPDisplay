@@ -1592,7 +1592,7 @@ esp_err_t ble_client_pair(
 typedef struct {
     uint32_t magic;
     ble_client_peer_t peer;
-    uint16_t handles[11];
+    uint16_t handles[12];
     char identity[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     uint8_t profile_revision;
@@ -1600,7 +1600,7 @@ typedef struct {
     uint8_t touch_threshold;
 } retained_gatt_cache_t;
 RTC_DATA_ATTR static retained_gatt_cache_t s_gatt_cache;
-#define GATT_CACHE_MAGIC 0x4b474333U
+#define GATT_CACHE_MAGIC 0x4b474334U
 
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
@@ -1660,6 +1660,7 @@ esp_err_t ble_client_fetch_mode(
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
     uint16_t display_diagnostics_handle = 0;
+    uint16_t display_touch_diagnostics_handle = 0;
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
     size_t text_len = 0;
@@ -1677,6 +1678,7 @@ rediscover:
         touch_config_handle = s_gatt_cache.handles[8];
         display_command_ack_handle = s_gatt_cache.handles[9];
         display_diagnostics_handle = s_gatt_cache.handles[10];
+        display_touch_diagnostics_handle = s_gatt_cache.handles[11];
         ESP_LOGI(TAG, "Touch fetch: using retained BLE handles");
     } else {
         err =
@@ -1692,7 +1694,8 @@ rediscover:
                 &display_info_handle,
                 &touch_config_handle,
                 &display_command_ack_handle,
-                &display_diagnostics_handle);
+                &display_diagnostics_handle,
+                &display_touch_diagnostics_handle);
     }
 
     /* Validate protocol and scale firmware before using cached handles to write. */
@@ -1894,6 +1897,30 @@ rediscover:
     }
 
     if (err == ESP_OK &&
+        display_touch_diagnostics_handle != 0) {
+        esp_err_t touch_diagnostic_err =
+            secure_connection(
+                conn_handle,
+                &connection);
+
+        if (touch_diagnostic_err == ESP_OK) {
+            touch_diagnostic_err =
+                write_value(
+                    conn_handle,
+                    display_touch_diagnostics_handle,
+                    &s_display_touch_diagnostics,
+                    sizeof(s_display_touch_diagnostics));
+        }
+
+        if (touch_diagnostic_err != ESP_OK) {
+            ESP_LOGW(
+                TAG,
+                "Could not report display touch diagnostics: %s",
+                esp_err_to_name(touch_diagnostic_err));
+        }
+    }
+
+    if (err == ESP_OK &&
         display_info_handle != 0) {
         esp_err_t info_err =
             secure_connection(
@@ -2072,6 +2099,7 @@ rediscover:
         s_gatt_cache.handles[8] = touch_config_handle;
         s_gatt_cache.handles[9] = display_command_ack_handle;
         s_gatt_cache.handles[10] = display_diagnostics_handle;
+        s_gatt_cache.handles[11] = display_touch_diagnostics_handle;
         strlcpy(s_gatt_cache.identity, state->device_info, sizeof(s_gatt_cache.identity));
         strlcpy(s_gatt_cache.keg_name, state->keg_name, sizeof(s_gatt_cache.keg_name));
         s_gatt_cache.profile_revision = state->profile_revision;
@@ -2146,6 +2174,7 @@ esp_err_t ble_client_fetch_update_bundle(
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
     uint16_t display_diagnostics_handle = 0;
+    uint16_t display_touch_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2161,7 +2190,8 @@ esp_err_t ble_client_fetch_update_bundle(
                 &display_info_handle,
                 &touch_config_handle,
                 &display_command_ack_handle,
-                &display_diagnostics_handle);
+                &display_diagnostics_handle,
+                &display_touch_diagnostics_handle);
     }
 
     wire_update_bundle_t wire = {0};
@@ -2270,6 +2300,7 @@ esp_err_t ble_client_acknowledge_control(
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
     uint16_t display_diagnostics_handle = 0;
+    uint16_t display_touch_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2285,7 +2316,8 @@ esp_err_t ble_client_acknowledge_control(
                 &display_info_handle,
                 &touch_config_handle,
                 &display_command_ack_handle,
-                &display_diagnostics_handle);
+                &display_diagnostics_handle,
+                &display_touch_diagnostics_handle);
     }
 
     if (err == ESP_OK &&
@@ -2374,6 +2406,7 @@ esp_err_t ble_client_save_touch_threshold(
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
     uint16_t display_diagnostics_handle = 0;
+    uint16_t display_touch_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2389,7 +2422,8 @@ esp_err_t ble_client_save_touch_threshold(
                 &display_info_handle,
                 &touch_config_handle,
                 &display_command_ack_handle,
-                &display_diagnostics_handle);
+                &display_diagnostics_handle,
+                &display_touch_diagnostics_handle);
     }
 
     if (err == ESP_OK &&
