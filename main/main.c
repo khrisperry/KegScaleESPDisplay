@@ -913,9 +913,9 @@ static bool display_update_needed(
         esp_app_get_description();
 
     return app != NULL &&
-        strcmp(
+        display_ota_version_is_newer(
             state->update.version,
-            app->version) != 0;
+            app->version);
 }
 
 static void install_display_update_if_needed(
@@ -958,17 +958,35 @@ static void install_display_update_if_needed(
             &pairing->peer,
             bundle);
 
+    const esp_app_desc_t *app =
+        esp_app_get_description();
     const display_ota_authorization_result_t authorization =
         display_ota_authorization_evaluate(
             err,
             &state->update,
-            bundle);
+            bundle,
+            app != NULL ? app->version : NULL);
 
     if (authorization ==
         DISPLAY_OTA_AUTHORIZATION_NOT_APPROVED) {
         ESP_LOGI(
             TAG,
             "Display update %s is available but not approved; staying on current firmware",
+            state->update.version);
+
+        memset(
+            bundle,
+            0,
+            sizeof(*bundle));
+        free(bundle);
+        return;
+    }
+
+    if (authorization ==
+        DISPLAY_OTA_AUTHORIZATION_NOT_NEWER) {
+        ESP_LOGW(
+            TAG,
+            "Ignoring display OTA %s because current firmware is already the same or newer",
             state->update.version);
 
         memset(
