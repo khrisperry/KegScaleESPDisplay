@@ -1,6 +1,7 @@
 #include "app.h"
 #include "cJSON.h"
 #include "controller_link.h"
+#include "ota_signature.h"
 #include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
@@ -143,6 +144,78 @@ esp_err_t touchscreen_ota(bool install) {
     return ESP_ERR_INVALID_RESPONSE;
   }
   manifest[used] = 0;
+
+  char signature_url[360];
+  const int signature_url_length = snprintf(
+      signature_url, sizeof(signature_url),
+      "https://api.github.com/repos/khrisperry/KegScaleFirmware/contents/"
+      "touchscreen/%s/esp32s3/manifest.sig?ref=main",
+      channel);
+  if (signature_url_length <= 0 ||
+      (size_t)signature_url_length >= sizeof(signature_url)) {
+    free(manifest);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  auto signature_http = open_url(signature_url, true);
+  if (!signature_http) {
+    free(manifest);
+    ESP_LOGW(TAG,
+             "Could not open touchscreen OTA manifest signature for channel=%s",
+             channel);
+    return ESP_ERR_NOT_FOUND;
+  }
+
+  constexpr size_t kSignatureSize = 512;
+  char *signature = static_cast<char *>(ota_alloc(kSignatureSize));
+  if (!signature) {
+    esp_http_client_cleanup(signature_http);
+    free(manifest);
+    return ESP_ERR_NO_MEM;
+  }
+
+  size_t signature_used = 0;
+  while (signature_used < kSignatureSize - 1 &&
+         (n = esp_http_client_read(
+              signature_http,
+              signature + signature_used,
+              kSignatureSize - 1 - signature_used)) > 0) {
+    signature_used += n;
+  }
+  const bool signature_complete =
+      esp_http_client_is_complete_data_received(signature_http);
+  esp_http_client_cleanup(signature_http);
+  signature[signature_used] = 0;
+
+  if (!signature_complete || signature_used == 0) {
+    memset(signature, 0, kSignatureSize);
+    free(signature);
+    free(manifest);
+    ESP_LOGW(TAG, "Touchscreen OTA manifest signature download was incomplete");
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  const esp_err_t signature_result =
+      touchscreen_ota_signature_verify(
+          reinterpret_cast<const uint8_t *>(manifest),
+          used,
+          signature,
+          channel);
+  memset(signature, 0, kSignatureSize);
+  free(signature);
+
+  if (signature_result != ESP_OK) {
+    free(manifest);
+    ESP_LOGW(TAG,
+             "Touchscreen OTA manifest signature verification failed for channel=%s: %s",
+             channel,
+             esp_err_to_name(signature_result));
+    return signature_result;
+  }
+
+  ESP_LOGI(TAG, "Touchscreen OTA manifest signature verified for channel=%s",
+           channel);
+
   auto o = cJSON_Parse(manifest);
   free(manifest);
   if (!o)
