@@ -38,6 +38,7 @@ static esp_err_t screen_error, fetch_error, save_error, command_ack_error;
 static unsigned fail_fetches;
 static size_t strlcpy(char *d,const char *s,size_t n) { size_t len=strlen(s);snprintf(d,n,"%s",s);return len; }
 static unsigned esp_sleep_get_wakeup_causes(void) { return causes; }
+static uint64_t esp_rtc_get_time_us(void) { return 123456789ULL; }
 static esp_err_t esp_sleep_disable_wakeup_source(int source) { assert(source==ESP_SLEEP_WAKEUP_ALL);disables++;touch_arms=0;return ESP_ERR_INVALID_STATE; }
 static esp_err_t esp_sleep_enable_timer_wakeup(uint64_t us) { assert(disables);timer_us=us;return ESP_OK; }
 static esp_err_t touch_wake_prepare(uint8_t threshold,touch_wake_arm_info_t *info) { assert(threshold==15&&timer_us);touch_arms++;if(info){info->benchmark=660;info->threshold=607;info->requested_threshold_percent=15;info->effective_threshold_percent=15;}return ESP_OK; }
