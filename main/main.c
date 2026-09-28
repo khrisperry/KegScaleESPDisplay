@@ -17,6 +17,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_rtc_time.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -71,6 +72,7 @@ typedef struct {
     uint16_t reserved;
     uint32_t arm_benchmark;
     uint32_t arm_threshold;
+    uint64_t arm_rtc_time_us;
     uint8_t last_touch_valid;
     uint8_t last_requested_threshold_percent;
     uint8_t last_effective_threshold_percent;
@@ -79,6 +81,7 @@ typedef struct {
     uint32_t last_threshold;
     uint32_t last_touch_boot_count;
     uint32_t last_touch_sleep_requested_seconds;
+    uint32_t last_touch_sleep_elapsed_ms;
 } touch_diagnostic_retained_t;
 
 RTC_DATA_ATTR static touch_diagnostic_retained_t s_touch_diag;
@@ -671,6 +674,8 @@ static void configure_wake_sources(void)
         arm_info.benchmark;
     s_touch_diag.arm_threshold =
         arm_info.threshold;
+    s_touch_diag.arm_rtc_time_us =
+        esp_rtc_get_time_us();
 #endif
 }
 
@@ -1321,6 +1326,20 @@ void app_main(void)
             s_retained.diagnostic_boot_count;
         s_touch_diag.last_touch_sleep_requested_seconds =
             s_retained.last_sleep_requested_seconds;
+
+        const uint64_t wake_rtc_time_us =
+            esp_rtc_get_time_us();
+        if (s_touch_diag.arm_rtc_time_us != 0 &&
+            wake_rtc_time_us >= s_touch_diag.arm_rtc_time_us) {
+            const uint64_t elapsed_ms =
+                (wake_rtc_time_us -
+                 s_touch_diag.arm_rtc_time_us) / 1000ULL;
+            s_touch_diag.last_touch_sleep_elapsed_ms =
+                elapsed_ms > UINT32_MAX ?
+                    UINT32_MAX : (uint32_t)elapsed_ms;
+        } else {
+            s_touch_diag.last_touch_sleep_elapsed_ms = 0;
+        }
     }
 
     const uint8_t diagnostic_flags =
@@ -1343,8 +1362,13 @@ void app_main(void)
         s_touch_diag.last_effective_threshold_percent,
         s_touch_diag.last_benchmark,
         s_touch_diag.last_threshold,
-        s_touch_diag.last_touch_boot_count,
-        s_touch_diag.last_touch_sleep_requested_seconds);
+        s_touch_diag.last_touch_boot_count > UINT16_MAX ?
+            UINT16_MAX :
+            (uint16_t)s_touch_diag.last_touch_boot_count,
+        s_touch_diag.last_touch_sleep_requested_seconds > UINT16_MAX ?
+            UINT16_MAX :
+            (uint16_t)s_touch_diag.last_touch_sleep_requested_seconds,
+        s_touch_diag.last_touch_sleep_elapsed_ms);
 
     ESP_LOGI(
         TAG,
