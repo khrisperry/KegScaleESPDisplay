@@ -19,8 +19,7 @@ static const char k_manifest[] =
     "  \"size\": 1618640,\n"
     "  \"sha256\": \"ffc85b1e7e99e9e5d599b478e7e67fe055146cc9af0cf68af78cee63dcd1cace\",\n"
     "  \"published_at\": \"2026-09-25T20:54:25Z\"\n"
-    "}\n"
-    "\n";
+    "}\n";
 
 static const char k_signature[] =
     "{\n"
@@ -29,8 +28,7 @@ static const char k_signature[] =
     "  \"channel\": \"dev\",\n"
     "  \"key_id\": \"b22d59da8a84e17f\",\n"
     "  \"signature\": \"wDJgRaCSk9VQ8FMut9XUv0/bPf2d13Ge7BqqpQO3nThYAlG/XnlCI58n9JXMt8r5FfByurOO812j8YATJDAUKQ==\"\n"
-    "}\n"
-    "\n";
+    "}\n";
 
 int main(void)
 {
