@@ -1541,7 +1541,7 @@ typedef struct {
     uint8_t touch_threshold;
 } retained_gatt_cache_t;
 RTC_DATA_ATTR static retained_gatt_cache_t s_gatt_cache;
-#define GATT_CACHE_MAGIC 0x4b474332U
+#define GATT_CACHE_MAGIC 0x4b474333U
 
 esp_err_t ble_client_fetch(
     const ble_client_peer_t *peer,
