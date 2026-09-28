@@ -127,6 +127,7 @@ void ble_client_set_display_battery_millivolts(
 void ble_client_set_wake_diagnostics(
     uint8_t wake_reason,
     uint8_t reset_reason,
+    uint8_t flags,
     uint32_t boot_count,
     uint32_t previous_sleep_requested_seconds,
     uint16_t timer_wake_count,
