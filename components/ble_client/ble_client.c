@@ -122,6 +122,13 @@ static const ble_uuid128_t s_display_command_ack_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x0b, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_diagnostics_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x0c, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -208,7 +215,26 @@ _Static_assert(
     sizeof(wire_display_info_t) == 20,
     "Display info must fit in the default ATT write payload");
 
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t wake_reason;
+    uint8_t reset_reason;
+    uint8_t flags;
+    uint32_t boot_count;
+    uint32_t awake_ms;
+    uint32_t previous_sleep_requested_seconds;
+    uint16_t timer_wake_count;
+    uint16_t touch_wake_count;
+} wire_display_diagnostics_t;
+
+_Static_assert(
+    sizeof(wire_display_diagnostics_t) == 20,
+    "Display diagnostics must fit in the default ATT write payload");
+
 static uint16_t s_display_battery_millivolts;
+static wire_display_diagnostics_t s_display_diagnostics = {
+    .protocol_version = BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+};
 
 typedef struct {
     ble_client_peer_t *items;
@@ -246,6 +272,7 @@ typedef struct {
     uint16_t display_info_handle;
     uint16_t touch_config_handle;
     uint16_t display_command_ack_handle;
+    uint16_t display_diagnostics_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -626,6 +653,11 @@ static int characteristic_disc_cb(
                        &s_display_command_ack_uuid.u) == 0) {
             context->display_command_ack_handle =
                 characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_diagnostics_uuid.u) == 0) {
+            context->display_diagnostics_handle =
+                characteristic->val_handle;
         }
 
         return 0;
@@ -947,6 +979,27 @@ void ble_client_set_display_battery_millivolts(
 {
     s_display_battery_millivolts =
         battery_millivolts;
+}
+
+void ble_client_set_wake_diagnostics(
+    uint8_t wake_reason,
+    uint8_t reset_reason,
+    uint32_t boot_count,
+    uint32_t previous_sleep_requested_seconds,
+    uint16_t timer_wake_count,
+    uint16_t touch_wake_count)
+{
+    s_display_diagnostics.protocol_version =
+        BLE_CLIENT_UPDATE_PROTOCOL_VERSION;
+    s_display_diagnostics.wake_reason = wake_reason;
+    s_display_diagnostics.reset_reason = reset_reason;
+    s_display_diagnostics.flags = 0;
+    s_display_diagnostics.boot_count = boot_count;
+    s_display_diagnostics.awake_ms = 0;
+    s_display_diagnostics.previous_sleep_requested_seconds =
+        previous_sleep_requested_seconds;
+    s_display_diagnostics.timer_wake_count = timer_wake_count;
+    s_display_diagnostics.touch_wake_count = touch_wake_count;
 }
 
 esp_err_t ble_client_init(void)
@@ -1744,6 +1797,33 @@ rediscover:
                 state->update.sha256,
                 update.sha256,
                 sizeof(state->update.sha256));
+        }
+    }
+
+    if (err == ESP_OK &&
+        characteristics.display_diagnostics_handle != 0) {
+        wire_display_diagnostics_t diagnostics = s_display_diagnostics;
+        diagnostics.awake_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+
+        esp_err_t diagnostic_err =
+            secure_connection(
+                conn_handle,
+                &connection);
+
+        if (diagnostic_err == ESP_OK) {
+            diagnostic_err =
+                write_value(
+                    conn_handle,
+                    characteristics.display_diagnostics_handle,
+                    &diagnostics,
+                    sizeof(diagnostics));
+        }
+
+        if (diagnostic_err != ESP_OK) {
+            ESP_LOGW(
+                TAG,
+                "Could not report display wake diagnostics: %s",
+                esp_err_to_name(diagnostic_err));
         }
     }
 
