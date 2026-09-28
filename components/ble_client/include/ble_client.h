@@ -123,6 +123,15 @@ esp_err_t ble_client_deinit(void);
 void ble_client_set_display_battery_millivolts(
     uint16_t battery_millivolts);
 
+/* Diagnostic metadata reported with each BLE check-in. */
+void ble_client_set_wake_diagnostics(
+    uint8_t wake_reason,
+    uint8_t reset_reason,
+    uint32_t boot_count,
+    uint32_t previous_sleep_requested_seconds,
+    uint16_t timer_wake_count,
+    uint16_t touch_wake_count);
+
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
     size_t capacity,
