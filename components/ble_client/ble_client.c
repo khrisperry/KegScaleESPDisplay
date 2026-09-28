@@ -130,6 +130,13 @@ static const ble_uuid128_t s_display_diagnostics_uuid =
         0x61, 0x4c, 0x7b, 0x3f,
         0x0c, 0x00, 0x7a, 0x8f);
 
+static const ble_uuid128_t s_display_touch_diagnostics_uuid =
+    BLE_UUID128_INIT(
+        0x01, 0xc0, 0x71, 0x5b,
+        0x2f, 0x6d, 0xb8, 0xa2,
+        0x61, 0x4c, 0x7b, 0x3f,
+        0x0d, 0x00, 0x7a, 0x8f);
+
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
     uint8_t flags;
@@ -232,8 +239,26 @@ _Static_assert(
     sizeof(wire_display_diagnostics_t) == 20,
     "Display diagnostics must fit in the default ATT write payload");
 
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t valid;
+    uint8_t requested_threshold_percent;
+    uint8_t effective_threshold_percent;
+    uint32_t benchmark;
+    uint32_t threshold;
+    uint32_t touch_wake_boot_count;
+    uint32_t touch_wake_sleep_requested_seconds;
+} wire_display_touch_diagnostics_t;
+
+_Static_assert(
+    sizeof(wire_display_touch_diagnostics_t) == 20,
+    "Display touch diagnostics must fit in the default ATT write payload");
+
 static uint16_t s_display_battery_millivolts;
 static wire_display_diagnostics_t s_display_diagnostics = {
+    .protocol_version = BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
+};
+static wire_display_touch_diagnostics_t s_display_touch_diagnostics = {
     .protocol_version = BLE_CLIENT_UPDATE_PROTOCOL_VERSION,
 };
 
@@ -274,6 +299,7 @@ typedef struct {
     uint16_t touch_config_handle;
     uint16_t display_command_ack_handle;
     uint16_t display_diagnostics_handle;
+    uint16_t display_touch_diagnostics_handle;
 } characteristic_context_t;
 
 typedef struct {
@@ -659,6 +685,11 @@ static int characteristic_disc_cb(
                        &s_display_diagnostics_uuid.u) == 0) {
             context->display_diagnostics_handle =
                 characteristic->val_handle;
+        } else if (ble_uuid_cmp(
+                       &characteristic->uuid.u,
+                       &s_display_touch_diagnostics_uuid.u) == 0) {
+            context->display_touch_diagnostics_handle =
+                characteristic->val_handle;
         }
 
         return 0;
@@ -1002,6 +1033,30 @@ void ble_client_set_wake_diagnostics(
         previous_sleep_requested_seconds;
     s_display_diagnostics.timer_wake_count = timer_wake_count;
     s_display_diagnostics.touch_wake_count = touch_wake_count;
+}
+
+void ble_client_set_touch_diagnostics(
+    bool valid,
+    uint8_t requested_threshold_percent,
+    uint8_t effective_threshold_percent,
+    uint32_t benchmark,
+    uint32_t threshold,
+    uint32_t touch_wake_boot_count,
+    uint32_t touch_wake_sleep_requested_seconds)
+{
+    s_display_touch_diagnostics.protocol_version =
+        BLE_CLIENT_UPDATE_PROTOCOL_VERSION;
+    s_display_touch_diagnostics.valid = valid ? 1U : 0U;
+    s_display_touch_diagnostics.requested_threshold_percent =
+        requested_threshold_percent;
+    s_display_touch_diagnostics.effective_threshold_percent =
+        effective_threshold_percent;
+    s_display_touch_diagnostics.benchmark = benchmark;
+    s_display_touch_diagnostics.threshold = threshold;
+    s_display_touch_diagnostics.touch_wake_boot_count =
+        touch_wake_boot_count;
+    s_display_touch_diagnostics.touch_wake_sleep_requested_seconds =
+        touch_wake_sleep_requested_seconds;
 }
 
 esp_err_t ble_client_init(void)
@@ -1402,7 +1457,8 @@ static esp_err_t discover_handles(
     uint16_t *display_info_handle,
     uint16_t *touch_config_handle,
     uint16_t *display_command_ack_handle,
-    uint16_t *display_diagnostics_handle)
+    uint16_t *display_diagnostics_handle,
+    uint16_t *display_touch_diagnostics_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -1489,6 +1545,8 @@ static esp_err_t discover_handles(
         chr_context.display_command_ack_handle;
     *display_diagnostics_handle =
         chr_context.display_diagnostics_handle;
+    *display_touch_diagnostics_handle =
+        chr_context.display_touch_diagnostics_handle;
 
     return ESP_OK;
 }
