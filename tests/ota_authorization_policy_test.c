@@ -129,6 +129,9 @@ int main(void)
     assert(!display_ota_version_is_newer("V1.3.2", "V1.3.2"));
     assert(!display_ota_version_is_newer("V1.3.1", "V1.3.2"));
     assert(!display_ota_version_is_newer("bad", "V1.3.2"));
+    assert(display_ota_version_is_newer(
+        "V1.3.2",
+        "V1.3.1-4-gabcdef"));
 
     assert(
         display_ota_authorization_evaluate(
