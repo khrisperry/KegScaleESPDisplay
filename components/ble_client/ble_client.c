@@ -2086,6 +2086,7 @@ esp_err_t ble_client_fetch_update_bundle(
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
+    uint16_t display_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2100,7 +2101,8 @@ esp_err_t ble_client_fetch_update_bundle(
                 &display_control_handle,
                 &display_info_handle,
                 &touch_config_handle,
-                &display_command_ack_handle);
+                &display_command_ack_handle,
+                &display_diagnostics_handle);
     }
 
     wire_update_bundle_t wire = {0};
@@ -2208,6 +2210,7 @@ esp_err_t ble_client_acknowledge_control(
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
+    uint16_t display_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2222,7 +2225,8 @@ esp_err_t ble_client_acknowledge_control(
                 &display_control_handle,
                 &display_info_handle,
                 &touch_config_handle,
-                &display_command_ack_handle);
+                &display_command_ack_handle,
+                &display_diagnostics_handle);
     }
 
     if (err == ESP_OK &&
@@ -2310,6 +2314,7 @@ esp_err_t ble_client_save_touch_threshold(
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
+    uint16_t display_diagnostics_handle = 0;
 
     if (err == ESP_OK) {
         err =
@@ -2324,7 +2329,8 @@ esp_err_t ble_client_save_touch_threshold(
                 &display_control_handle,
                 &display_info_handle,
                 &touch_config_handle,
-                &display_command_ack_handle);
+                &display_command_ack_handle,
+                &display_diagnostics_handle);
     }
 
     if (err == ESP_OK &&
