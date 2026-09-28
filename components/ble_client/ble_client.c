@@ -246,8 +246,9 @@ typedef struct __attribute__((packed)) {
     uint8_t effective_threshold_percent;
     uint32_t benchmark;
     uint32_t threshold;
-    uint32_t touch_wake_boot_count;
-    uint32_t touch_wake_sleep_requested_seconds;
+    uint16_t touch_wake_boot_count;
+    uint16_t touch_wake_sleep_requested_seconds;
+    uint32_t touch_wake_sleep_elapsed_ms;
 } wire_display_touch_diagnostics_t;
 
 _Static_assert(
@@ -1041,8 +1042,9 @@ void ble_client_set_touch_diagnostics(
     uint8_t effective_threshold_percent,
     uint32_t benchmark,
     uint32_t threshold,
-    uint32_t touch_wake_boot_count,
-    uint32_t touch_wake_sleep_requested_seconds)
+    uint16_t touch_wake_boot_count,
+    uint16_t touch_wake_sleep_requested_seconds,
+    uint32_t touch_wake_sleep_elapsed_ms)
 {
     s_display_touch_diagnostics.protocol_version =
         BLE_CLIENT_UPDATE_PROTOCOL_VERSION;
@@ -1057,6 +1059,8 @@ void ble_client_set_touch_diagnostics(
         touch_wake_boot_count;
     s_display_touch_diagnostics.touch_wake_sleep_requested_seconds =
         touch_wake_sleep_requested_seconds;
+    s_display_touch_diagnostics.touch_wake_sleep_elapsed_ms =
+        touch_wake_sleep_elapsed_ms;
 }
 
 esp_err_t ble_client_init(void)
