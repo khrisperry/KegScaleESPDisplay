@@ -39,6 +39,13 @@ typedef struct {
     touch_calibration_failure_t failure;
 } touch_calibration_result_t;
 
+typedef struct {
+    uint32_t benchmark;
+    uint32_t threshold;
+    uint8_t requested_threshold_percent;
+    uint8_t effective_threshold_percent;
+} touch_wake_arm_info_t;
+
 typedef esp_err_t (*touch_calibration_progress_cb_t)(
     touch_calibration_stage_t stage,
     uint8_t completed,
@@ -50,7 +57,8 @@ typedef esp_err_t (*touch_calibration_progress_cb_t)(
  * wake source. The caller may also enable the RTC timer wake source.
  */
 esp_err_t touch_wake_prepare(
-    uint8_t threshold_percent);
+    uint8_t threshold_percent,
+    touch_wake_arm_info_t *arm_info);
 
 /**
  * Run an awake, user-guided calibration. The progress callback is used by the
