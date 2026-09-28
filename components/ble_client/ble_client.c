@@ -1399,7 +1399,8 @@ static esp_err_t discover_handles(
     uint16_t *display_control_handle,
     uint16_t *display_info_handle,
     uint16_t *touch_config_handle,
-    uint16_t *display_command_ack_handle)
+    uint16_t *display_command_ack_handle,
+    uint16_t *display_diagnostics_handle)
 {
     SemaphoreHandle_t service_done =
         xSemaphoreCreateBinary();
@@ -1484,6 +1485,8 @@ static esp_err_t discover_handles(
         chr_context.touch_config_handle;
     *display_command_ack_handle =
         chr_context.display_command_ack_handle;
+    *display_diagnostics_handle =
+        chr_context.display_diagnostics_handle;
 
     return ESP_OK;
 }
@@ -1529,7 +1532,7 @@ esp_err_t ble_client_pair(
 typedef struct {
     uint32_t magic;
     ble_client_peer_t peer;
-    uint16_t handles[10];
+    uint16_t handles[11];
     char identity[BLE_CLIENT_DEVICE_INFO_MAX + 1];
     char keg_name[BLE_CLIENT_KEG_NAME_MAX + 1];
     uint8_t profile_revision;
@@ -1596,6 +1599,7 @@ esp_err_t ble_client_fetch_mode(
     uint16_t display_info_handle = 0;
     uint16_t touch_config_handle = 0;
     uint16_t display_command_ack_handle = 0;
+    uint16_t display_diagnostics_handle = 0;
     uint8_t raw_snapshot[sizeof(wire_snapshot_t)] = {0};
     size_t raw_snapshot_len = 0;
     size_t text_len = 0;
@@ -1612,6 +1616,7 @@ rediscover:
         display_info_handle = s_gatt_cache.handles[7];
         touch_config_handle = s_gatt_cache.handles[8];
         display_command_ack_handle = s_gatt_cache.handles[9];
+        display_diagnostics_handle = s_gatt_cache.handles[10];
         ESP_LOGI(TAG, "Touch fetch: using retained BLE handles");
     } else {
         err =
@@ -1626,7 +1631,8 @@ rediscover:
                 &display_control_handle,
                 &display_info_handle,
                 &touch_config_handle,
-                &display_command_ack_handle);
+                &display_command_ack_handle,
+                &display_diagnostics_handle);
     }
 
     /* Validate protocol and scale firmware before using cached handles to write. */
@@ -1801,7 +1807,7 @@ rediscover:
     }
 
     if (err == ESP_OK &&
-        characteristics.display_diagnostics_handle != 0) {
+        display_diagnostics_handle != 0) {
         wire_display_diagnostics_t diagnostics = s_display_diagnostics;
         diagnostics.awake_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
@@ -1814,7 +1820,7 @@ rediscover:
             diagnostic_err =
                 write_value(
                     conn_handle,
-                    characteristics.display_diagnostics_handle,
+                    display_diagnostics_handle,
                     &diagnostics,
                     sizeof(diagnostics));
         }
@@ -2005,6 +2011,7 @@ rediscover:
         s_gatt_cache.handles[7] = display_info_handle;
         s_gatt_cache.handles[8] = touch_config_handle;
         s_gatt_cache.handles[9] = display_command_ack_handle;
+        s_gatt_cache.handles[10] = display_diagnostics_handle;
         strlcpy(s_gatt_cache.identity, state->device_info, sizeof(s_gatt_cache.identity));
         strlcpy(s_gatt_cache.keg_name, state->keg_name, sizeof(s_gatt_cache.keg_name));
         s_gatt_cache.profile_revision = state->profile_revision;
