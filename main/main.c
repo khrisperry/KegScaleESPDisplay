@@ -40,6 +40,7 @@ static const char *TAG = "display";
 #define DISPLAY_STATE_NAMESPACE "display_state"
 #define KEY_TOUCH_CAL_PENDING "touch_cal"
 #define KEY_OTA_SCREEN_PENDING "ota_screen"
+#define DISPLAY_DIAG_FLAG_TOUCH_SEQUENCE (1U << 0)
 
 typedef struct {
     uint32_t magic;
@@ -154,6 +155,7 @@ static bool display_state_flag_is_set(
 static void sleep_for_touch_delay(unsigned seconds)
 {
     pairing_reset_power_cycle_count();
+    s_retained.last_sleep_requested_seconds = seconds;
     disable_wake_source_if_enabled(ESP_SLEEP_WAKEUP_ALL);
     ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL));
     ESP_LOGI(TAG, "Touch phase %u: deep sleep for %u seconds",
@@ -647,24 +649,15 @@ static void go_to_sleep(void)
     configure_wake_sources();
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
-    if (s_periodic_checkin_enabled) {
-        ESP_LOGI(
-            TAG,
-            "Sleeping for %d seconds; GPIO12 capacitive touch also wakes the display",
-            CONFIG_KEG_DISPLAY_SLEEP_SECONDS);
-    } else {
-        ESP_LOGI(
-            TAG,
-            "Frequent check-in disabled; safety check in %d seconds; GPIO12 capacitive touch also wakes the display",
-            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
-    }
+    ESP_LOGI(
+        TAG,
+        "Sleeping for %lu seconds; GPIO12 capacitive touch also wakes the display",
+        (unsigned long)s_retained.last_sleep_requested_seconds);
 #else
     ESP_LOGI(
         TAG,
-        "Sleeping for %d seconds",
-        s_periodic_checkin_enabled ?
-            CONFIG_KEG_DISPLAY_SLEEP_SECONDS :
-            CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
+        "Sleeping for %lu seconds",
+        (unsigned long)s_retained.last_sleep_requested_seconds);
 #endif
 
     fflush(stdout);
@@ -1278,9 +1271,15 @@ void app_main(void)
         ++s_retained.diagnostic_boot_count;
     }
 
+    const uint8_t diagnostic_flags =
+        diagnostic_wake_reason == 1 &&
+        s_touch_phase != 0 ?
+            DISPLAY_DIAG_FLAG_TOUCH_SEQUENCE : 0;
+
     ble_client_set_wake_diagnostics(
         diagnostic_wake_reason,
         (uint8_t)esp_reset_reason(),
+        diagnostic_flags,
         s_retained.diagnostic_boot_count,
         s_retained.last_sleep_requested_seconds,
         s_retained.diagnostic_timer_wake_count,
@@ -1288,9 +1287,11 @@ void app_main(void)
 
     ESP_LOGI(
         TAG,
-        "Wake diagnostics: reason=%u reset=%u boot=%lu previous_sleep_request=%lus timer_wakes=%u touch_wakes=%u",
+        "Wake diagnostics: reason=%u reset=%u origin=%s boot=%lu previous_sleep_request=%lus timer_wakes=%u touch_wakes=%u",
         (unsigned)diagnostic_wake_reason,
         (unsigned)esp_reset_reason(),
+        (diagnostic_flags & DISPLAY_DIAG_FLAG_TOUCH_SEQUENCE) != 0 ?
+            "touch" : "direct",
         (unsigned long)s_retained.diagnostic_boot_count,
         (unsigned long)s_retained.last_sleep_requested_seconds,
         (unsigned)s_retained.diagnostic_timer_wake_count,
