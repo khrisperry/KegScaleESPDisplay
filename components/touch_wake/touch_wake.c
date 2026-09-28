@@ -23,6 +23,12 @@ static const char *TAG = "touch_wake";
 #define TOUCH_CALIBRATION_SETTLE_MS 1500
 #define TOUCH_CALIBRATION_SAMPLE_MS 50
 #define TOUCH_CALIBRATION_ACTION_TIMEOUT_MS 60000
+/*
+ * Bench testing showed 1-3% deep-sleep thresholds can self-trigger while the
+ * display is untouched. Keep user/calibration settings intact, but apply a
+ * conservative floor only when arming deep-sleep touch wake.
+ */
+#define TOUCH_SLEEP_GUARD_PERCENT 6
 
 typedef struct {
     touch_sensor_handle_t sensor;
@@ -337,6 +343,18 @@ esp_err_t touch_wake_prepare(
             CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
     }
 
+    const uint8_t requested_threshold_percent =
+        threshold_percent;
+
+    if (threshold_percent < TOUCH_SLEEP_GUARD_PERCENT) {
+        threshold_percent = TOUCH_SLEEP_GUARD_PERCENT;
+        ESP_LOGW(
+            TAG,
+            "Touch sleep guard raised threshold from %u%% to %u%% to reduce false wakes",
+            (unsigned)requested_threshold_percent,
+            (unsigned)threshold_percent);
+    }
+
     touch_context_t context;
     ESP_RETURN_ON_ERROR(
         touch_context_create(
@@ -438,12 +456,13 @@ esp_err_t touch_wake_prepare(
     ESP_LOGI(
         TAG,
         "Touch wake armed: GPIO%d / channel %d benchmark=%" PRIu32
-        " threshold=%" PRIu32 " sensitivity=%d%%",
+        " threshold=%" PRIu32 " sensitivity=%u%% requested=%u%%",
         TOUCH_WAKE_GPIO,
         TOUCH_WAKE_CHANNEL,
         benchmark[0],
         threshold,
-        threshold_percent);
+        (unsigned)threshold_percent,
+        (unsigned)requested_threshold_percent);
 
     return ESP_OK;
 }
