@@ -19,7 +19,14 @@
 #define ESP_SLEEP_WAKEUP_TOUCHPAD 2
 typedef int esp_sleep_source_t;
 typedef struct { ble_client_peer_t peer; } pairing_config_t;
+typedef struct {
+    uint32_t benchmark;
+    uint32_t threshold;
+    uint8_t requested_threshold_percent;
+    uint8_t effective_threshold_percent;
+} touch_wake_arm_info_t;
 static retained_state_t s_retained;
+static touch_diagnostic_retained_t s_touch_diag;
 static uint8_t s_touch_threshold_percent=15;
 static bool s_periodic_checkin_enabled, s_lightweight_fetch;
 static uint32_t s_scale_screen_magic;
@@ -33,7 +40,7 @@ static size_t strlcpy(char *d,const char *s,size_t n) { size_t len=strlen(s);snp
 static unsigned esp_sleep_get_wakeup_causes(void) { return causes; }
 static esp_err_t esp_sleep_disable_wakeup_source(int source) { assert(source==ESP_SLEEP_WAKEUP_ALL);disables++;touch_arms=0;return ESP_ERR_INVALID_STATE; }
 static esp_err_t esp_sleep_enable_timer_wakeup(uint64_t us) { assert(disables);timer_us=us;return ESP_OK; }
-static esp_err_t touch_wake_prepare(uint8_t threshold) { assert(threshold==15&&timer_us);touch_arms++;return ESP_OK; }
+static esp_err_t touch_wake_prepare(uint8_t threshold,touch_wake_arm_info_t *info) { assert(threshold==15&&timer_us);touch_arms++;if(info){info->benchmark=660;info->threshold=607;info->requested_threshold_percent=15;info->effective_threshold_percent=15;}return ESP_OK; }
 static void esp_deep_sleep_start(void) { sleeps++; }
 static void pairing_reset_power_cycle_count(void) { resets++; }
 static void vTaskDelay(unsigned ms) { assert(ms==750); }
