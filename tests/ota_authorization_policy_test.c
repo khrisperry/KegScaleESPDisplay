@@ -37,28 +37,32 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_APPROVED);
 
     assert(
         display_ota_authorization_evaluate(
             ESP_ERR_TIMEOUT,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_NOT_APPROVED);
 
     assert(
         display_ota_authorization_evaluate(
             ESP_OK,
             NULL,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
 
     assert(
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            NULL) ==
+            NULL,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
 
     offer.valid = false;
@@ -66,7 +70,8 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
     offer.valid = true;
 
@@ -75,7 +80,8 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
     strcpy(bundle.hardware, offer.hardware);
 
@@ -84,7 +90,8 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
     strcpy(bundle.version, offer.version);
 
@@ -93,7 +100,8 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
     strcpy(bundle.sha256, offer.sha256);
 
@@ -102,7 +110,8 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
     bundle.size_bytes = offer.size_bytes;
 
@@ -111,8 +120,31 @@ int main(void)
         display_ota_authorization_evaluate(
             ESP_OK,
             &offer,
-            &bundle) ==
+            &bundle,
+            "V1.3.1") ==
         DISPLAY_OTA_AUTHORIZATION_METADATA_MISMATCH);
+
+    initialize_matching_metadata(&offer, &bundle);
+    assert(display_ota_version_is_newer("V1.3.2", "V1.3.1"));
+    assert(!display_ota_version_is_newer("V1.3.2", "V1.3.2"));
+    assert(!display_ota_version_is_newer("V1.3.1", "V1.3.2"));
+    assert(!display_ota_version_is_newer("bad", "V1.3.2"));
+
+    assert(
+        display_ota_authorization_evaluate(
+            ESP_OK,
+            &offer,
+            &bundle,
+            "V1.3.2") ==
+        DISPLAY_OTA_AUTHORIZATION_NOT_NEWER);
+
+    assert(
+        display_ota_authorization_evaluate(
+            ESP_OK,
+            &offer,
+            &bundle,
+            "V1.4.0") ==
+        DISPLAY_OTA_AUTHORIZATION_NOT_NEWER);
 
     puts(
         "PASS: unapproved, missing, mismatched, and approved "
