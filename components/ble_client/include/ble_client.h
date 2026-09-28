@@ -133,6 +133,15 @@ void ble_client_set_wake_diagnostics(
     uint16_t timer_wake_count,
     uint16_t touch_wake_count);
 
+void ble_client_set_touch_diagnostics(
+    bool valid,
+    uint8_t requested_threshold_percent,
+    uint8_t effective_threshold_percent,
+    uint32_t benchmark,
+    uint32_t threshold,
+    uint32_t touch_wake_boot_count,
+    uint32_t touch_wake_sleep_requested_seconds);
+
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
     size_t capacity,
