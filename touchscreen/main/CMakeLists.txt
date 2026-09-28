@@ -1,5 +1,5 @@
-idf_component_register(SRCS "main.cpp" "app_task.cpp" "connection_transport.cpp" "connection_session.cpp" "controller_setup_client.cpp" "setup_discovery.cpp" "ui.cpp" "ui_text.cpp" "home_layout.cpp" "touchscreen_ota.cpp" "pairing_overlay.cpp" "pairing_guard.cpp" INCLUDE_DIRS "."
-    REQUIRES esp_lcd_touch esp_lvgl_port controller_link ble_client esp_wifi esp_netif esp_event nvs_flash esp_timer app_update esp_https_ota esp_http_client esp_websocket_client cjson mdns esp32_s3_touch_lcd_4b lvgl)
+idf_component_register(SRCS "main.cpp" "app_task.cpp" "connection_transport.cpp" "connection_session.cpp" "controller_setup_client.cpp" "setup_discovery.cpp" "ui.cpp" "ui_text.cpp" "home_layout.cpp" "touchscreen_ota.cpp" "ota_signature.c" "pairing_overlay.cpp" "pairing_guard.cpp" INCLUDE_DIRS "."
+    REQUIRES esp_lcd_touch esp_lvgl_port controller_link ble_client esp_wifi esp_netif esp_event nvs_flash esp_timer app_update esp_https_ota esp_http_client esp_websocket_client cjson mbedtls mdns esp32_s3_touch_lcd_4b lvgl)
 
 # main.cpp now owns live settings, pairing synchronization, discovery and OTA
 # scheduling directly. Route only its UI entry points through home_layout.cpp
