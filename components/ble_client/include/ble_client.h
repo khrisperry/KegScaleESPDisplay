@@ -139,8 +139,9 @@ void ble_client_set_touch_diagnostics(
     uint8_t effective_threshold_percent,
     uint32_t benchmark,
     uint32_t threshold,
-    uint32_t touch_wake_boot_count,
-    uint32_t touch_wake_sleep_requested_seconds);
+    uint16_t touch_wake_boot_count,
+    uint16_t touch_wake_sleep_requested_seconds,
+    uint32_t touch_wake_sleep_elapsed_ms);
 
 esp_err_t ble_client_scan(
     ble_client_peer_t *candidates,
