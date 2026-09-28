@@ -329,7 +329,8 @@ static esp_err_t wait_for_state(
 }
 
 esp_err_t touch_wake_prepare(
-    uint8_t threshold_percent)
+    uint8_t threshold_percent,
+    touch_wake_arm_info_t *arm_info)
 {
 #if SOC_TOUCH_SENSOR_VERSION != 1
 #error "KegScaleESPDisplay touch wake currently targets classic ESP32 touch hardware v1"
@@ -452,6 +453,15 @@ esp_err_t touch_wake_prepare(
         TAG,
         "Could not start touch scanning");
     context.scanning = true;
+
+    if (arm_info != NULL) {
+        arm_info->benchmark = benchmark[0];
+        arm_info->threshold = threshold;
+        arm_info->requested_threshold_percent =
+            requested_threshold_percent;
+        arm_info->effective_threshold_percent =
+            threshold_percent;
+    }
 
     ESP_LOGI(
         TAG,
