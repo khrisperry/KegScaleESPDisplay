@@ -401,11 +401,24 @@ static void initialize_retained_peer(
         return;
     }
 
+    const uint32_t diagnostic_boot_count =
+        s_retained.diagnostic_boot_count;
+    const uint32_t last_sleep_requested_seconds =
+        s_retained.last_sleep_requested_seconds;
+    const uint16_t diagnostic_timer_wake_count =
+        s_retained.diagnostic_timer_wake_count;
+    const uint16_t diagnostic_touch_wake_count =
+        s_retained.diagnostic_touch_wake_count;
+
     memset(
         &s_retained,
         0,
         sizeof(s_retained));
 
+    s_retained.diagnostic_boot_count = diagnostic_boot_count;
+    s_retained.last_sleep_requested_seconds = last_sleep_requested_seconds;
+    s_retained.diagnostic_timer_wake_count = diagnostic_timer_wake_count;
+    s_retained.diagnostic_touch_wake_count = diagnostic_touch_wake_count;
     s_retained.magic = RETAINED_MAGIC;
     s_retained.battery_percent = 255U;
 
@@ -1239,6 +1252,10 @@ void app_main(void)
         wake_reason());
 
     init_nvs();
+
+    if (s_retained.magic != RETAINED_MAGIC) {
+        memset(&s_retained, 0, sizeof(s_retained));
+    }
 
     const uint32_t startup_wake_causes =
         esp_sleep_get_wakeup_causes();
