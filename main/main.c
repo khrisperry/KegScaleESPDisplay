@@ -54,6 +54,10 @@ typedef struct {
     uint8_t scale_offline_displayed;
     uint16_t remaining_servings;
     float total_weight_lbs;
+    uint32_t diagnostic_boot_count;
+    uint32_t last_sleep_requested_seconds;
+    uint16_t diagnostic_timer_wake_count;
+    uint16_t diagnostic_touch_wake_count;
 } retained_state_t;
 
 RTC_DATA_ATTR static retained_state_t s_retained;
@@ -595,6 +599,8 @@ static void configure_wake_sources(void)
     const uint64_t wake_seconds = power_next_check_seconds(
         s_periodic_checkin_enabled, s_retained.consecutive_scale_failures,
         CONFIG_KEG_DISPLAY_SLEEP_SECONDS, CONFIG_KEG_DISPLAY_SAFETY_WAKE_SECONDS);
+    s_retained.last_sleep_requested_seconds =
+        wake_seconds > UINT32_MAX ? UINT32_MAX : (uint32_t)wake_seconds;
     ESP_LOGI(TAG, "Next scheduled check in %llu seconds", (unsigned long long)wake_seconds);
 
     ESP_ERROR_CHECK(
@@ -1219,6 +1225,45 @@ void app_main(void)
         wake_reason());
 
     init_nvs();
+
+    const uint32_t startup_wake_causes =
+        esp_sleep_get_wakeup_causes();
+    uint8_t diagnostic_wake_reason = 0;
+    if ((startup_wake_causes & BIT(ESP_SLEEP_WAKEUP_TOUCHPAD)) != 0) {
+        diagnostic_wake_reason = 2;
+        if (s_retained.diagnostic_touch_wake_count < UINT16_MAX) {
+            ++s_retained.diagnostic_touch_wake_count;
+        }
+    } else if ((startup_wake_causes & BIT(ESP_SLEEP_WAKEUP_TIMER)) != 0) {
+        diagnostic_wake_reason = 1;
+        if (s_retained.diagnostic_timer_wake_count < UINT16_MAX) {
+            ++s_retained.diagnostic_timer_wake_count;
+        }
+    } else if (startup_wake_causes != 0) {
+        diagnostic_wake_reason = 3;
+    }
+
+    if (s_retained.diagnostic_boot_count < UINT32_MAX) {
+        ++s_retained.diagnostic_boot_count;
+    }
+
+    ble_client_set_wake_diagnostics(
+        diagnostic_wake_reason,
+        (uint8_t)esp_reset_reason(),
+        s_retained.diagnostic_boot_count,
+        s_retained.last_sleep_requested_seconds,
+        s_retained.diagnostic_timer_wake_count,
+        s_retained.diagnostic_touch_wake_count);
+
+    ESP_LOGI(
+        TAG,
+        "Wake diagnostics: reason=%u reset=%u boot=%lu previous_sleep_request=%lus timer_wakes=%u touch_wakes=%u",
+        (unsigned)diagnostic_wake_reason,
+        (unsigned)esp_reset_reason(),
+        (unsigned long)s_retained.diagnostic_boot_count,
+        (unsigned long)s_retained.last_sleep_requested_seconds,
+        (unsigned)s_retained.diagnostic_timer_wake_count,
+        (unsigned)s_retained.diagnostic_touch_wake_count);
 
     /* Discard an interrupted legacy touch wizard instead of resuming it. */
     if (display_state_flag_is_set(KEY_TOUCH_CAL_PENDING)) {
