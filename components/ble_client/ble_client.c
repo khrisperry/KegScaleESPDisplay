@@ -985,6 +985,7 @@ void ble_client_set_display_battery_millivolts(
 void ble_client_set_wake_diagnostics(
     uint8_t wake_reason,
     uint8_t reset_reason,
+    uint8_t flags,
     uint32_t boot_count,
     uint32_t previous_sleep_requested_seconds,
     uint16_t timer_wake_count,
@@ -994,7 +995,7 @@ void ble_client_set_wake_diagnostics(
         BLE_CLIENT_UPDATE_PROTOCOL_VERSION;
     s_display_diagnostics.wake_reason = wake_reason;
     s_display_diagnostics.reset_reason = reset_reason;
-    s_display_diagnostics.flags = 0;
+    s_display_diagnostics.flags = flags;
     s_display_diagnostics.boot_count = boot_count;
     s_display_diagnostics.awake_ms = 0;
     s_display_diagnostics.previous_sleep_requested_seconds =
