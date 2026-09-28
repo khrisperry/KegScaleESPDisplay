@@ -41,6 +41,7 @@ static const char *TAG = "display";
 #define KEY_TOUCH_CAL_PENDING "touch_cal"
 #define KEY_OTA_SCREEN_PENDING "ota_screen"
 #define DISPLAY_DIAG_FLAG_TOUCH_SEQUENCE (1U << 0)
+#define TOUCH_DIAG_RETAINED_MAGIC 0x54444731U
 
 typedef struct {
     uint32_t magic;
@@ -62,6 +63,25 @@ typedef struct {
 } retained_state_t;
 
 RTC_DATA_ATTR static retained_state_t s_retained;
+
+typedef struct {
+    uint32_t magic;
+    uint8_t arm_requested_threshold_percent;
+    uint8_t arm_effective_threshold_percent;
+    uint16_t reserved;
+    uint32_t arm_benchmark;
+    uint32_t arm_threshold;
+    uint8_t last_touch_valid;
+    uint8_t last_requested_threshold_percent;
+    uint8_t last_effective_threshold_percent;
+    uint8_t reserved2;
+    uint32_t last_benchmark;
+    uint32_t last_threshold;
+    uint32_t last_touch_boot_count;
+    uint32_t last_touch_sleep_requested_seconds;
+} touch_diagnostic_retained_t;
+
+RTC_DATA_ATTR static touch_diagnostic_retained_t s_touch_diag;
 
 static uint8_t s_touch_threshold_percent =
     CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;
@@ -637,9 +657,20 @@ static void configure_wake_sources(void)
             wake_seconds * 1000000ULL));
 
 #if CONFIG_KEG_DISPLAY_TOUCH_WAKE
+    touch_wake_arm_info_t arm_info = {0};
     ESP_ERROR_CHECK(
         touch_wake_prepare(
-            s_touch_threshold_percent));
+            s_touch_threshold_percent,
+            &arm_info));
+    s_touch_diag.magic = TOUCH_DIAG_RETAINED_MAGIC;
+    s_touch_diag.arm_requested_threshold_percent =
+        arm_info.requested_threshold_percent;
+    s_touch_diag.arm_effective_threshold_percent =
+        arm_info.effective_threshold_percent;
+    s_touch_diag.arm_benchmark =
+        arm_info.benchmark;
+    s_touch_diag.arm_threshold =
+        arm_info.threshold;
 #endif
 }
 
@@ -1250,6 +1281,11 @@ void app_main(void)
         memset(&s_retained, 0, sizeof(s_retained));
     }
 
+    if (s_touch_diag.magic != TOUCH_DIAG_RETAINED_MAGIC) {
+        memset(&s_touch_diag, 0, sizeof(s_touch_diag));
+        s_touch_diag.magic = TOUCH_DIAG_RETAINED_MAGIC;
+    }
+
     const uint32_t startup_wake_causes =
         esp_sleep_get_wakeup_causes();
     uint8_t diagnostic_wake_reason = 0;
@@ -1271,6 +1307,22 @@ void app_main(void)
         ++s_retained.diagnostic_boot_count;
     }
 
+    if (diagnostic_wake_reason == 2) {
+        s_touch_diag.last_touch_valid = 1U;
+        s_touch_diag.last_requested_threshold_percent =
+            s_touch_diag.arm_requested_threshold_percent;
+        s_touch_diag.last_effective_threshold_percent =
+            s_touch_diag.arm_effective_threshold_percent;
+        s_touch_diag.last_benchmark =
+            s_touch_diag.arm_benchmark;
+        s_touch_diag.last_threshold =
+            s_touch_diag.arm_threshold;
+        s_touch_diag.last_touch_boot_count =
+            s_retained.diagnostic_boot_count;
+        s_touch_diag.last_touch_sleep_requested_seconds =
+            s_retained.last_sleep_requested_seconds;
+    }
+
     const uint8_t diagnostic_flags =
         diagnostic_wake_reason == 1 &&
         s_touch_phase != 0 ?
@@ -1284,6 +1336,15 @@ void app_main(void)
         s_retained.last_sleep_requested_seconds,
         s_retained.diagnostic_timer_wake_count,
         s_retained.diagnostic_touch_wake_count);
+
+    ble_client_set_touch_diagnostics(
+        s_touch_diag.last_touch_valid != 0,
+        s_touch_diag.last_requested_threshold_percent,
+        s_touch_diag.last_effective_threshold_percent,
+        s_touch_diag.last_benchmark,
+        s_touch_diag.last_threshold,
+        s_touch_diag.last_touch_boot_count,
+        s_touch_diag.last_touch_sleep_requested_seconds);
 
     ESP_LOGI(
         TAG,
