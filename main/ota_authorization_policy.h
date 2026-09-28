@@ -38,15 +38,19 @@ static inline bool display_ota_version_is_newer(
             &candidate_major,
             &candidate_minor,
             &candidate_patch,
-            &trailing) != 3 ||
-        sscanf(
+            &trailing) != 3) {
+        return false;
+    }
+
+    trailing = '\0';
+    if (sscanf(
             current,
             "V%u.%u.%u%c",
             &current_major,
             &current_minor,
             &current_patch,
             &trailing) != 3) {
-        return false;
+        return strcmp(candidate, current) != 0;
     }
 
     if (candidate_major != current_major) {
