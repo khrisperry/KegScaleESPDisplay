@@ -535,10 +535,24 @@ static void remember_displayed_state(
     const ble_client_scale_state_t *state,
     uint8_t battery_percent)
 {
+    const uint32_t diagnostic_boot_count =
+        s_retained.diagnostic_boot_count;
+    const uint32_t last_sleep_requested_seconds =
+        s_retained.last_sleep_requested_seconds;
+    const uint16_t diagnostic_timer_wake_count =
+        s_retained.diagnostic_timer_wake_count;
+    const uint16_t diagnostic_touch_wake_count =
+        s_retained.diagnostic_touch_wake_count;
+
     memset(
         &s_retained,
         0,
         sizeof(s_retained));
+
+    s_retained.diagnostic_boot_count = diagnostic_boot_count;
+    s_retained.last_sleep_requested_seconds = last_sleep_requested_seconds;
+    s_retained.diagnostic_timer_wake_count = diagnostic_timer_wake_count;
+    s_retained.diagnostic_touch_wake_count = diagnostic_touch_wake_count;
 
     s_retained.magic =
         RETAINED_MAGIC;
