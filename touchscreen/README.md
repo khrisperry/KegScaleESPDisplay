@@ -1,4 +1,4 @@
-# Wi-Fi touchscreen controller - V1.3.4
+# Wi-Fi touchscreen controller
 
 This is a separate ESP-IDF application for the **Waveshare ESP32-S3-Touch-LCD-4B** (480 × 480, 16 MB flash, 8 MB octal PSRAM). It uses Wi-Fi only and remains awake on external power. The repository root continues to build the existing ESP32 BLE e-paper display. Do not flash the root project's image onto this board or use this image on the e-paper display.
 
@@ -31,7 +31,7 @@ If confirmation is interrupted during first pairing, remove the touchscreen pair
 - **Replace keg:** Leads to the keg form with replacement instructions. Do not tare with a keg on the scale.
 - **Scale:** Start calibration, remove all objects, save empty tare, apply a known weight, then calibrate. Each step advances only after the scale confirms it. The Scale returns a session ID when calibration starts; the Touch display carries that ID through tare/calibrate/cancel. The session expires after two minutes of inactivity, blocks competing calibration writers, is canceled on disconnect, and must be canceled before switching to the other saved Scale.
 - **Setup:** Wi-Fi, scale discovery/address, brightness and pairing removal. The on-screen keyboard appears when an input is selected. Scroll the form to reach its remaining fields and buttons.
-- **Update:** Firmware versions, Production/Beta/Dev channel selection, automatic-update preference, and manual check/install. Saved preferences are preserved. New Touch settings currently default to Dev with automatic installation enabled; select Production here for normal release updates.
+- **Update:** Firmware versions, Production/Development channel selection, automatic-update preference, and manual check/install. Saved preferences are preserved. New Touch settings currently default to Dev with automatic installation enabled; select Production here for normal release updates. The current UI may still expose the legacy Beta option, but no Touch Beta manifest is published and Beta is not part of the coordinated release contract.
 
 The scale remains authoritative. The touchscreen does not calculate its own independent keg totals. The e-paper display receives changes at its next BLE check-in.
 
