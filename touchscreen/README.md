@@ -31,7 +31,7 @@ If confirmation is interrupted during first pairing, remove the touchscreen pair
 - **Replace keg:** Leads to the keg form with replacement instructions. Do not tare with a keg on the scale.
 - **Scale:** Start calibration, remove all objects, save empty tare, apply a known weight, then calibrate. Each step advances only after the scale confirms it. The Scale returns a session ID when calibration starts; the Touch display carries that ID through tare/calibrate/cancel. The session expires after two minutes of inactivity, blocks competing calibration writers, is canceled on disconnect, and must be canceled before switching to the other saved Scale.
 - **Setup:** Wi-Fi, scale discovery/address, brightness and pairing removal. The on-screen keyboard appears when an input is selected. Scroll the form to reach its remaining fields and buttons.
-- **Update:** Firmware versions, Production/Development channel selection, automatic-update preference, and manual check/install. Saved preferences are preserved. New Touch settings currently default to Dev with automatic installation enabled; select Production here for normal release updates. The current UI may still expose the legacy Beta option, but no Touch Beta manifest is published and Beta is not part of the coordinated release contract.
+- **Update:** Firmware versions, Production/Beta/Development channel selection, automatic-update preference, and manual check/install. Saved preferences are preserved. New Touch settings currently default to Dev with automatic installation enabled; select Production here for normal release updates. **Beta normally mirrors current Production** and is retained for future coordinated release-candidate testing.
 
 The scale remains authoritative. The touchscreen does not calculate its own independent keg totals. The e-paper display receives changes at its next BLE check-in.
 
@@ -39,10 +39,11 @@ The scale remains authoritative. The touchscreen does not calculate its own inde
 
 The manually dispatched `Wi-Fi Touchscreen` workflow builds this application.
 Validated firmware is published under `KegScaleFirmware/touchscreen/<channel>/esp32s3/`.
-Production and Dev are published for V1.3.4. Beta support exists in the UI/workflow,
-but no Touch Beta manifest is currently published; do not select Beta until a Beta
-artifact is available. This feed is separate from Scale and e-paper firmware.
-HTTPS, hardware/target, image SHA-256, application identity, and version are checked.
+Production, Beta, and Dev have independent feed paths. Beta normally mirrors the
+current Production binary and is signed in the Dev trust domain; it can later be
+advanced intentionally for coordinated release-candidate testing. This feed is
+separate from Scale and e-paper firmware. HTTPS, signed-manifest trust,
+hardware/target, image SHA-256, application identity, and version are checked.
 
 Two Scale profiles can be saved and selected. Each Scale supports one authorized
 Wi-Fi touchscreen, independently of its BLE e-paper display. Saved sessions
