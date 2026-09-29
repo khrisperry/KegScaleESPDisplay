@@ -1,7 +1,10 @@
 # Touch pairing and reconnect regression tests
 
-Validated locally September 23, 2026. Run `bash tests/run_host_tests.sh` from
-the Display repository in Linux/WSL, or `bash touchscreen/tests/run_host_tests.sh`
+Originally validated locally September 23, 2026 and kept as a standing
+regression suite. The current Touch V1.4.2 host suite and ESP-IDF 6.0.1 build
+passed again on September 29, including signed Dev/Beta OTA trust coverage. Run
+`bash tests/run_host_tests.sh` from the Display repository in Linux/WSL, or
+`bash touchscreen/tests/run_host_tests.sh`
 for the Touch suite alone. Host dependencies are Python 3, C/C++ compilers,
 `libmbedtls-dev`, and `libcjson-dev`. A configured Touch project's managed cJSON
 source is used when available; otherwise the runner links the system cJSON library.
@@ -40,8 +43,9 @@ including the UI lifetime generation guard, connection regression suite, control
 cryptography tests, and injected crypto-failure coverage. The ESP-IDF 6.0.1 Touch build
 also passed, and Touch V1.3.5 was flashed and exercised on hardware. Repeatedly leaving
 and returning to Setup while scale discovery was running did not crash, corrupt the UI,
-or apply stale discovery results to the rebuilt screen. Production main remains V1.3.4
-until this dev increment is promoted.
+or apply stale discovery results to the rebuilt screen. That historical Dev
+increment was subsequently superseded and released; the coordinated Production
+baseline is now V1.4.0.
 
 ## Limits and hardware checks
 
@@ -69,10 +73,12 @@ authenticated scale-requested unpair handling are explicit production calls.
 `main_architecture_guard_test.py` fails if the wrapper returns, CMake stops
 building `main.cpp` directly, or the key explicit hooks disappear.
 
-Host and ESP-IDF build validation are required before hardware acceptance. On
-hardware, verify saved reconnect, Remove pairing synchronization, fresh
-six-character pairing, Save & connect without reboot, auto-discovery, and manual
-Touch OTA/reconnect behavior.
+The wrapper-removal architecture guard, host suite, ESP-IDF build, saved
+reconnect, pairing/re-pairing, and OTA/reconnect paths have all been exercised in
+later V1.3.x/V1.4.x hardware checkpoints. Keep the original acceptance list as a
+regression checklist when this area changes: saved reconnect, Remove pairing
+synchronization, fresh six-character pairing, Save & connect without reboot,
+auto-discovery, and manual Touch OTA/reconnect behavior.
 
 
 ## V1.3.6 pairing-rearm isolation fix — hardware validated September 24, 2026
@@ -97,7 +103,7 @@ handshake, saved the new pairing, authenticated the session, and resumed live
 state without rebooting the touchscreen.
 
 
-## V1.3.9 WebSocket ERROR retry fix — hardware validation pending
+## V1.3.9 WebSocket ERROR retry fix — HARDWARE VALIDATED
 
 September 24 support-bundle evidence showed a controller race where a Scale still
 considered socket 52 active while the Touch opened a replacement socket 56. The
@@ -114,13 +120,13 @@ path as a normal WebSocket disconnect. The slot clears authenticated/session
 state and schedules its normal 10-second reconnect. The host connection suite now
 covers the exact ERROR-without-DISCONNECTED case.
 
-Hardware acceptance: with both saved Scales online, restart either Scale and
-verify the Touch reconnects. Force or observe a rejected/failed WebSocket
-connection and verify the affected slot retries without rebooting the Touch or
-disturbing the other Scale slot.
+September 24 hardware logs confirmed the ERROR retry path: the failed Scale slot
+queued its normal retry, reconnected, and reauthenticated without rebooting the
+Touch. Keep the two-Scale restart/rejected-socket scenario as a regression check
+when transport handling changes.
 
 
-## V1.3.10 nonblocking transport retirement — hardware validation pending
+## V1.3.10 nonblocking transport retirement — HISTORICAL CHECKPOINT
 
 September 24 Touch V1.3.9 hardware logs showed that the ERROR retry fix worked:
 Scale 2 disconnected, retried after ten seconds, and reauthenticated. A later
@@ -139,14 +145,14 @@ the shared frame queue is increased to 16 entries, and the main loop processes a
 most eight Scale frames before servicing UI actions. Retirement of one Scale is
 slot-local and does not prevent the other Scale from connecting or being selected.
 
-Hardware acceptance: connect both saved Scales, disconnect/reboot either Scale,
-switch to the healthy Scale while the failed Scale is being retired, and verify
-the UI remains responsive with no frame-queue flood. The failed Scale should
-reconnect after its old transport is retired without the Scale reporting a
-simultaneous replacement socket.
+This implementation was carried forward through the later releases. Current
+V1.4.2 hardware validation restored and authenticated both saved Scale sessions
+after reboot. The original forced transport-retirement/frame-flood scenario
+remains a useful targeted stress test if this worker or queue policy changes; it
+is not a current release blocker.
 
 
-## V1.3.12 mixed-version heartbeat stabilization — hardware validation pending
+## V1.3.12 mixed-version heartbeat stabilization — HISTORICAL CHECKPOINT
 
 Touch V1.3.11 with Scale 2 V1.3.11 exposed a regression where the Scale
 connection closed repeatedly on an approximately ten-second cadence. Scale 1
@@ -162,8 +168,8 @@ with the receive loop's client lock. The staged controller-link transmit
 sequence remains: a failed transport send does not consume an encryption
 sequence number.
 
-Hardware acceptance must include one remote/legacy Scale on V1.3.1 and one
-local Scale on V1.3.12. Both must remain connected and switchable for several
-minutes, the local Scale must survive disconnect/reconnect tests, automatic OTA
-check must still start successfully, and logs must not show periodic
-ten-second Scale disconnects or repeated ws-client lock failures.
+The heartbeat/TX-lock design was retained through the later releases and current
+V1.4.2 hardware validation authenticated two saved Scales simultaneously
+(V1.4.0 and V1.4.4) while OTA checking remained functional. The exact original
+V1.3.1/V1.3.12 mixed-version soak is retained only as a historical regression
+recipe; it is not an outstanding promotion gate.
