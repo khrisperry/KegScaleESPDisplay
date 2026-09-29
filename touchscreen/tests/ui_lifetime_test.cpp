@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 
 int main() {
   TouchscreenUiGeneration generation{1};
@@ -20,5 +21,6 @@ int main() {
   assert(touchscreen_ui_generation_accepts(&generation, 1));
   assert(!touchscreen_ui_generation_accepts(&generation, UINT32_MAX));
 
+  std::puts("PASS: Touch UI generation lifetime regression");
   return 0;
 }
