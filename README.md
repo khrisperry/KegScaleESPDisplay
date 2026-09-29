@@ -166,9 +166,10 @@ The separate [touchscreen application](touchscreen/README.md) targets the ESP32-
 ## Current release status
 
 The coordinated Production baseline is **V1.4.0** across Scale, e-paper, and
-Touch. The e-paper `dev` branch is **V1.4.4**; Touch `dev` is **V1.4.2**.
-Production, Beta, and Dev OTA feeds are signed; Beta normally mirrors Production
-and is available for coordinated release-candidate testing.
+Touch. Active development versions are defined by the root `version.txt` and
+`touchscreen/version.txt`. Production, Beta, and Dev OTA feeds are signed;
+Beta normally mirrors Production and is available for coordinated
+release-candidate testing.
 
 Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository
 alongside this repository. Host tests cover OTA authorization/failures, crypto
