@@ -42,7 +42,7 @@ required_mappings = [
 ]
 for mapping in required_mappings:
     if mapping not in text_module:
-        raise SystemExit(f"missing touchscreen text-safety mapping: {mapping}")
+        raise SystemExit(f"FAIL: Touch UI text guard: missing text-safety mapping: {mapping}")
 
 for declaration in (
     "void label_set_text(lv_obj_t *object, const char *text);",
@@ -51,7 +51,7 @@ for declaration in (
     "void dropdown_set_options(lv_obj_t *object, const char *options);",
 ):
     if declaration not in text_header:
-        raise SystemExit(f"missing touchscreen text API declaration: {declaration}")
+        raise SystemExit(f"FAIL: Touch UI text guard: missing text API declaration: {declaration}")
 
 for glyph in ("—", "…", "•"):
     if glyph not in ui:
@@ -63,8 +63,8 @@ for glyph in ("—", "…", "•"):
 # published feed. Keep downgrade protection, but do not present that as a
 # feed synchronization failure to the user.
 if 'case OtaView::Stale:\n    return "Local build newer";' not in ui:
-    raise SystemExit("newer-than-feed status must identify the local build")
+    raise SystemExit("FAIL: Touch UI text guard: newer-than-feed status must identify the local build")
 if '"Feed syncing"' in ui:
-    raise SystemExit("misleading Feed syncing status must remain removed")
+    raise SystemExit("FAIL: Touch UI text guard: misleading Feed syncing status must remain removed")
 
-print("touchscreen UI text guard: OK")
+print("PASS: Touch UI text guard")
