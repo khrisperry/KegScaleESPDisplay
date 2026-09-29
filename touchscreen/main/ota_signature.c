@@ -51,6 +51,11 @@ static const ota_signature_key_t s_keys[] = {
         .public_key = s_dev_public_key,
     },
     {
+        .channel = "beta",
+        .key_id = "b22d59da8a84e17f",
+        .public_key = s_dev_public_key,
+    },
+    {
         .channel = "production",
         .key_id = "16330b21be490f46",
         .public_key = s_production_public_key,
