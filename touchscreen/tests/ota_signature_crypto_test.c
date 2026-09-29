@@ -30,6 +30,15 @@ static const char k_signature[] =
     "  \"signature\": \"wDJgRaCSk9VQ8FMut9XUv0/bPf2d13Ge7BqqpQO3nThYAlG/XnlCI58n9JXMt8r5FfByurOO812j8YATJDAUKQ==\"\n"
     "}\n";
 
+static const char k_beta_signature[] =
+    "{\n"
+    "  \"format\": 1,\n"
+    "  \"algorithm\": \"ECDSA-P256-SHA256\",\n"
+    "  \"channel\": \"beta\",\n"
+    "  \"key_id\": \"b22d59da8a84e17f\",\n"
+    "  \"signature\": \"wDJgRaCSk9VQ8FMut9XUv0/bPf2d13Ge7BqqpQO3nThYAlG/XnlCI58n9JXMt8r5FfByurOO812j8YATJDAUKQ==\"\n"
+    "}\n";
+
 int main(void)
 {
     assert(
@@ -38,6 +47,13 @@ int main(void)
             strlen(k_manifest),
             k_signature,
             "dev") == ESP_OK);
+
+    assert(
+        touchscreen_ota_signature_verify(
+            (const uint8_t *)k_manifest,
+            strlen(k_manifest),
+            k_beta_signature,
+            "beta") == ESP_OK);
 
     char tampered_manifest[sizeof(k_manifest)];
     memcpy(
@@ -95,7 +111,7 @@ int main(void)
             "dev") != ESP_OK);
 
     puts(
-        "PASS: embedded Touch OTA verifier accepts valid signature and rejects "
+        "PASS: embedded Touch OTA verifier accepts Dev/Beta trust and rejects "
         "tampered manifest, wrong channel, altered signature, and unsigned metadata");
     return 0;
 }
