@@ -85,5 +85,5 @@ int main(void)
             assert(result.failure == TOUCH_CALIBRATION_FAILURE_TIMEOUT);
         }
     }
-    puts("touch calibration tests passed");
+    puts("PASS: touch calibration regression");
 }
