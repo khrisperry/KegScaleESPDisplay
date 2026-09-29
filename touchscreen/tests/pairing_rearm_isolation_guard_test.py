@@ -29,6 +29,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("Pairing rearm isolation guard failed: " + "; ".join(failed))
+    raise SystemExit("FAIL: Touch pairing rearm isolation guard: " + "; ".join(failed))
 
-print("Touch pairing rearm isolation guard PASS")
+print("PASS: Touch pairing rearm isolation guard")
