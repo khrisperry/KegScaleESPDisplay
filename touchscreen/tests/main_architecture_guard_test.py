@@ -128,6 +128,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("Touch main architecture guard failed: " + "; ".join(failed))
+    raise SystemExit("FAIL: Touch main architecture guard: " + "; ".join(failed))
 
-print("Touch main architecture guard PASS")
+print("PASS: Touch main architecture guard")
