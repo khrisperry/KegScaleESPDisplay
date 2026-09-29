@@ -171,6 +171,10 @@ Touch. Active development versions are defined by the root `version.txt` and
 Beta normally mirrors Production and is available for coordinated
 release-candidate testing.
 
+See the authoritative
+[V1.4.0 coordinated release notes](https://github.com/khrisperry/KegScaleFirmware/blob/main/docs/releases/V1.4.0.md)
+for channel state and published artifacts.
+
 Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository
 alongside this repository. Host tests cover OTA authorization/failures, crypto
 failures, wake/refresh policy, and Touch connection recovery. Physical battery,
