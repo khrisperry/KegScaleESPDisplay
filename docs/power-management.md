@@ -1,4 +1,4 @@
-# Low-power wake behavior - V1.3.4
+# Low-power wake behavior
 
 Touch and scheduled check-ins are independent.
 
