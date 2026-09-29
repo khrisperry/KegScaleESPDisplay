@@ -22,6 +22,11 @@ The runner includes existing power/touch calibration tests, the OTA tests, the
 touchscreen text guard, the real controller protocol tests, and PSA fault
 injection tests. No firmware is downloaded, flashed, or published by this runner.
 
+The current V1.4.x suite also includes executable signed-manifest verifier tests
+for Dev/Beta trust, tampered manifests, wrong-channel use, altered signatures,
+and unsigned metadata. Signed feed behavior has additionally been exercised on
+Scale/e-paper and Touch hardware.
+
 ## OTA coverage
 
 - Unapproved or unreadable bundles never display update progress or install.
