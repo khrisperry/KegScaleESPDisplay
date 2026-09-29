@@ -2,9 +2,9 @@
 
 This is a separate ESP-IDF application for the **Waveshare ESP32-S3-Touch-LCD-4B** (480 × 480, 16 MB flash, 8 MB octal PSRAM). It uses Wi-Fi only and remains awake on external power. The repository root continues to build the existing ESP32 BLE e-paper display. Do not flash the root project's image onto this board or use this image on the e-paper display.
 
-Current coordinated Production is **V1.4.0**; the Touch `dev` branch is
-**V1.4.2**. Production, Beta, and Dev feeds are signed, and Beta has been
-hardware-validated as a release-testing channel.
+Current coordinated Production is **V1.4.0**. The active development version is
+defined by `touchscreen/version.txt`. Production, Beta, and Dev feeds are signed,
+and Beta has been hardware-validated as a release-testing channel.
 
 ## First installation
 
