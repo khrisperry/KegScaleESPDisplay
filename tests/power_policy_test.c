@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdio.h>
 #include "../main/power_policy.h"
 
 int main(void)
@@ -16,5 +17,6 @@ int main(void)
                 for (unsigned forced = 0; forced < 2; ++forced)
                     assert(power_retry_touch(phase, calibrated, stable, forced) ==
                            (phase == 1 && calibrated && !stable && !forced));
+    puts("PASS: e-paper power policy regression");
     return 0;
 }
