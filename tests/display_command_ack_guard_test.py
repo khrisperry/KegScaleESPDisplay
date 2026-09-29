@@ -36,6 +36,6 @@ checks = {
 
 failed = [name for name, ok in checks.items() if not ok]
 if failed:
-    raise SystemExit("Display command ACK guard failed: " + "; ".join(failed))
+    raise SystemExit("FAIL: Display command ACK guard: " + "; ".join(failed))
 
-print("Display command ACK guard PASS")
+print("PASS: Display command ACK guard")
