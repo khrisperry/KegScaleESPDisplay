@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased / Dev - 2026-09-29
+
+- E-paper Dev V1.4.4 honors the configured GPIO12 touch sensitivity exactly,
+  without a hidden deep-sleep sensitivity floor.
+- Touch Dev V1.4.2 verifies signed Production/Beta/Dev manifests before trusting
+  OTA metadata. Beta uses the Dev signing trust domain.
+- Scale-coordinated e-paper Beta and direct Touch Beta checks have been
+  hardware-validated against the V1.4.0 mirror baseline.
+- Current host suites cover signed-manifest verification, tamper/wrong-channel
+  rejection, Touch reconnect/pairing, and e-paper wake/command behavior.
+
+## V1.4.0 - 2026-09-25
+
+Coordinated Production baseline for the Scale, e-paper display, and Wi-Fi Touch
+Display. Release artifacts are published in `KegScaleFirmware`; later V1.4.x
+Dev versions are validation/hardening increments and do not change the V1.4.0
+Production baseline until explicitly promoted.
+
+
 ## V1.3.4 - 2026-09-23
 
 Guided pairing/cancel improvements, e-paper touch wizard removal and 1% default,
