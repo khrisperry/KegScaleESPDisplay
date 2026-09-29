@@ -4,7 +4,7 @@ ESP-IDF firmware for the LILYGO T5 V2.3.1 2.13-inch e-paper companion display fo
 
 The display is a low-power BLE client. It wakes, connects to one paired Keg Scale, reads the current scale snapshot, refreshes e-paper only when useful display data changed, disconnects, and returns to deep sleep.
 
-Initial hardware target:
+Hardware target:
 
 - LILYGO T5 V2.3.1_2.13
 - ESP32
@@ -73,7 +73,7 @@ firmware. GitHub Actions are optional and are not required for the supported
 local build/sign/promote workflow.
 
 
-## Current bring-up behavior
+## Current behavior
 
 The initial firmware is already structured around the final low-power workflow:
 
