@@ -81,5 +81,6 @@ command after the initial BLE read, the display completed the full e-paper refre
 then reconnected and wrote the matching authenticated completion ACK; the Scale
 accepted it and cleared the command. Legacy compatibility was also validated
 against an e-paper V1.3.2 display, which used the intended clear-on-delivery
-fallback. Remove/replace ACK-before-bond-delete hardware validation remains pending
-before promotion to production.
+fallback. Remove-display ACK-before-bond-delete was also validated end-to-end:
+the display acknowledged before deleting its local bond, the Scale finalized
+removal on disconnect, and immediate re-pair was successfully exercised.
