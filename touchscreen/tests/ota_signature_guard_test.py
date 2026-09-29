@@ -13,6 +13,7 @@ assert "mbedtls" in cmake
 assert "PSA_KEY_USAGE_VERIFY_MESSAGE" in sig
 assert "psa_verify_message(" in sig
 assert '"b22d59da8a84e17f"' in sig
+assert '.channel = "beta"' in sig
 assert '"16330b21be490f46"' in sig
 
 verify_pos = ota.index("touchscreen_ota_signature_verify(")
