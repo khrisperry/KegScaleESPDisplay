@@ -25,18 +25,26 @@ A pairing record contains:
 - BLE address
 - BLE address type
 
-The logical ID is verified against the scale's read-only device-info characteristic before pairing is saved.
+The logical ID is verified against the Scale's read-only device-info
+characteristic before pairing is saved. Normal operation never selects a Scale
+solely by RSSI.
 
-For initial setup:
+For initial setup, pairing is web-driven:
 
-- exactly one compatible scale: optional automatic selection
-- more than one compatible scale: no automatic choice
-- current bring-up selection: serial `pair KegScale-XXXX`
-- future selection: touch UI or temporary setup portal calling the same pairing API
+- Start **Add e-paper display** from the Scale web interface.
+- The Scale opens an explicit five-minute pairing window.
+- The unpaired display discovers only pairing-enabled compatible Scales.
+- The display generates a temporary six-digit code and shows the target
+  `KegScale-XXXX` identity.
+- Enter the code on the Scale web page to authorize authenticated LE Secure
+  Connections bonding.
+- The saved logical Scale identity/address is then used for exact reconnect.
 
 ## Capacitive touch wake
 
-GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the scale web page and Home Assistant, persists across deep sleep, and falls back to 3% with older scale firmware. The normal 180-second timer can be disabled, but a 3,600-second safety timer remains armed so a touch-sensor problem cannot make the display unreachable.
+GPIO12 is ESP32 touch channel 5 and is configured as the native deep-sleep touch wake source. The touch controller self-calibrates against the untouched benchmark immediately before sleep and uses the scale-owned threshold received over an optional BLE characteristic. The value is configurable from the Scale web page and Home Assistant, persists
+across deep sleep, and falls back to the firmware default of 1% when no valid
+Scale-owned threshold is available. The normal 180-second timer can be disabled, but a 3,600-second safety timer remains armed so a touch-sensor problem cannot make the display unreachable.
 
 The former GPIO39 EXT0 button wake is disabled because ESP32 touch wake and EXT0 wake cannot be enabled together.
 
@@ -53,7 +61,13 @@ the keg-screen differential baseline. Every 50th changed keg-screen update is
 forced to a full refresh to clear accumulated ghosting and reset the partial
 update counter.
 
-Firmware update offers are checked during the same timer-wake BLE read. When a compatible new version is offered, the display uses its saved pairing PIN to authenticate the BLE link, retrieves the home Wi-Fi and OTA metadata in RAM, downloads by HTTPS into the inactive OTA slot, validates the manifest size and SHA-256 digest, turns Wi-Fi off, and reboots. Normal wake cycles never start Wi-Fi.
+Firmware update offers are checked during scheduled maintenance wakes. The Scale
+first authenticates the selected signed repository manifest and then exposes the
+compatible offer to the bonded display. When an approved newer version is
+offered, the display retrieves home Wi-Fi credentials and OTA metadata only over
+the authenticated encrypted BLE session, downloads by HTTPS into the inactive
+OTA slot, validates size and SHA-256, turns Wi-Fi off, and reboots. Normal wake
+cycles never keep Wi-Fi enabled.
 
 The display refreshes when:
 
@@ -69,17 +83,17 @@ An unstable/settling snapshot does not replace an already stable e-paper image.
 A manual full-refresh command intentionally overrides this policy, redraws the
 current keg screen, and resets the partial-update counter.
 
-## Hardware assumptions needing physical validation
+## Hardware assumptions and remaining characterization
 
-The V2.3.1 board uses the published T5 pin map. Current LILYGO documentation identifies DEPG0213BN as the default 2.13-inch panel option; GDEY0213B74 is another supported panel. Both are SSD1680-class 122x250 panels and firmware currently uses a 250x122 logical landscape framebuffer.
+The V2.3.1 board uses the published T5 pin map. Current LILYGO documentation
+identifies DEPG0213BN as the default 2.13-inch panel option; GDEY0213B74 is
+another supported panel. Both are SSD1680-class 122x250 panels and firmware uses
+a 250x122 logical landscape framebuffer.
 
-Physical testing must confirm:
-
-- panel orientation
-- busy polarity/timing
-- full-refresh waveform behavior
-- whether the exact installed panel needs a different init profile
-- actual deep-sleep current on this V2.3.1 board revision
+Panel initialization/orientation and normal full/partial-refresh behavior have
+been exercised on the current hardware. Remaining physical characterization is
+primarily actual deep-sleep current/awake-time measurement on the production
+V2.3.1 hardware and revalidation if a different panel variant is introduced.
 
 
 ## Touch-pour observation window
