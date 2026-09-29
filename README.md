@@ -67,7 +67,10 @@ V2.3.1 does **not** have the GPIO12 display-power switch added in V2.4.
 
 ## Development workflow
 
-Changes are developed and validated locally, then synchronized to release branches. GitHub Actions are manually dispatched; source pushes alone do not publish OTA firmware.
+Changes are developed and validated locally, then published with the signed
+release tooling in `KegScaleFirmware`. Source pushes alone do not publish OTA
+firmware. GitHub Actions are optional and are not required for the supported
+local build/sign/promote workflow.
 
 
 ## Current bring-up behavior
@@ -160,6 +163,14 @@ screen, and resets the changed-region refresh counter.
 
 The separate [touchscreen application](touchscreen/README.md) targets the ESP32-S3-Touch-LCD-4B. It uses Wi-Fi only, supports keg editing and scale calibration, and has its own build/OTA feed. The repository root continues to build this BLE e-paper application.
 
-## V1.3.4 release
+## Current release status
 
-The current coordinated Production baseline is V1.4.0 across Scale, e-paper, and Touch. Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository alongside this repository. Host tests cover OTA authorization/failures, crypto failures, wake/refresh policy, and Touch connection recovery; physical battery, radio, and power-loss checks remain separate.
+The coordinated Production baseline is **V1.4.0** across Scale, e-paper, and
+Touch. The e-paper `dev` branch is **V1.4.4**; Touch `dev` is **V1.4.2**.
+Production, Beta, and Dev OTA feeds are signed; Beta normally mirrors Production
+and is available for coordinated release-candidate testing.
+
+Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository
+alongside this repository. Host tests cover OTA authorization/failures, crypto
+failures, wake/refresh policy, and Touch connection recovery. Physical battery,
+radio, and power-loss characterization remain separate hardware work.
