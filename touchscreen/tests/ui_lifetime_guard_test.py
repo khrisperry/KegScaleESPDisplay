@@ -33,6 +33,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("Touch UI lifetime guard failed: " + "; ".join(failed))
+    raise SystemExit("FAIL: Touch UI lifetime guard: " + "; ".join(failed))
 
-print("Touch UI lifetime guard PASS")
+print("PASS: Touch UI lifetime guard")
