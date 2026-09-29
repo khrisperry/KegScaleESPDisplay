@@ -162,4 +162,4 @@ The separate [touchscreen application](touchscreen/README.md) targets the ESP32-
 
 ## V1.3.4 release
 
-See [release notes](docs/releases/V1.3.4.md) for the synchronized Scale/e-paper/Touch release. Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository alongside this repository. Host tests cover OTA authorization/failures, crypto failures, wake/refresh policy, and Touch connection recovery; physical battery, radio, and power-loss checks remain separate.
+The current coordinated Production baseline is V1.4.0 across Scale, e-paper, and Touch. Run `bash tests/run_host_tests.sh` in Linux/WSL with the Scale repository alongside this repository. Host tests cover OTA authorization/failures, crypto failures, wake/refresh policy, and Touch connection recovery; physical battery, radio, and power-loss checks remain separate.
