@@ -53,6 +53,8 @@ void ui_start(const Settings &settings);
 void ui_state(const State &state);
 void ui_message(const char *message);
 void ui_message_for_generation(const char *message, uint32_t generation);
+// Called from LVGL event/render context while the display lock is already held.
+void touchscreen_ui_clear_notice_locked(void);
 void ui_pair_code(const char *code);
 void ui_result(bool ok, const char *operation, const char *error);
 void ui_discovered(const char *host);
