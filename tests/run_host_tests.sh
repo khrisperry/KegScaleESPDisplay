@@ -4,6 +4,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=test_output.sh
 source "$root/tests/test_output.sh"
 
+run_test "Display/Touch test output contract" python3 "$root/tests/test_output_contract_test.py"
 run_test "controller_link canonical mirror check" python3 "$root/tools/check_controller_link.py"
 run_test "display command ACK guard" python3 "$root/tests/display_command_ack_guard_test.py"
 
