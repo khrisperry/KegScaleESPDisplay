@@ -62,6 +62,7 @@ const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
 // TOUCH_BUTTON_STYLE_V5
 // TOUCH_TRANSIENT_NOTICE_V6
+// TOUCH_HOME_NOTICE_REMOVAL_V7
 void build(int page);
 void render_update_page();
 void focus(lv_event_t *e);
@@ -85,13 +86,22 @@ void clear_notice_timer_cb(lv_timer_t *timer) {
 
 void message(const char *s) {
   clear_notice_locked();
-  if (notice)
+  // Home has its own full-screen renderer. Never place the legacy notice strip
+  // over it; Home confirmations are reflected directly by the updated data.
+  if (page_id == 0) {
+    if (notice)
+      lv_obj_add_flag(notice, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (notice) {
+    lv_obj_remove_flag(notice, LV_OBJ_FLAG_HIDDEN);
     touchscreen_text::label_set_text(notice, s ? s : "");
+  }
 }
 
 void transient_message(const char *s, uint32_t duration_ms = 2200) {
   message(s);
-  if (notice && s && s[0])
+  if (page_id != 0 && notice && s && s[0])
     notice_clear_timer = lv_timer_create(clear_notice_timer_cb, duration_ms, nullptr);
 }
 bool submit(const char *kind, cJSON *json) {
@@ -987,6 +997,20 @@ void build(int page) {
   dismiss_keyboard();
   clear_notice_locked();
   page_id = page;
+
+  // The old shell reserved 24 px above the footer for notice text. Home now
+  // owns that area, so hide the notice and extend content to just above the
+  // footer. Other pages retain the original notice strip.
+  if (content) {
+    lv_obj_set_size(content, 456, page == 0 ? 416 : 394);
+  }
+  if (notice) {
+    if (page == 0)
+      lv_obj_add_flag(notice, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_remove_flag(notice, LV_OBJ_FLAG_HIDDEN);
+  }
+
   update_home_nav_button();
   touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
