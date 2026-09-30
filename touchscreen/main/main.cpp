@@ -1140,8 +1140,9 @@ void action(const Action &a) {
                          ? "Scale 1 selected — reconnecting..."
                          : "Scale 2 selected — reconnecting...");
         } else {
-          touchscreen_ui_message(active_scale_index == 0 ? "Scale 1 selected"
-                                             : "Scale 2 selected");
+          // The active scale is already obvious from the footer button. Avoid
+          // leaving a persistent "Scale N selected" notice above the Home UI.
+          touchscreen_ui_message("");
         }
       }
     }
