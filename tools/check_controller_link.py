@@ -6,6 +6,15 @@ from pathlib import Path
 import subprocess
 import sys
 
+_USE_COLOR = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+_RED = "\033[31m" if _USE_COLOR else ""
+_RESET = "\033[0m" if _USE_COLOR else ""
+
+
+def fail_line(message):
+    print(f"{_RED}FAIL:{_RESET} {message}", file=sys.stderr)
+
+
 
 def main():
     display = Path(__file__).resolve().parents[1]
@@ -21,11 +30,9 @@ def main():
     scale = args.scale_root.resolve()
     syncer = scale / "tools/sync_controller_link.py"
     if not syncer.is_file():
-        print(
-            f"FAIL: Scale controller_link tool missing: {syncer}\n"
-            "Provide the companion Scale checkout with --scale-root or "
-            "KEGSCALE_SCALE_ROOT.",
-            file=sys.stderr,
+        fail_line(
+            f"Scale controller_link tool missing: {syncer}; provide the companion "
+            "Scale checkout with --scale-root or KEGSCALE_SCALE_ROOT"
         )
         return 1
     return subprocess.run(
