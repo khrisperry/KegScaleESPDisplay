@@ -6,6 +6,12 @@ Run under Linux/WSL with a C compiler, Python 3, and `libmbedtls-dev`:
 bash tests/run_host_tests.sh
 ```
 
+All host-suite result lines use a shared output contract: `PASS:` is green and
+`FAIL:` is red on interactive terminals, and every result line starts with one
+of those prefixes. Set `NO_COLOR=1` to disable ANSI color while keeping the
+prefixes. The output-contract guard scans Scale/e-paper/Touch test entry points
+so new tests do not silently return to mixed formats.
+
 The Scale repository is the canonical owner of `controller_link`; Touch keeps
 a byte-for-byte vendored mirror so standalone/offline firmware builds remain
 self-contained. The full runner requires the companion Scale checkout and checks
