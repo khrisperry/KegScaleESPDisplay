@@ -11,7 +11,8 @@
 namespace {
 constexpr const char *TAG = "touch_home";
 constexpr const char *kNvsNamespace = "touch_ui";
-constexpr const char *kGlassKey = "glass_home";
+constexpr const char *kGlassKey = "glass_home"; // legacy preference migration
+constexpr const char *kHomeViewKey = "home_view";
 
 constexpr uint32_t COLOR_BG = 0x171717;
 constexpr uint32_t COLOR_TEXT = 0xf7f7f7;
@@ -22,10 +23,10 @@ constexpr uint32_t COLOR_LOW_ORANGE = 0xef6c00;
 constexpr uint32_t COLOR_LOW_RED = 0xb71c1c;
 constexpr uint32_t COLOR_WARNING = 0xf2ad45;
 constexpr uint32_t COLOR_GLASS = 0x98a8b0;
-constexpr uint32_t COLOR_HEADER_BUTTON = 0x203441;
-constexpr uint32_t COLOR_HEADER_ACCENT = 0x54d6bf;
-constexpr uint32_t COLOR_METRIC_CARD = 0x202020;
-constexpr uint32_t COLOR_METRIC_BORDER = 0x343434;
+constexpr uint32_t COLOR_HEADER_BUTTON = 0x1d4f73;
+constexpr uint32_t COLOR_HEADER_ACCENT = 0x4fa7d1;
+constexpr uint32_t COLOR_METRIC_CARD = 0x1b2934;
+constexpr uint32_t COLOR_METRIC_BORDER = 0x39566a;
 constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_DRAWER_REFINEMENTS_V2_4
 // TOUCH_SHELL_POLISH_V3
@@ -33,6 +34,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_SERVING_VISUALS_V5
 // TOUCH_GROWLER_POLISH_V6
 // TOUCH_FOOTER_POLISH_V7
+// TOUCH_MULTI_VIEW_V8
 
 enum class ServingVessel {
   Generic,
@@ -42,6 +44,41 @@ enum class ServingVessel {
   Crowler,
   Growler,
 };
+
+enum class HomeView : uint8_t {
+  Glass = 0,
+  Dashboard = 1,
+  Minimal = 2,
+  Gauge = 3,
+  KegLevel = 4,
+  Service = 5,
+  Count = 6,
+};
+
+const char *home_view_name(HomeView view) {
+  switch (view) {
+  case HomeView::Glass:
+    return "Glass";
+  case HomeView::Dashboard:
+    return "Dashboard";
+  case HomeView::Minimal:
+    return "Minimal";
+  case HomeView::Gauge:
+    return "Gauge";
+  case HomeView::KegLevel:
+    return "Keg Level";
+  case HomeView::Service:
+    return "Service";
+  default:
+    return "Dashboard";
+  }
+}
+
+HomeView next_home_view(HomeView view) {
+  const uint8_t next =
+      (static_cast<uint8_t>(view) + 1U) % static_cast<uint8_t>(HomeView::Count);
+  return static_cast<HomeView>(next);
+}
 
 static lv_point_precise_t pint_outline_points[] = {
     {0, 0}, {174, 0}, {152, 280}, {22, 280}, {0, 0}};
@@ -58,7 +95,7 @@ State latest_state{};
 int active_page = 0;
 bool home_menu_open = false;
 bool home_keyboard_open = false;
-bool glass_home = false;
+HomeView home_view = HomeView::Dashboard;
 bool home_disconnected = false;
 lv_obj_t *home_overlay = nullptr;
 lv_obj_t *home_name = nullptr;
@@ -72,6 +109,9 @@ lv_obj_t *home_beer_weight = nullptr;
 lv_obj_t *home_scale_weight = nullptr;
 lv_obj_t *home_tare = nullptr;
 lv_obj_t *home_arc = nullptr;
+lv_obj_t *home_progress = nullptr;
+lv_obj_t *home_capacity = nullptr;
+lv_obj_t *service_values[10] = {};
 lv_obj_t *glass_bands[GLASS_BAND_COUNT] = {};
 ServingVessel rendered_vessel = ServingVessel::Generic;
 lv_obj_t *view_button = nullptr;
@@ -97,6 +137,10 @@ void reset_home_child_refs() {
   home_scale_weight = nullptr;
   home_tare = nullptr;
   home_arc = nullptr;
+  home_progress = nullptr;
+  home_capacity = nullptr;
+  for (auto &value : service_values)
+    value = nullptr;
   rendered_vessel = ServingVessel::Generic;
   for (auto &band : glass_bands)
     band = nullptr;
@@ -160,7 +204,7 @@ const char *serving_count_label(float serving_size_oz) {
   if (serving_size_near(serving_size_oz, 32.0f))
     return "CROWLERS LEFT";
   if (serving_size_near(serving_size_oz, 64.0f))
-    return "GROWLERS\nLEFT";
+    return "GROWLERS LEFT";
   return "SERVINGS LEFT";
 }
 
@@ -307,22 +351,30 @@ void clear_view_button_refs(lv_event_t *) {
 }
 
 void load_preference() {
-  glass_home = false;
+  home_view = HomeView::Dashboard;
   nvs_handle_t nvs = 0;
   if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK)
     return;
+
   uint8_t value = 0;
-  if (nvs_get_u8(nvs, kGlassKey, &value) == ESP_OK)
-    glass_home = value != 0;
+  if (nvs_get_u8(nvs, kHomeViewKey, &value) == ESP_OK &&
+      value < static_cast<uint8_t>(HomeView::Count)) {
+    home_view = static_cast<HomeView>(value);
+  } else if (nvs_get_u8(nvs, kGlassKey, &value) == ESP_OK) {
+    // Preserve the original two-view preference when first installing this
+    // multi-view build.
+    home_view = value ? HomeView::Glass : HomeView::Dashboard;
+  }
+
   nvs_close(nvs);
-  ESP_LOGI(TAG, "Loaded home layout: %s", glass_home ? "glass" : "dashboard");
+  ESP_LOGI(TAG, "Loaded home layout: %s", home_view_name(home_view));
 }
 
-void save_preference(bool enabled) {
+void save_preference(HomeView view) {
   nvs_handle_t nvs = 0;
   esp_err_t e = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
   if (e == ESP_OK)
-    e = nvs_set_u8(nvs, kGlassKey, enabled ? 1 : 0);
+    e = nvs_set_u8(nvs, kHomeViewKey, static_cast<uint8_t>(view));
   if (e == ESP_OK)
     e = nvs_commit(nvs);
   if (nvs)
@@ -330,7 +382,7 @@ void save_preference(bool enabled) {
   if (e != ESP_OK)
     ESP_LOGW(TAG, "Could not save home layout: %s", esp_err_to_name(e));
   else
-    ESP_LOGI(TAG, "Saved home layout: %s", enabled ? "glass" : "dashboard");
+    ESP_LOGI(TAG, "Saved home layout: %s", home_view_name(view));
 }
 
 float beer_weight(const State &state) {
@@ -499,20 +551,119 @@ void update_disconnected(lv_obj_t *overlay) {
   lv_obj_set_height(help, 90);
 }
 
-void build_dashboard(lv_obj_t *overlay) {
-  home_disconnected = false;
+lv_obj_t *metric_card(lv_obj_t *overlay, int x, int y, int width,
+                      int height, const char *title) {
+  lv_obj_t *card = lv_obj_create(overlay);
+  lv_obj_set_pos(card, x, y);
+  lv_obj_set_size(card, width, height);
+  lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_METRIC_CARD), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_METRIC_BORDER), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 11, 0);
+  lv_obj_set_style_pad_all(card, 0, 0);
+  if (title && title[0])
+    make_label(card, title, 10, 8, width - 20, &lv_font_montserrat_14,
+               COLOR_MUTED);
+  return card;
+}
 
-  home_name = make_label(overlay, "", 16, 10, 285, &lv_font_montserrat_20);
+void build_home_header(lv_obj_t *overlay) {
+  home_name = make_label(overlay, "", 16, 8, 280, &lv_font_montserrat_20);
   lv_label_set_long_mode(home_name, LV_LABEL_LONG_DOT);
   lv_obj_set_height(home_name, 26);
 
-  home_status = make_label(overlay, "", 304, 15, 88,
+  home_status = make_label(overlay, "", 304, 12, 88,
                            &lv_font_montserrat_14, COLOR_GREEN);
   lv_obj_set_style_text_align(home_status, LV_TEXT_ALIGN_RIGHT, 0);
+}
+
+void build_dashboard(lv_obj_t *overlay) {
+  home_disconnected = false;
+  build_home_header(overlay);
+
+  const int left = 16;
+  const int right = 222;
+  const int width = 194;
+  const int height = 80;
+  const int rows[] = {54, 146, 238};
+
+  lv_obj_t *card = metric_card(overlay, left, rows[0], width, height, "");
+  home_serving_label =
+      make_label(card, "SERVINGS LEFT", 10, 8, width - 20,
+                 &lv_font_montserrat_14, COLOR_MUTED);
+  home_servings =
+      make_label(card, "--", 10, 32, width - 20, &lv_font_montserrat_28);
+
+  card = metric_card(overlay, right, rows[0], width, height, "REMAINING");
+  home_percent =
+      make_label(card, "--", 10, 32, width - 20, &lv_font_montserrat_28);
+
+  card =
+      metric_card(overlay, left, rows[1], width, height, "GALLONS REMAINING");
+  home_gallons =
+      make_label(card, "--", 10, 34, width - 20, &lv_font_montserrat_24);
+
+  card = metric_card(overlay, right, rows[1], width, height, "BEER WEIGHT");
+  home_beer_weight =
+      make_label(card, "--", 10, 34, width - 20, &lv_font_montserrat_24);
+
+  card = metric_card(overlay, left, rows[2], width, height, "KEG SIZE");
+  home_capacity =
+      make_label(card, "--", 10, 34, width - 20, &lv_font_montserrat_24);
+
+  card = metric_card(overlay, right, rows[2], width, height, "SERVING SIZE");
+  home_serving_size =
+      make_label(card, "--", 10, 34, width - 20, &lv_font_montserrat_24);
+}
+
+void build_minimal(lv_obj_t *overlay) {
+  home_disconnected = false;
+  build_home_header(overlay);
+
+  home_servings = make_label(overlay, "--", 40, 58, 352,
+                             &lv_font_montserrat_48);
+  lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
+
+  home_serving_label =
+      make_label(overlay, "SERVINGS LEFT", 50, 116, 332,
+                 &lv_font_montserrat_18, COLOR_TEXT);
+  lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
+
+  home_progress = lv_bar_create(overlay);
+  lv_obj_set_pos(home_progress, 34, 174);
+  lv_obj_set_size(home_progress, 326, 28);
+  lv_bar_set_range(home_progress, 0, 100);
+  lv_obj_remove_flag(home_progress, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(home_progress, lv_color_hex(0x263a49), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(home_progress, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(home_progress, 14, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(home_progress, lv_color_hex(COLOR_AMBER),
+                            LV_PART_INDICATOR);
+  lv_obj_set_style_radius(home_progress, 14, LV_PART_INDICATOR);
+
+  home_percent = make_label(overlay, "--", 370, 177, 54,
+                            &lv_font_montserrat_20);
+  lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_RIGHT, 0);
+
+  lv_obj_t *card =
+      metric_card(overlay, 18, 238, 196, 92, "GALLONS REMAINING");
+  home_gallons =
+      make_label(card, "--", 10, 38, 176, &lv_font_montserrat_24);
+
+  card = metric_card(overlay, 222, 238, 196, 92, "BEER WEIGHT");
+  home_beer_weight =
+      make_label(card, "--", 10, 38, 176, &lv_font_montserrat_24);
+}
+
+void build_gauge(lv_obj_t *overlay) {
+  home_disconnected = false;
+  build_home_header(overlay);
 
   home_arc = lv_arc_create(overlay);
-  lv_obj_set_pos(home_arc, 10, 56);
-  lv_obj_set_size(home_arc, 194, 194);
+  lv_obj_set_pos(home_arc, 18, 70);
+  lv_obj_set_size(home_arc, 188, 188);
   lv_arc_set_rotation(home_arc, 270);
   lv_arc_set_bg_angles(home_arc, 0, 360);
   lv_arc_set_range(home_arc, 0, 100);
@@ -520,52 +671,144 @@ void build_dashboard(lv_obj_t *overlay) {
   lv_obj_remove_flag(home_arc, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_arc_width(home_arc, 18, LV_PART_MAIN);
   lv_obj_set_style_arc_width(home_arc, 18, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(home_arc, lv_color_hex(0x303030), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(home_arc, lv_color_hex(0x304553), LV_PART_MAIN);
   lv_obj_set_style_arc_color(home_arc, lv_color_hex(COLOR_AMBER),
                              LV_PART_INDICATOR);
 
-  home_servings = make_label(overlay, "--", 35, 96, 144,
+  home_servings = make_label(overlay, "--", 43, 112, 138,
                              &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
-
-  home_serving_label = make_label(overlay, "SERVINGS LEFT", 28, 158, 158,
-                                  &lv_font_montserrat_14, COLOR_TEXT);
-  lv_label_set_long_mode(home_serving_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_height(home_serving_label, 34);
+  home_serving_label =
+      make_label(overlay, "SERVINGS LEFT", 40, 170, 144,
+                 &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
+  home_percent =
+      make_label(overlay, "--", 56, 206, 112, &lv_font_montserrat_20,
+                 COLOR_AMBER);
+  lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
 
-  home_serving_size = make_label(overlay, "-- OZ EACH", 26, 194, 162,
-                                 &lv_font_montserrat_16, COLOR_TEXT);
-  lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
+  const int card_x = 224;
+  const int card_w = 200;
+  const int card_h = 62;
+  lv_obj_t *card =
+      metric_card(overlay, card_x, 62, card_w, card_h, "GALLONS REMAINING");
+  home_gallons =
+      make_label(card, "--", 10, 30, 180, &lv_font_montserrat_20);
 
-  home_percent = make_label(overlay, "--", 236, 88, 176,
-                            &lv_font_montserrat_48);
-  lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_LEFT, 0);
-  make_label(overlay, "REMAINING", 238, 148, 170, &lv_font_montserrat_14,
-             COLOR_MUTED);
+  card = metric_card(overlay, card_x, 134, card_w, card_h, "BEER WEIGHT");
+  home_beer_weight =
+      make_label(card, "--", 10, 30, 180, &lv_font_montserrat_20);
 
-  home_gallons = make_label(overlay, "", 236, 184, 176,
-                            &lv_font_montserrat_16, COLOR_MUTED);
-  lv_obj_set_style_text_align(home_gallons, LV_TEXT_ALIGN_LEFT, 0);
+  card = metric_card(overlay, card_x, 206, card_w, card_h, "SERVING SIZE");
+  home_serving_size =
+      make_label(card, "--", 10, 30, 180, &lv_font_montserrat_20);
 
-  lv_obj_t *divider = lv_obj_create(overlay);
-  lv_obj_set_pos(divider, 20, 278);
-  lv_obj_set_size(divider, 402, 1);
-  lv_obj_set_style_bg_color(divider, lv_color_hex(0x343434), 0);
-  lv_obj_set_style_border_width(divider, 0, 0);
-  lv_obj_remove_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
+  card = metric_card(overlay, card_x, 278, card_w, card_h, "KEG SIZE");
+  home_capacity =
+      make_label(card, "--", 10, 30, 180, &lv_font_montserrat_20);
+}
 
-  make_label(overlay, "BEER WEIGHT", 30, 300, 150, &lv_font_montserrat_14,
-             COLOR_MUTED);
-  home_beer_weight = make_label(overlay, "--", 30, 326, 150,
-                                &lv_font_montserrat_24);
+void build_keg_level(lv_obj_t *overlay) {
+  home_disconnected = false;
+  build_home_header(overlay);
 
-  make_label(overlay, "SCALE WEIGHT", 232, 300, 150, &lv_font_montserrat_14,
-             COLOR_MUTED);
-  home_scale_weight = make_label(overlay, "--", 232, 326, 150,
-                                 &lv_font_montserrat_24);
-  home_tare = make_label(overlay, "", 232, 360, 180,
-                         &lv_font_montserrat_14, COLOR_MUTED);
+  lv_obj_t *keg = lv_obj_create(overlay);
+  lv_obj_set_pos(keg, 26, 58);
+  lv_obj_set_size(keg, 174, 292);
+  lv_obj_remove_flag(keg, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(keg, lv_color_hex(0x17242d), 0);
+  lv_obj_set_style_bg_opa(keg, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(keg, lv_color_hex(0x8b9da8), 0);
+  lv_obj_set_style_border_width(keg, 4, 0);
+  lv_obj_set_style_radius(keg, 28, 0);
+  lv_obj_set_style_pad_all(keg, 0, 0);
+
+  for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
+    lv_obj_t *band = lv_obj_create(overlay);
+    glass_bands[i] = band;
+    lv_obj_set_pos(band, 46, 102 + i * 9);
+    lv_obj_set_size(band, 134, 10);
+    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
+    lv_obj_set_style_border_width(band, 0, 0);
+    lv_obj_set_style_radius(band, 1, 0);
+    lv_obj_set_style_pad_all(band, 0, 0);
+  }
+
+  lv_obj_t *top_band = lv_obj_create(overlay);
+  lv_obj_set_pos(top_band, 46, 72);
+  lv_obj_set_size(top_band, 134, 8);
+  lv_obj_remove_flag(top_band, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(top_band, lv_color_hex(0x607681), 0);
+  lv_obj_set_style_border_width(top_band, 0, 0);
+  lv_obj_set_style_radius(top_band, 4, 0);
+
+  lv_obj_t *bottom_band = lv_obj_create(overlay);
+  lv_obj_set_pos(bottom_band, 46, 328);
+  lv_obj_set_size(bottom_band, 134, 8);
+  lv_obj_remove_flag(bottom_band, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(bottom_band, lv_color_hex(0x607681), 0);
+  lv_obj_set_style_border_width(bottom_band, 0, 0);
+  lv_obj_set_style_radius(bottom_band, 4, 0);
+
+  home_percent =
+      make_label(overlay, "--", 58, 181, 110, &lv_font_montserrat_28,
+                 COLOR_TEXT);
+  lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
+
+  const int x = 218;
+  const int w = 208;
+  const int h = 66;
+  lv_obj_t *card = metric_card(overlay, x, 60, w, h, "");
+  home_serving_label =
+      make_label(card, "SERVINGS LEFT", 10, 7, w - 20,
+                 &lv_font_montserrat_14, COLOR_MUTED);
+  home_servings =
+      make_label(card, "--", 10, 30, w - 20, &lv_font_montserrat_24);
+
+  card = metric_card(overlay, x, 136, w, h, "GALLONS REMAINING");
+  home_gallons =
+      make_label(card, "--", 10, 30, w - 20, &lv_font_montserrat_20);
+
+  card = metric_card(overlay, x, 212, w, h, "BEER WEIGHT");
+  home_beer_weight =
+      make_label(card, "--", 10, 30, w - 20, &lv_font_montserrat_20);
+
+  card = metric_card(overlay, x, 288, w, h, "SERVING SIZE");
+  home_serving_size =
+      make_label(card, "--", 10, 30, w - 20, &lv_font_montserrat_20);
+}
+
+lv_obj_t *service_row(lv_obj_t *overlay, int y, const char *title) {
+  lv_obj_t *row = lv_obj_create(overlay);
+  lv_obj_set_pos(row, 10, y);
+  lv_obj_set_size(row, 416, 30);
+  lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x172732), 0);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(row, lv_color_hex(0x304b5c), 0);
+  lv_obj_set_style_border_width(row, 1, 0);
+  lv_obj_set_style_radius(row, 7, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+
+  make_label(row, title, 10, 6, 210, &lv_font_montserrat_14, COLOR_MUTED);
+  lv_obj_t *value =
+      make_label(row, "--", 222, 6, 182, &lv_font_montserrat_14, COLOR_TEXT);
+  lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+  return value;
+}
+
+void build_service(lv_obj_t *overlay) {
+  home_disconnected = false;
+  build_home_header(overlay);
+
+  const char *titles[10] = {
+      "SERVINGS LEFT", "REMAINING", "GALLONS REMAINING", "BEER WEIGHT",
+      "SCALE WEIGHT", "EMPTY KEG / TARE", "KEG CAPACITY", "SERVING SIZE",
+      "SCALE FIRMWARE", "CALIBRATION"};
+
+  for (int i = 0; i < 10; ++i)
+    service_values[i] = service_row(overlay, 44 + i * 33, titles[i]);
 }
 
 lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title) {
@@ -772,6 +1015,33 @@ void build_glass(lv_obj_t *overlay) {
 
 void update_home_values();
 
+void build_selected_home(lv_obj_t *overlay) {
+  switch (home_view) {
+  case HomeView::Glass:
+    build_glass(overlay);
+    break;
+  case HomeView::Dashboard:
+    build_dashboard(overlay);
+    break;
+  case HomeView::Minimal:
+    build_minimal(overlay);
+    break;
+  case HomeView::Gauge:
+    build_gauge(overlay);
+    break;
+  case HomeView::KegLevel:
+    build_keg_level(overlay);
+    break;
+  case HomeView::Service:
+    build_service(overlay);
+    break;
+  default:
+    home_view = HomeView::Dashboard;
+    build_dashboard(overlay);
+    break;
+  }
+}
+
 void rebuild_home_for_selected_view() {
   if (!home_overlay)
     return;
@@ -780,19 +1050,17 @@ void rebuild_home_for_selected_view() {
   home_disconnected = false;
   if (!latest_state.online)
     update_disconnected(home_overlay);
-  else if (glass_home)
-    build_glass(home_overlay);
   else
-    build_dashboard(home_overlay);
+    build_selected_home(home_overlay);
 }
 
 void switch_home_view(lv_event_t *) {
-  glass_home = !glass_home;
-  save_preference(glass_home);
+  home_view = next_home_view(home_view);
+  save_preference(home_view);
   rebuild_home_for_selected_view();
   if (view_button_label)
     lv_label_set_text(view_button_label,
-                      glass_home ? "Dashboard" : "Glass");
+                      home_view_name(next_home_view(home_view)));
   update_home_values();
 }
 
@@ -810,29 +1078,14 @@ void tune_home_footer_layout() {
     const int w = lv_obj_get_width(child);
     const int h = lv_obj_get_height(child);
 
-    // Left "home/switch keg" button.
-    if (y >= 428 && y <= 455 && x <= 20 && w >= 150 && h >= 34) {
-      lv_obj_set_pos(child, 12, y);
-      lv_obj_set_size(child, 152, h);
-      continue;
-    }
-
-    // Middle "Connected" bubble. Center it in the gap between the
-    // beer-name button and Dashboard, and keep it slightly shorter so it
-    // reads as a status pill rather than a third full-size button.
-    if (y >= 428 && y <= 455 && x >= 160 && x <= 250 &&
-        w >= 70 && w <= 125 && h >= 28 && h <= 44) {
-
-      // Move green pill upward.
-      lv_obj_set_pos(child, 179, 438);
-      lv_obj_set_size(child, 112, 32);
-
-      // Keep "Connected" text where it was visually.
-      if (lv_obj_t *connected_text = lv_obj_get_child(child, 0)) {
-        lv_obj_set_style_translate_y(connected_text, 3, 0);
-      }
-
-      continue;
+    if (y >= 428 && y <= 455 && x <= 20 && w >= 140 && h >= 34) {
+      lv_obj_set_pos(child, 12, 432);
+      lv_obj_set_size(child, 152, 40);
+      lv_obj_set_style_bg_color(child, lv_color_hex(COLOR_HEADER_BUTTON), 0);
+      lv_obj_set_style_border_color(child, lv_color_hex(COLOR_HEADER_ACCENT), 0);
+      lv_obj_set_style_border_width(child, 1, 0);
+      lv_obj_set_style_radius(child, 12, 0);
+      break;
     }
   }
 }
@@ -846,7 +1099,10 @@ void ensure_view_button() {
     lv_obj_set_style_bg_color(view_button, lv_color_hex(COLOR_HEADER_BUTTON), 0);
     lv_obj_set_style_border_color(view_button, lv_color_hex(COLOR_HEADER_ACCENT), 0);
     lv_obj_set_style_border_width(view_button, 1, 0);
-    lv_obj_set_style_radius(view_button, 9, 0);
+    lv_obj_set_style_radius(view_button, 12, 0);
+    lv_obj_set_style_bg_color(view_button, lv_color_hex(0x276990), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(view_button, lv_color_hex(COLOR_HEADER_ACCENT),
+                                  LV_STATE_PRESSED);
     view_button_label = lv_label_create(view_button);
     lv_obj_set_style_text_font(view_button_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(view_button_label, lv_color_hex(COLOR_TEXT), 0);
@@ -859,7 +1115,7 @@ void ensure_view_button() {
       !touchscreen_pairing_overlay_visible()) {
     tune_home_footer_layout();
     lv_label_set_text(view_button_label,
-                      glass_home ? "Dashboard" : "Glass");
+                      home_view_name(next_home_view(home_view)));
     lv_obj_remove_flag(view_button, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(view_button);
   } else {
@@ -889,10 +1145,8 @@ void build_home_overlay() {
   reset_home_child_refs();
   if (!latest_state.online)
     update_disconnected(home_overlay);
-  else if (glass_home)
-    build_glass(home_overlay);
   else
-    build_dashboard(home_overlay);
+    build_selected_home(home_overlay);
 
   lv_obj_move_foreground(home_overlay);
 }
@@ -916,49 +1170,87 @@ void update_home_values() {
     clear_disconnected_discovery();
   }
 
-  if (home_disconnected || !home_percent || !home_name)
+  if (home_disconnected || !home_name)
     rebuild_home_for_selected_view();
 
-  if (glass_home &&
+  if (home_view == HomeView::Glass &&
       vessel_for_serving(latest_state.serving) != rendered_vessel)
     rebuild_home_for_selected_view();
 
   char name[48];
   ascii_safe(latest_state.name[0] ? latest_state.name : "Keg Scale", name,
              sizeof(name));
-  lv_label_set_text(home_name, name);
+  if (home_name)
+    lv_label_set_text(home_name, name);
 
   const char *status = latest_state.stable ? "Stable" : "Settling";
-  lv_label_set_text(home_status, status);
-  lv_obj_set_style_text_color(
-      home_status,
-      lv_color_hex(latest_state.stable ? COLOR_GREEN : COLOR_WARNING), 0);
+  if (home_status) {
+    lv_label_set_text(home_status, status);
+    lv_obj_set_style_text_color(
+        home_status,
+        lv_color_hex(latest_state.stable ? COLOR_GREEN : COLOR_WARNING), 0);
+  }
 
   const char *serving_label = serving_count_label(latest_state.serving);
-  if (home_serving_label) {
+  if (home_serving_label)
     lv_label_set_text(home_serving_label, serving_label);
-    lv_obj_set_style_text_font(
-        home_serving_label,
-        &lv_font_montserrat_16,
-        0);
-  }
 
   char buffer[96];
   format_serving_size(latest_state.serving, buffer, sizeof(buffer));
   if (home_serving_size)
     lv_label_set_text(home_serving_size, buffer);
 
+  if (home_capacity) {
+    snprintf(buffer, sizeof(buffer), "%.2f gal", (double)latest_state.capacity);
+    lv_label_set_text(home_capacity, buffer);
+  }
+
+  // Service view intentionally uses only values currently provided by the
+  // scale. Temperature/history metrics are not synthesized on the touchscreen.
+  if (service_values[4]) {
+    snprintf(buffer, sizeof(buffer), "%.1f lb", (double)latest_state.weight);
+    lv_label_set_text(service_values[4], buffer);
+  }
+  if (service_values[5]) {
+    snprintf(buffer, sizeof(buffer), "%.1f lb", (double)latest_state.empty);
+    lv_label_set_text(service_values[5], buffer);
+  }
+  if (service_values[6]) {
+    snprintf(buffer, sizeof(buffer), "%.2f gal", (double)latest_state.capacity);
+    lv_label_set_text(service_values[6], buffer);
+  }
+  if (service_values[7]) {
+    format_serving_size(latest_state.serving, buffer, sizeof(buffer));
+    lv_label_set_text(service_values[7], buffer);
+  }
+  if (service_values[8])
+    lv_label_set_text(service_values[8],
+                      latest_state.firmware[0] ? latest_state.firmware : "--");
+  if (service_values[9])
+    lv_label_set_text(service_values[9],
+                      latest_state.calibrated ? "Calibrated" : "Not calibrated");
+
   if (!latest_state.ready) {
-    lv_label_set_text(home_percent, "--");
-    lv_label_set_text(home_servings, "--");
-    lv_label_set_text(home_gallons, "--");
-    lv_label_set_text(home_beer_weight, "--");
+    if (home_percent)
+      lv_label_set_text(home_percent, "--");
+    if (home_servings)
+      lv_label_set_text(home_servings, "--");
+    if (home_gallons)
+      lv_label_set_text(home_gallons, "--");
+    if (home_beer_weight)
+      lv_label_set_text(home_beer_weight, "--");
     if (home_scale_weight)
       lv_label_set_text(home_scale_weight, "--");
     if (home_tare)
       lv_label_set_text(home_tare, "");
+    for (int i = 0; i < 4; ++i) {
+      if (service_values[i])
+        lv_label_set_text(service_values[i], "--");
+    }
     if (home_arc)
       lv_arc_set_value(home_arc, 0);
+    if (home_progress)
+      lv_bar_set_value(home_progress, 0, LV_ANIM_OFF);
     for (auto *band : glass_bands) {
       if (band)
         lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
@@ -969,57 +1261,67 @@ void update_home_values() {
   const int percent = std::clamp(
       static_cast<int>(std::lround(latest_state.percent)), 0, 100);
   const uint32_t level_color = remaining_color(percent);
-
-  snprintf(buffer, sizeof(buffer), "%d%%", percent);
-  lv_label_set_text(home_percent, buffer);
-
   const int servings =
       std::max(0, static_cast<int>(std::floor(latest_state.servings)));
+
+  snprintf(buffer, sizeof(buffer), "%d%%", percent);
+  if (home_percent)
+    lv_label_set_text(home_percent, buffer);
+  if (service_values[1])
+    lv_label_set_text(service_values[1], buffer);
+
   snprintf(buffer, sizeof(buffer), "%d", servings);
-  lv_label_set_text(home_servings, buffer);
+  if (home_servings)
+    lv_label_set_text(home_servings, buffer);
+  if (service_values[0])
+    lv_label_set_text(service_values[0], buffer);
 
-  if (glass_home) {
-    snprintf(buffer, sizeof(buffer), "%.2f gal", (double)latest_state.gallons);
+  snprintf(buffer, sizeof(buffer), "%.2f gal", (double)latest_state.gallons);
+  if (home_gallons)
     lv_label_set_text(home_gallons, buffer);
+  if (service_values[2])
+    lv_label_set_text(service_values[2], buffer);
 
-    snprintf(buffer, sizeof(buffer), "%.1f lb",
-             (double)beer_weight(latest_state));
+  snprintf(buffer, sizeof(buffer), "%.1f lb", (double)beer_weight(latest_state));
+  if (home_beer_weight)
     lv_label_set_text(home_beer_weight, buffer);
+  if (service_values[3])
+    lv_label_set_text(service_values[3], buffer);
 
+  if (home_scale_weight) {
+    snprintf(buffer, sizeof(buffer), "%.1f lb", (double)latest_state.weight);
+    lv_label_set_text(home_scale_weight, buffer);
+  }
+
+  if (home_tare) {
+    snprintf(buffer, sizeof(buffer), "%.1f lb keg / tare",
+             (double)latest_state.empty);
+    lv_label_set_text(home_tare, buffer);
+  }
+
+  if (home_arc) {
+    lv_arc_set_value(home_arc, percent);
+    lv_obj_set_style_arc_color(home_arc, lv_color_hex(level_color),
+                               LV_PART_INDICATOR);
+  }
+
+  if (home_progress) {
+    lv_bar_set_value(home_progress, percent, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(home_progress, lv_color_hex(level_color),
+                              LV_PART_INDICATOR);
+  }
+
+  if (home_view == HomeView::Glass || home_view == HomeView::KegLevel) {
     const int visible_bands =
         percent == 0 ? 0 : (percent * GLASS_BAND_COUNT + 99) / 100;
     for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
       if (!glass_bands[i])
         continue;
-
       lv_obj_set_style_bg_color(glass_bands[i], lv_color_hex(level_color), 0);
       if (i >= GLASS_BAND_COUNT - visible_bands)
         lv_obj_remove_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
       else
         lv_obj_add_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
-    }
-  } else {
-    snprintf(buffer, sizeof(buffer), "About %.2f gallons\nremaining",
-             (double)latest_state.gallons);
-    lv_label_set_text(home_gallons, buffer);
-
-    snprintf(buffer, sizeof(buffer), "%.1f lb",
-             (double)beer_weight(latest_state));
-    lv_label_set_text(home_beer_weight, buffer);
-
-    snprintf(buffer, sizeof(buffer), "%.1f lb", (double)latest_state.weight);
-    lv_label_set_text(home_scale_weight, buffer);
-
-    if (home_tare) {
-      snprintf(buffer, sizeof(buffer), "%.1f lb keg / tare",
-               (double)latest_state.empty);
-      lv_label_set_text(home_tare, buffer);
-    }
-
-    if (home_arc) {
-      lv_arc_set_value(home_arc, percent);
-      lv_obj_set_style_arc_color(home_arc, lv_color_hex(level_color),
-                                 LV_PART_INDICATOR);
     }
   }
 }
