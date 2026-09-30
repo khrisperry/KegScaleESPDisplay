@@ -47,6 +47,8 @@ lv_obj_t *menu_scrim = nullptr;
 lv_obj_t *menu_panel = nullptr;
 lv_obj_t *qr_fullscreen = nullptr;
 lv_obj_t *connection_badge = nullptr;
+lv_obj_t *connection_badge_text = nullptr;
+lv_obj_t *connection_badge_dot = nullptr;
 bool touchscreen_update_available_ui = false;
 // TOUCH_DRAWER_V1
 // TOUCH_SHELL_POLISH_V3
@@ -95,9 +97,9 @@ lv_obj_t *button(lv_obj_t *parent, const char *s, int x, int y, int width,
   // Shared modern action-button treatment used throughout all sub-pages.
   // Individual controls such as the drawer close button may further override
   // these defaults after creation.
-  lv_obj_set_style_bg_color(o, lv_color_hex(0x1d4f73), 0);
+  lv_obj_set_style_bg_color(o, lv_color_hex(0x173b55), 0);
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(o, lv_color_hex(0x4fa7d1), 0);
+  lv_obj_set_style_border_color(o, lv_color_hex(0x55b7e8), 0);
   lv_obj_set_style_border_width(o, 1, 0);
   lv_obj_set_style_radius(o, 15, 0);
 
@@ -315,8 +317,8 @@ void show_qr_fullscreen(lv_event_t *) {
 
   auto back = button(qr_fullscreen, "Back", 166, 420, 148, close_qr_fullscreen);
   lv_obj_set_size(back, 148, 40);
-  lv_obj_set_style_bg_color(back, lv_color_hex(0x1d4f73), 0);
-  lv_obj_set_style_border_color(back, lv_color_hex(0x4fa7d1), 0);
+  lv_obj_set_style_bg_color(back, lv_color_hex(0x173b55), 0);
+  lv_obj_set_style_border_color(back, lv_color_hex(0x55b7e8), 0);
   lv_obj_set_style_border_width(back, 1, 0);
   lv_obj_set_style_radius(back, 20, 0);
   if (lv_obj_t *back_text = lv_obj_get_child(back, 0))
@@ -365,7 +367,7 @@ void populate_scale_menu() {
   label(menu_panel, "Scale Menu", 14, 14, 150, &lv_font_montserrat_20);
   auto close = button(menu_panel, "X", 182, 10, 32, close_scale_menu);
   lv_obj_set_size(close, 32, 32);
-  lv_obj_set_style_bg_color(close, lv_color_hex(0x1d4f73), 0);
+  lv_obj_set_style_bg_color(close, lv_color_hex(0x173b55), 0);
   lv_obj_set_style_radius(close, 16, 0);
   lv_obj_set_ext_click_area(close, 10);
   if (lv_obj_t *close_text = lv_obj_get_child(close, 0))
@@ -407,9 +409,9 @@ void populate_scale_menu() {
         menu_panel, title, 14, y, 200, drawer_nav,
         reinterpret_cast<void *>(static_cast<intptr_t>(page)));
     lv_obj_set_size(b, 200, 42);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x1d4f73), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x173b55), 0);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(b, lv_color_hex(0x4fa7d1), 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0x55b7e8), 0);
     lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, 15, 0);
     if (lv_obj_t *t = lv_obj_get_child(b, 0))
@@ -483,9 +485,9 @@ void ensure_scale_menu(lv_obj_t *root) {
     menu_handle_button = lv_button_create(root);
     lv_obj_set_pos(menu_handle_button, 426, 7);
     lv_obj_set_size(menu_handle_button, 42, 42);
-    lv_obj_set_style_bg_color(menu_handle_button, lv_color_hex(0x1d4f73), 0);
+    lv_obj_set_style_bg_color(menu_handle_button, lv_color_hex(0x173b55), 0);
     lv_obj_set_style_bg_opa(menu_handle_button, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(menu_handle_button, lv_color_hex(0x4fa7d1), 0);
+    lv_obj_set_style_border_color(menu_handle_button, lv_color_hex(0x55b7e8), 0);
     lv_obj_set_style_border_width(menu_handle_button, 1, 0);
     lv_obj_set_style_radius(menu_handle_button, 21, 0);
     lv_obj_set_ext_click_area(menu_handle_button, 5);
@@ -556,6 +558,8 @@ void update_home_nav_button() {
   touchscreen_text::label_set_text(text, caption);
   lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
   lv_obj_set_width(text, lv_obj_get_width(home_nav_button) - 18);
+  lv_obj_set_height(text, 20);
+  lv_obj_set_style_text_font(text, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(text);
 }
@@ -1156,9 +1160,9 @@ void build(int page) {
     lv_obj_t *password_toggle = lv_button_create(content);
     lv_obj_set_pos(password_toggle, 378, 207);
     lv_obj_set_size(password_toggle, 50, 32);
-    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x1d4f73), 0);
+    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x173b55), 0);
     lv_obj_set_style_bg_opa(password_toggle, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x4fa7d1), 0);
+    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x55b7e8), 0);
     lv_obj_set_style_border_width(password_toggle, 1, 0);
     lv_obj_set_style_radius(password_toggle, 10, 0);
     lv_obj_set_style_pad_all(password_toggle, 0, 0);
@@ -1619,35 +1623,51 @@ void ui_start(const Settings &s) {
   lv_obj_set_height(notice, 24);
   lv_label_set_long_mode(notice, LV_LABEL_LONG_DOT);
 
-  // Persistent connection state uses the same footprint and visual weight as
-  // the Home and view buttons. Keeping all three controls at 40 px tall fixes
-  // the old floating-pill look while preserving a distinct status color.
-  connection_badge = label(root, "Offline", 176, 432, 118,
-                           &lv_font_montserrat_14);
-  lv_obj_set_height(connection_badge, 40);
-  lv_obj_set_style_text_align(connection_badge, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_color(connection_badge, lv_color_hex(TEXT), 0);
-  lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x7a3b3b), 0);
+  // Persistent connection status now uses the same dark-blue visual language
+  // as the surrounding navigation controls. A colored dot carries state,
+  // avoiding the old solid-green action-button appearance.
+  connection_badge = lv_obj_create(root);
+  lv_obj_set_pos(connection_badge, 188, 432);
+  lv_obj_set_size(connection_badge, 118, 40);
+  lv_obj_remove_flag(connection_badge, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x173247), 0);
   lv_obj_set_style_bg_opa(connection_badge, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(connection_badge, lv_color_hex(0xc76a6a), 0);
   lv_obj_set_style_border_width(connection_badge, 1, 0);
   lv_obj_set_style_radius(connection_badge, 12, 0);
-  lv_obj_set_style_pad_top(connection_badge, 10, 0);
-  lv_obj_set_style_pad_left(connection_badge, 0, 0);
-  lv_obj_set_style_pad_right(connection_badge, 0, 0);
+  lv_obj_set_style_pad_all(connection_badge, 0, 0);
+
+  connection_badge_dot = lv_obj_create(connection_badge);
+  lv_obj_set_pos(connection_badge_dot, 10, 15);
+  lv_obj_set_size(connection_badge_dot, 10, 10);
+  lv_obj_remove_flag(connection_badge_dot, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(connection_badge_dot, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(connection_badge_dot, lv_color_hex(0xc76a6a), 0);
+  lv_obj_set_style_bg_opa(connection_badge_dot, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(connection_badge_dot, 0, 0);
+  lv_obj_set_style_radius(connection_badge_dot, 10, 0);
+  lv_obj_set_style_pad_all(connection_badge_dot, 0, 0);
+
+  connection_badge_text =
+      label(connection_badge, "Offline", 26, 10, 84, &lv_font_montserrat_14);
+  lv_obj_set_style_text_color(connection_badge_text, lv_color_hex(TEXT), 0);
+  lv_obj_set_style_text_align(connection_badge_text, LV_TEXT_ALIGN_CENTER, 0);
 
   // Keep only Home / Switch Scale on the main screen. All management pages
   // live in the right-side drawer.
-  home_nav_button = button(root, "Home", 12, 432, 152, nav,
+  home_nav_button = button(root, "Home", 12, 432, 164, nav,
                            reinterpret_cast<void *>(static_cast<intptr_t>(0)));
-  lv_obj_set_size(home_nav_button, 152, 40);
-  lv_obj_set_style_bg_color(home_nav_button, lv_color_hex(0x1d4f73), 0);
+  lv_obj_set_size(home_nav_button, 164, 40);
+  lv_obj_set_style_bg_color(home_nav_button, lv_color_hex(0x173b55), 0);
   lv_obj_set_style_bg_opa(home_nav_button, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(home_nav_button, lv_color_hex(0x4fa7d1), 0);
+  lv_obj_set_style_border_color(home_nav_button, lv_color_hex(0x55b7e8), 0);
   lv_obj_set_style_border_width(home_nav_button, 1, 0);
   lv_obj_set_style_radius(home_nav_button, 12, 0);
-  if (lv_obj_t *home_text = lv_obj_get_child(home_nav_button, 0))
+  if (lv_obj_t *home_text = lv_obj_get_child(home_nav_button, 0)) {
     lv_obj_set_style_text_color(home_text, lv_color_hex(TEXT), 0);
+    lv_obj_set_style_text_font(home_text, &lv_font_montserrat_14, 0);
+    lv_obj_set_height(home_text, 20);
+  }
   ensure_scale_menu(root);
   ui_initialized = true;
   build(s.ssid[0] && scale_hosts_ui[active_scale_ui][0] ? 0 : 3);
@@ -1665,13 +1685,17 @@ void ui_state(const State &s) {
   current = s;
   update_home_nav_button();
   if (connection_badge) {
-    touchscreen_text::label_set_text(connection_badge, current.online ? "Connected" : "Offline");
-    lv_obj_set_style_bg_color(
-        connection_badge,
-        lv_color_hex(current.online ? 0x247a5a : 0x7a3b3b), 0);
+    if (connection_badge_text)
+      touchscreen_text::label_set_text(
+          connection_badge_text, current.online ? "Connected" : "Offline");
+    lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x173247), 0);
     lv_obj_set_style_border_color(
         connection_badge,
         lv_color_hex(current.online ? 0x42d3a2 : 0xc76a6a), 0);
+    if (connection_badge_dot)
+      lv_obj_set_style_bg_color(
+          connection_badge_dot,
+          lv_color_hex(current.online ? 0x42d3a2 : 0xc76a6a), 0);
   }
   if (lost_connection && (page_id == 0 || page_id == 1 || page_id == 2))
     build(page_id);
