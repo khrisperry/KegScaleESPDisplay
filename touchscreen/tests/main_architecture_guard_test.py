@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Guard the wrapper-free Touch application entrypoint."""
 from pathlib import Path
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Touch main architecture guard")
 
 root = Path(__file__).resolve().parents[1]
 main = (root / "main" / "main.cpp").read_text(encoding="utf-8")
@@ -128,6 +131,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("FAIL: Touch main architecture guard: " + "; ".join(failed))
+    fail_exit("Touch main architecture guard: " + "; ".join(failed))
 
-print("PASS: Touch main architecture guard")
+pass_line("Touch main architecture guard")
