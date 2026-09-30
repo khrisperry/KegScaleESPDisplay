@@ -57,13 +57,43 @@ bool touchscreen_update_available_ui = false;
 char discovered_scale_options[800] = "Manual IP / hostname...";
 TouchscreenUiGeneration content_generation{1};
 bool ui_initialized = false;
+lv_timer_t *notice_clear_timer = nullptr;
 const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
                TEXT = 0xf2f6f8;
 // TOUCH_BUTTON_STYLE_V5
+// TOUCH_TRANSIENT_NOTICE_V6
 void build(int page);
 void render_update_page();
 void focus(lv_event_t *e);
-void message(const char *s) { touchscreen_text::label_set_text(notice, s); }
+
+void clear_notice_locked() {
+  if (notice_clear_timer) {
+    lv_timer_delete(notice_clear_timer);
+    notice_clear_timer = nullptr;
+  }
+  if (notice)
+    touchscreen_text::label_set_text(notice, "");
+}
+
+void clear_notice_timer_cb(lv_timer_t *timer) {
+  if (timer == notice_clear_timer)
+    notice_clear_timer = nullptr;
+  if (notice)
+    touchscreen_text::label_set_text(notice, "");
+  lv_timer_delete(timer);
+}
+
+void message(const char *s) {
+  clear_notice_locked();
+  if (notice)
+    touchscreen_text::label_set_text(notice, s ? s : "");
+}
+
+void transient_message(const char *s, uint32_t duration_ms = 2200) {
+  message(s);
+  if (notice && s && s[0])
+    notice_clear_timer = lv_timer_create(clear_notice_timer_cb, duration_ms, nullptr);
+}
 bool submit(const char *kind, cJSON *json) {
   Action a{};
   a.ui_generation = touchscreen_ui_generation_current(&content_generation);
@@ -955,6 +985,7 @@ void dashboard() {
 }
 void build(int page) {
   dismiss_keyboard();
+  clear_notice_locked();
   page_id = page;
   update_home_nav_button();
   touchscreen_ui_generation_advance(&content_generation);
@@ -1556,6 +1587,10 @@ void update_page_watch(lv_timer_t *) {
 
 } // namespace
 
+void touchscreen_ui_clear_notice_locked() {
+  clear_notice_locked();
+}
+
 void touchscreen_home_set_update_available(bool available) {
   touchscreen_update_available_ui = available;
   refresh_menu_update_indicator();
@@ -1753,8 +1788,8 @@ void ui_result(bool ok, const char *op, const char *error) {
       cal_step = 0;
       build(0);
     }
-    message(!strcmp(op, "save") ? "Keg information saved on scale"
-                                : "Scale confirmed the operation");
+    transient_message(!strcmp(op, "save") ? "Keg information saved on scale"
+                                          : "Scale confirmed the operation");
   } else
     message(error);
   bsp_display_unlock();
