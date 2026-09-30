@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from test_output import install_excepthook, run_command
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,6 +32,7 @@ def functions(path, names):
 
 
 def main():
+    install_excepthook("e-paper OTA regression suite")
     with tempfile.TemporaryDirectory(prefix="keg-ota-") as directory:
         tmp = Path(directory)
         (tmp / "ota_flow.inc").write_text(functions(ROOT / "main/main.c", [
@@ -45,8 +47,8 @@ def main():
                        "-I" + str(ROOT / "components/display_ota/include"),
                        "-I" + str(ROOT / "main"), str(ROOT / f"tests/{test}.c"),
                        "-lmbedcrypto", "-o", str(binary)]
-            subprocess.run(command, check=True)
-            subprocess.run([str(binary)], check=True)
+            run_command(f"{test} compile", command)
+            run_command(test, [str(binary)])
 
 
 if __name__ == "__main__":
