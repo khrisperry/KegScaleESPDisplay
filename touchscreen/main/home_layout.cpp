@@ -27,7 +27,7 @@ constexpr uint32_t COLOR_GLASS = 0xb9c6cc;
 constexpr uint32_t COLOR_HEADER_BUTTON = 0x173b55;
 constexpr uint32_t COLOR_HEADER_ACCENT = 0x55b7e8;
 constexpr uint32_t COLOR_METRIC_CARD = 0x182a37;
-constexpr uint32_t COLOR_METRIC_BORDER = 0x365b70;
+constexpr uint32_t COLOR_METRIC_BORDER = 0x2b4b5d;
 constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_DRAWER_REFINEMENTS_V2_4
 // TOUCH_SHELL_POLISH_V3
@@ -38,6 +38,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_MULTI_VIEW_V8
 // TOUCH_VISUAL_FIDELITY_V9
 // TOUCH_CLEAN_LAYOUT_V10
+// TOUCH_REFINED_SPACING_V11
 
 enum class ServingVessel {
   Generic,
@@ -99,6 +100,11 @@ static lv_point_precise_t growler_outline_points[] = {
     {82, 0},   {128, 0}, {128, 40}, {166, 64}, {184, 96},
     {184, 282}, {18, 282}, {18, 96}, {36, 64},  {82, 40},
     {82, 0}};
+
+static lv_point_precise_t keg_outline_points[] = {
+    {22, 0},   {138, 0},  {150, 12}, {158, 36}, {158, 216},
+    {150, 240}, {138, 252}, {22, 252}, {10, 240}, {2, 216},
+    {2, 36},   {10, 12},  {22, 0}};
 
 State latest_state{};
 int active_page = 0;
@@ -626,10 +632,10 @@ void build_home_header(lv_obj_t *overlay) {
   lv_label_set_long_mode(home_name, LV_LABEL_LONG_DOT);
   lv_obj_set_height(home_name, 26);
 
-  home_status_dot = shape(overlay, 304, 17, 8, 8, COLOR_GREEN, 8);
-  home_status = make_label(overlay, "", 318, 11, 74,
+  home_status_dot = shape(overlay, 326, 17, 8, 8, COLOR_GREEN, 8);
+  home_status = make_label(overlay, "", 340, 11, 52,
                            &lv_font_montserrat_14, COLOR_GREEN);
-  lv_obj_set_style_text_align(home_status, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_style_text_align(home_status, LV_TEXT_ALIGN_LEFT, 0);
 }
 
 lv_obj_t *remaining_bar(lv_obj_t *parent, int x, int y, int width, int height) {
@@ -653,8 +659,8 @@ void build_dashboard(lv_obj_t *overlay) {
   const int left = 16;
   const int right = 222;
   const int width = 194;
-  const int height = 78;
-  const int rows[] = {52, 144, 236};
+  const int height = 84;
+  const int rows[] = {50, 146, 242};
 
   lv_obj_t *card =
       metric_card(overlay, left, rows[0], width, height, "", COLOR_AMBER);
@@ -685,8 +691,6 @@ void build_dashboard(lv_obj_t *overlay) {
   card = metric_card(overlay, right, rows[2], width, height, "SERVING SIZE");
   home_serving_size =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_20);
-
-  home_progress = remaining_bar(overlay, 16, 332, 400, 14);
 }
 
 void build_minimal(lv_obj_t *overlay) {
@@ -694,44 +698,35 @@ void build_minimal(lv_obj_t *overlay) {
   build_home_header(overlay);
 
   home_servings =
-      make_label(overlay, "--", 58, 52, 316, &lv_font_montserrat_48);
+      make_label(overlay, "--", 58, 50, 316, &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
 
   home_serving_label =
-      make_label(overlay, "SERVINGS LEFT", 58, 108, 316,
+      make_label(overlay, "SERVINGS LEFT", 58, 106, 316,
                  &lv_font_montserrat_20, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
-  lv_obj_t *serving_badge = lv_obj_create(overlay);
-  lv_obj_set_pos(serving_badge, 153, 142);
-  lv_obj_set_size(serving_badge, 126, 34);
-  lv_obj_remove_flag(serving_badge, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(serving_badge, lv_color_hex(0x143044), 0);
-  lv_obj_set_style_border_color(serving_badge, lv_color_hex(COLOR_HEADER_ACCENT), 0);
-  lv_obj_set_style_border_width(serving_badge, 1, 0);
-  lv_obj_set_style_radius(serving_badge, 17, 0);
-  lv_obj_set_style_pad_all(serving_badge, 0, 0);
   home_serving_size =
-      make_label(serving_badge, "--", 0, 8, 126,
-                 &lv_font_montserrat_14, COLOR_TEXT);
+      make_label(overlay, "--", 58, 140, 316,
+                 &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *remaining =
-      metric_card(overlay, 18, 196, 400, 68, "REMAINING");
+      metric_card(overlay, 18, 180, 400, 72, "REMAINING");
   home_percent =
       make_label(remaining, "--", 300, 10, 84, &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_RIGHT, 0);
-  home_progress = remaining_bar(remaining, 14, 44, 370, 12);
+  home_progress = remaining_bar(remaining, 14, 47, 370, 12);
 
   lv_obj_t *card =
-      metric_card(overlay, 18, 280, 196, 66, "GALLONS LEFT");
+      metric_card(overlay, 18, 270, 196, 72, "GALLONS LEFT");
   home_gallons =
-      make_label(card, "--", 14, 32, 168, &lv_font_montserrat_20);
+      make_label(card, "--", 14, 35, 168, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, 222, 280, 196, 66, "BEER WEIGHT",
+  card = metric_card(overlay, 222, 270, 196, 72, "BEER WEIGHT",
                      0x91a9b6);
   home_beer_weight =
-      make_label(card, "--", 14, 32, 168, &lv_font_montserrat_20);
+      make_label(card, "--", 14, 35, 168, &lv_font_montserrat_20);
 }
 
 void build_gauge(lv_obj_t *overlay) {
@@ -759,11 +754,11 @@ void build_gauge(lv_obj_t *overlay) {
       make_label(overlay, "REMAINING", 50, 164, 130,
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
-  home_servings = make_label(overlay, "--", 66, 196, 98,
+  home_servings = make_label(overlay, "--", 66, 188, 98,
                              &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
   home_serving_label =
-      make_label(overlay, "SERVINGS LEFT", 42, 226, 146,
+      make_label(overlay, "SERVINGS LEFT", 42, 216, 146,
                  &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -794,25 +789,37 @@ void build_keg_level(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
-  outline_shape(overlay, 90, 47, 52, 12, COLOR_GLASS, 3, 5);
-  outline_shape(overlay, 75, 56, 82, 28, COLOR_GLASS, 3, 8);
+  // A barrel-shaped outline reads more like a keg than the previous rounded
+  // rectangle/battery silhouette.
+  lv_obj_t *outline = lv_line_create(overlay);
+  lv_line_set_points(outline, keg_outline_points,
+                     sizeof(keg_outline_points) /
+                         sizeof(keg_outline_points[0]));
+  lv_obj_set_pos(outline, 24, 78);
+  lv_obj_set_style_line_color(outline, lv_color_hex(COLOR_GLASS), 0);
+  lv_obj_set_style_line_width(outline, 5, 0);
+  lv_obj_set_style_line_rounded(outline, true, 0);
 
-  lv_obj_t *keg = lv_obj_create(overlay);
-  lv_obj_set_pos(keg, 24, 76);
-  lv_obj_set_size(keg, 184, 256);
-  lv_obj_remove_flag(keg, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(keg, lv_color_hex(0x14232d), 0);
-  lv_obj_set_style_bg_opa(keg, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(keg, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_border_width(keg, 4, 0);
-  lv_obj_set_style_radius(keg, 22, 0);
-  lv_obj_set_style_pad_all(keg, 0, 0);
+  // Simple top plate/coupler, deliberately small so it does not resemble a
+  // battery terminal.
+  outline_shape(overlay, 78, 63, 88, 13, COLOR_GLASS, 3, 6);
+  outline_shape(overlay, 101, 52, 42, 12, COLOR_GLASS, 3, 4);
 
+  // Liquid bands taper slightly at the shoulders and base to follow the keg
+  // silhouette. They remain individual objects so the existing percentage
+  // visibility logic can be reused.
   for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-    lv_obj_t *band = lv_obj_create(keg);
+    int width = 142;
+    if (i < 3 || i > 20)
+      width = 126;
+    else if (i < 5 || i > 18)
+      width = 136;
+    const int x = 105 - width / 2;
+
+    lv_obj_t *band = lv_obj_create(overlay);
     glass_bands[i] = band;
-    lv_obj_set_pos(band, 16, 30 + i * 8);
-    lv_obj_set_size(band, 144, 9);
+    lv_obj_set_pos(band, x, 103 + i * 9);
+    lv_obj_set_size(band, width, 10);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
@@ -821,16 +828,20 @@ void build_keg_level(lv_obj_t *overlay) {
     lv_obj_set_style_pad_all(band, 0, 0);
   }
 
-  // Keep only structural ribs. Text is deliberately kept away from them.
-  shape(keg, 8, 12, 160, 7, 0x708792, 3);
-  shape(keg, 8, 62, 160, 4, 0x516b78, 2);
-  shape(keg, 8, 190, 160, 4, 0x516b78, 2);
-  shape(keg, 8, 229, 160, 7, 0x708792, 3);
+  // Keg chimes/ribs are drawn after the liquid so they remain visible.
+  shape(overlay, 45, 92, 120, 6, 0x708792, 3);
+  shape(overlay, 40, 128, 130, 4, 0x516b78, 2);
+  shape(overlay, 40, 276, 130, 4, 0x516b78, 2);
+  shape(overlay, 45, 316, 120, 6, 0x708792, 3);
 
   home_percent =
-      make_label(overlay, "--", 51, 146, 130, &lv_font_montserrat_28,
+      make_label(overlay, "--", 52, 154, 106, &lv_font_montserrat_28,
                  COLOR_TEXT);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t *remaining =
+      make_label(overlay, "REMAINING", 52, 189, 106,
+                 &lv_font_montserrat_14, COLOR_MUTED);
+  lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
   const int x = 222;
   const int w = 202;
@@ -1059,18 +1070,18 @@ void build_glass(lv_obj_t *overlay) {
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *serving_size_badge = lv_obj_create(overlay);
-  lv_obj_set_pos(serving_size_badge, 46, 224);
-  lv_obj_set_size(serving_size_badge, 126, 32);
+  lv_obj_set_pos(serving_size_badge, 53, 204);
+  lv_obj_set_size(serving_size_badge, 112, 30);
   lv_obj_remove_flag(serving_size_badge, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(serving_size_badge, lv_color_hex(0x111820), 0);
   lv_obj_set_style_bg_opa(serving_size_badge, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(serving_size_badge, lv_color_hex(0x4c5961), 0);
   lv_obj_set_style_border_width(serving_size_badge, 1, 0);
-  lv_obj_set_style_radius(serving_size_badge, 16, 0);
+  lv_obj_set_style_radius(serving_size_badge, 15, 0);
   lv_obj_set_style_pad_all(serving_size_badge, 0, 0);
 
   home_serving_size =
-      make_label(serving_size_badge, "-- OZ EACH", 0, 7, 126,
+      make_label(serving_size_badge, "-- OZ EACH", 0, 6, 112,
                  &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
 
