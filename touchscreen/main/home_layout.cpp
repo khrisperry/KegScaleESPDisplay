@@ -45,6 +45,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_VERTICAL_BALANCE_V15
 // TOUCH_KEG_CONTINUOUS_FILL_V16
 // TOUCH_KEG_EDGE_ALIGNMENT_V17
+// TOUCH_NOTICE_CLEANUP_V18
 
 enum class ServingVessel {
   Generic,
@@ -1367,6 +1368,7 @@ void rebuild_home_for_selected_view() {
 }
 
 void set_home_view(HomeView view) {
+  touchscreen_ui_clear_notice_locked();
   home_view = view;
   save_preference(home_view);
   rebuild_home_for_selected_view();
