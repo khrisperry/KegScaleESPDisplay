@@ -32,7 +32,7 @@ If confirmation is interrupted during first pairing, remove the touchscreen pair
 
 ## Screens
 
-- **Home:** Dashboard and Glass views with beverage name, servings, fill gauge, gallons, serving size, weight and connection/stability status. Glass vessels follow 12/16/20/32/64 oz serving sizes. Disconnected readings are explicitly marked with their age.
+- **Home:** Glass, Dashboard, Minimal, Gauge, Keg Level and Service views use the scale's current servings, remaining percentage, gallons, weights, keg capacity, serving size, firmware and calibration state. Glass vessels follow 12/16/20/32/64 oz serving sizes. The Touch UI does not invent unavailable sensor data such as temperature. The selected Home view is remembered across restarts, and disconnected readings are explicitly marked with their age.
 - **Keg:** Name, capacity, empty keg weight, beverage density and serving size. Save is confirmed only after the scale saves it. Stale edits are rejected; use Reload from scale to reconcile changes from the web page or Home Assistant.
 - **Replace keg:** Leads to the keg form with replacement instructions. Do not tare with a keg on the scale.
 - **Scale:** Start calibration, remove all objects, save empty tare, apply a known weight, then calibrate. Each step advances only after the scale confirms it. The Scale returns a session ID when calibration starts; the Touch display carries that ID through tare/calibrate/cancel. The session expires after two minutes of inactivity, blocks competing calibration writers, is canceled on disconnect, and must be canceled before switching to the other saved Scale.
