@@ -12,6 +12,11 @@ of those prefixes. Set `NO_COLOR=1` to disable ANSI color while keeping the
 prefixes. The output-contract guard scans Scale/e-paper/Touch test entry points
 so new tests do not silently return to mixed formats.
 
+For a single command that runs Scale, e-paper, Touch, Playwright UI, signed
+release validation, and OTA signing regressions together, use
+`python tools\\run_all_tests.py` from the sibling `KegScaleFirmware`
+repository.
+
 The Scale repository is the canonical owner of `controller_link`; Touch keeps
 a byte-for-byte vendored mirror so standalone/offline firmware builds remain
 self-contained. The full runner requires the companion Scale checkout and checks
