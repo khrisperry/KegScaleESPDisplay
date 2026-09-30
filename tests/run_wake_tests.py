@@ -5,7 +5,9 @@ import re
 import subprocess
 import tempfile
 from run_ota_tests import functions
+from test_output import install_excepthook, run_command
 root=Path(__file__).resolve().parents[1]
+install_excepthook("e-paper wake regression suite")
 main=root/'main/main.c'
 ui=root/'components/display_ui/display_ui.c'
 with tempfile.TemporaryDirectory(prefix='keg-wake-') as directory:
@@ -24,7 +26,9 @@ with tempfile.TemporaryDirectory(prefix='keg-wake-') as directory:
       'render_if_needed','clear_touch_acknowledgement_if_needed','handle_unpair_request'
     ])+'\n'+functions(ui,['present_scale']))
     binary=tmp/'wake-test'
-    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-I'+str(tmp),
+    run_command('e-paper wake regression compile', [
+      'cc','-std=c11','-Wall','-Wextra','-Werror','-I'+str(tmp),
       '-I'+str(root/'tests/ota_host'),'-I'+str(root/'components/ble_client/include'),
-      '-I'+str(root/'main'),str(root/'tests/wake_state_test.c'),'-lm','-o',str(binary)],check=True)
-    subprocess.run([str(binary)],check=True)
+      '-I'+str(root/'main'),str(root/'tests/wake_state_test.c'),'-lm','-o',str(binary)
+    ])
+    run_command('e-paper wake regression', [str(binary)])
