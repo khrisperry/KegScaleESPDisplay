@@ -42,6 +42,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_ICON_PASS_V12
 // TOUCH_HARDWARE_TWEAKS_V13
 // TOUCH_FULL_WIDTH_LAYOUT_V14
+// TOUCH_VERTICAL_BALANCE_V15
 
 enum class ServingVessel {
   Generic,
@@ -103,11 +104,6 @@ static lv_point_precise_t growler_outline_points[] = {
     {82, 0},   {128, 0}, {128, 40}, {166, 64}, {184, 96},
     {184, 282}, {18, 282}, {18, 96}, {36, 64},  {82, 40},
     {82, 0}};
-
-static lv_point_precise_t keg_outline_points[] = {
-    {22, 0},   {138, 0},  {150, 12}, {158, 36}, {158, 216},
-    {150, 240}, {138, 252}, {22, 252}, {10, 240}, {2, 216},
-    {2, 36},   {10, 12},  {22, 0}};
 
 State latest_state{};
 int active_page = 0;
@@ -834,7 +830,7 @@ void build_dashboard(lv_obj_t *overlay) {
   const int right = 234;
   const int width = 210;
   const int height = 84;
-  const int rows[] = {50, 146, 242};
+  const int rows[] = {68, 164, 260};
 
   const ServingVessel vessel = vessel_for_serving(latest_state.serving);
   lv_obj_t *card =
@@ -875,34 +871,36 @@ void build_minimal(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
+  // Minimal intentionally spends more of the screen on the three pieces of
+  // information a person reads from across the room.
   home_servings =
-      make_label(overlay, "--", 44, 50, 360, &lv_font_montserrat_48);
+      make_label(overlay, "--", 30, 64, 396, &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
 
   home_serving_label =
-      make_label(overlay, "SERVINGS LEFT", 44, 106, 360,
-                 &lv_font_montserrat_20, COLOR_TEXT);
+      make_label(overlay, "SERVINGS LEFT", 30, 122, 396,
+                 &lv_font_montserrat_28, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
   home_serving_size =
-      make_label(overlay, "--", 44, 140, 360,
-                 &lv_font_montserrat_14, COLOR_MUTED);
+      make_label(overlay, "--", 30, 162, 396,
+                 &lv_font_montserrat_20, COLOR_MUTED);
   lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *remaining =
-      metric_card(overlay, 12, 180, 432, 72, "REMAINING");
+      metric_card(overlay, 12, 205, 432, 74, "REMAINING");
   home_percent =
-      make_label(remaining, "--", 332, 10, 84, &lv_font_montserrat_24);
+      make_label(remaining, "--", 332, 11, 84, &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_RIGHT, 0);
-  home_progress = remaining_bar(remaining, 14, 47, 402, 12);
+  home_progress = remaining_bar(remaining, 14, 49, 402, 12);
 
   lv_obj_t *card =
-      metric_card(overlay, 12, 270, 210, 72, "GALLONS LEFT",
+      metric_card(overlay, 12, 294, 210, 72, "GALLONS LEFT",
                   COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 35, 182, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, 234, 270, 210, 72, "BEER WEIGHT",
+  card = metric_card(overlay, 234, 294, 210, 72, "BEER WEIGHT",
                      0x91a9b6, MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 35, 182, &lv_font_montserrat_20);
@@ -913,7 +911,7 @@ void build_gauge(lv_obj_t *overlay) {
   build_home_header(overlay);
 
   home_arc = lv_arc_create(overlay);
-  lv_obj_set_pos(home_arc, 8, 58);
+  lv_obj_set_pos(home_arc, 8, 72);
   lv_obj_set_size(home_arc, 216, 216);
   lv_arc_set_rotation(home_arc, 270);
   lv_arc_set_bg_angles(home_arc, 0, 360);
@@ -926,18 +924,18 @@ void build_gauge(lv_obj_t *overlay) {
   lv_obj_set_style_arc_color(home_arc, lv_color_hex(COLOR_AMBER),
                              LV_PART_INDICATOR);
 
-  home_percent = make_label(overlay, "--", 40, 105, 152,
+  home_percent = make_label(overlay, "--", 40, 119, 152,
                             &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *remaining =
-      make_label(overlay, "REMAINING", 48, 162, 136,
+      make_label(overlay, "REMAINING", 48, 176, 136,
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
-  home_servings = make_label(overlay, "--", 66, 190, 100,
+  home_servings = make_label(overlay, "--", 66, 204, 100,
                              &lv_font_montserrat_24);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
   home_serving_label =
-      make_label(overlay, "SERVINGS LEFT", 42, 220, 148,
+      make_label(overlay, "SERVINGS LEFT", 42, 234, 148,
                  &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -946,22 +944,22 @@ void build_gauge(lv_obj_t *overlay) {
   const int card_w = 212;
   const int card_h = 62;
   lv_obj_t *card =
-      metric_card(overlay, card_x, 54, card_w, card_h, "GALLONS LEFT",
+      metric_card(overlay, card_x, 68, card_w, card_h, "GALLONS LEFT",
                   COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 31, 184, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, card_x, 126, card_w, card_h, "BEER WEIGHT",
+  card = metric_card(overlay, card_x, 140, card_w, card_h, "BEER WEIGHT",
                      0x91a9b6, MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 31, 184, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, card_x, 198, card_w, card_h, "SERVING SIZE",
+  card = metric_card(overlay, card_x, 212, card_w, card_h, "SERVING SIZE",
                      COLOR_HEADER_ACCENT, MetricGlyph::ServingSize, vessel);
   home_serving_size =
       make_label(card, "--", 14, 31, 184, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, card_x, 270, card_w, card_h, "KEG SIZE",
+  card = metric_card(overlay, card_x, 284, card_w, card_h, "KEG SIZE",
                      0x91a9b6, MetricGlyph::Keg);
   home_capacity =
       make_label(card, "--", 14, 31, 184, &lv_font_montserrat_20);
@@ -972,7 +970,7 @@ void build_keg_level(lv_obj_t *overlay) {
   build_home_header(overlay);
 
   lv_obj_t *keg_body = lv_obj_create(overlay);
-  lv_obj_set_pos(keg_body, 20, 72);
+  lv_obj_set_pos(keg_body, 20, 84);
   lv_obj_set_size(keg_body, 188, 266);
   lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_CLICKABLE);
@@ -983,27 +981,30 @@ void build_keg_level(lv_obj_t *overlay) {
   lv_obj_set_style_radius(keg_body, 28, 0);
   lv_obj_set_style_pad_all(keg_body, 0, 0);
 
-  outline_shape(overlay, 61, 58, 106, 16, COLOR_GLASS, 3, 8);
-  outline_shape(overlay, 97, 49, 34, 10, COLOR_GLASS, 3, 5);
+  outline_shape(overlay, 61, 70, 106, 16, COLOR_GLASS, 3, 8);
+  outline_shape(overlay, 97, 61, 34, 10, COLOR_GLASS, 3, 5);
 
-  // Fill almost the full inner keg width. Only the very bottom/top bands taper
-  // slightly to follow the rounded corners, eliminating the large side gaps
-  // visible on hardware.
+  // Fill to the inside wall of the barrel. Only the last two bands taper to
+  // respect the rounded base; the final band is taller so the liquid reaches
+  // the bottom chime instead of floating above it.
   for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-    int x = 3;
-    int width = 174;
+    int x = 1;
+    int width = 178;
+    int height = 11;
     if (i == 0 || i == GLASS_BAND_COUNT - 1) {
-      x = 14;
-      width = 152;
+      x = 12;
+      width = 156;
     } else if (i == 1 || i == GLASS_BAND_COUNT - 2) {
-      x = 8;
-      width = 164;
+      x = 6;
+      width = 168;
     }
+    if (i == GLASS_BAND_COUNT - 1)
+      height = 20;
 
     lv_obj_t *band = lv_obj_create(keg_body);
     glass_bands[i] = band;
-    lv_obj_set_pos(band, x, 9 + i * 10);
-    lv_obj_set_size(band, width, 11);
+    lv_obj_set_pos(band, x, 10 + i * 10);
+    lv_obj_set_size(band, width, height);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
@@ -1012,17 +1013,19 @@ void build_keg_level(lv_obj_t *overlay) {
     lv_obj_set_style_pad_all(band, 0, 0);
   }
 
-  shape(keg_body, 10, 16, 160, 7, 0x78909c, 3);
-  shape(keg_body, 8, 68, 164, 5, 0x5f7986, 2);
-  shape(keg_body, 8, 188, 164, 5, 0x5f7986, 2);
-  shape(keg_body, 10, 239, 160, 7, 0x78909c, 3);
+  // Thinner ribs keep the keg structure visible without chopping the liquid
+  // into heavy gray bands.
+  shape(keg_body, 10, 16, 160, 4, 0x78909c, 2);
+  shape(keg_body, 8, 68, 164, 3, 0x5f7986, 2);
+  shape(keg_body, 8, 188, 164, 3, 0x5f7986, 2);
+  shape(keg_body, 10, 239, 160, 4, 0x78909c, 2);
 
   home_percent =
-      make_label(overlay, "--", 54, 153, 120, &lv_font_montserrat_28,
+      make_label(overlay, "--", 54, 165, 120, &lv_font_montserrat_28,
                  COLOR_TEXT);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *remaining =
-      make_label(overlay, "REMAINING", 54, 188, 120,
+      make_label(overlay, "REMAINING", 54, 200, 120,
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -1031,7 +1034,7 @@ void build_keg_level(lv_obj_t *overlay) {
   const int w = 224;
   const int h = 62;
   lv_obj_t *card =
-      metric_card(overlay, x, 54, w, h, "", COLOR_AMBER,
+      metric_card(overlay, x, 66, w, h, "", COLOR_AMBER,
                   MetricGlyph::Serving, vessel);
   home_serving_label =
       make_label(card, "SERVINGS LEFT", 40, 8, w - 52,
@@ -1039,17 +1042,17 @@ void build_keg_level(lv_obj_t *overlay) {
   home_servings =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 126, w, h, "GALLONS LEFT",
+  card = metric_card(overlay, x, 138, w, h, "GALLONS LEFT",
                      COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 198, w, h, "BEER WEIGHT", 0x91a9b6,
+  card = metric_card(overlay, x, 210, w, h, "BEER WEIGHT", 0x91a9b6,
                      MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 270, w, h, "SERVING SIZE",
+  card = metric_card(overlay, x, 282, w, h, "SERVING SIZE",
                      COLOR_HEADER_ACCENT, MetricGlyph::ServingSize, vessel);
   home_serving_size =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
@@ -1102,7 +1105,7 @@ void build_service(lv_obj_t *overlay) {
 
   for (int i = 0; i < 11; ++i)
     service_values[i] =
-        service_row(overlay, 40 + i * 29, titles[i], glyphs[i], vessel,
+        service_row(overlay, 52 + i * 29, titles[i], glyphs[i], vessel,
                     colors[i]);
 }
 
@@ -1189,7 +1192,7 @@ void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
   if (vessel == ServingVessel::Can || vessel == ServingVessel::Crowler) {
     lv_obj_t *outline = lv_obj_create(overlay);
     const bool crowler = vessel == ServingVessel::Crowler;
-    lv_obj_set_pos(outline, crowler ? 31 : 39, 58);
+    lv_obj_set_pos(outline, crowler ? 31 : 39, 66);
     lv_obj_set_size(outline, crowler ? 156 : 140, 280);
     lv_obj_remove_flag(outline, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(outline, LV_OPA_TRANSP, 0);
@@ -1198,7 +1201,7 @@ void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
     lv_obj_set_style_radius(outline, crowler ? 11 : 18, 0);
 
     lv_obj_t *seam = lv_obj_create(overlay);
-    lv_obj_set_pos(seam, crowler ? 43 : 51, 71);
+    lv_obj_set_pos(seam, crowler ? 43 : 51, 79);
     lv_obj_set_size(seam, crowler ? 132 : 116, 2);
     lv_obj_set_style_bg_color(seam, lv_color_hex(COLOR_GLASS), 0);
     lv_obj_set_style_border_width(seam, 0, 0);
@@ -1211,17 +1214,17 @@ void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
     lv_line_set_points(outline, growler_outline_points,
                        sizeof(growler_outline_points) /
                            sizeof(growler_outline_points[0]));
-    lv_obj_set_pos(outline, 8, 50);
+    lv_obj_set_pos(outline, 8, 58);
   } else if (vessel == ServingVessel::SoloCup) {
     lv_line_set_points(outline, solo_outline_points,
                        sizeof(solo_outline_points) /
                            sizeof(solo_outline_points[0]));
-    lv_obj_set_pos(outline, 22, 58);
+    lv_obj_set_pos(outline, 22, 66);
   } else {
     lv_line_set_points(outline, pint_outline_points,
                        sizeof(pint_outline_points) /
                            sizeof(pint_outline_points[0]));
-    lv_obj_set_pos(outline, 22, 58);
+    lv_obj_set_pos(outline, 22, 66);
   }
 
   lv_obj_set_style_line_color(outline, lv_color_hex(COLOR_GLASS), 0);
@@ -1230,7 +1233,7 @@ void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
 
   if (vessel == ServingVessel::SoloCup) {
     lv_obj_t *rim = lv_obj_create(overlay);
-    lv_obj_set_pos(rim, 39, 68);
+    lv_obj_set_pos(rim, 39, 76);
     lv_obj_set_size(rim, 140, 10);
     lv_obj_remove_flag(rim, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(rim, LV_OPA_TRANSP, 0);
@@ -1239,7 +1242,7 @@ void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
     lv_obj_set_style_radius(rim, 8, 0);
 
     lv_obj_t *base = lv_obj_create(overlay);
-    lv_obj_set_pos(base, 72, 322);
+    lv_obj_set_pos(base, 72, 330);
     lv_obj_set_size(base, 74, 3);
     lv_obj_remove_flag(base, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(base, lv_color_hex(COLOR_GLASS), 0);
@@ -1256,6 +1259,7 @@ void build_glass(lv_obj_t *overlay) {
   for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
     int x = 0, y = 0, width = 0, height = 0;
     vessel_band_geometry(rendered_vessel, i, &x, &y, &width, &height);
+    y += 8;
 
     lv_obj_t *band = lv_obj_create(overlay);
     glass_bands[i] = band;
@@ -1270,11 +1274,11 @@ void build_glass(lv_obj_t *overlay) {
 
   build_vessel_outline(overlay, rendered_vessel);
 
-  home_servings = make_label(overlay, "--", 34, 112, 150,
+  home_servings = make_label(overlay, "--", 34, 120, 150,
                              &lv_font_montserrat_48);
   lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
 
-  home_serving_label = make_label(overlay, "SERVINGS LEFT", 25, 166, 168,
+  home_serving_label = make_label(overlay, "SERVINGS LEFT", 25, 174, 168,
                                   &lv_font_montserrat_16, COLOR_TEXT);
   lv_label_set_long_mode(home_serving_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_height(home_serving_label, 48);
@@ -1282,7 +1286,7 @@ void build_glass(lv_obj_t *overlay) {
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *serving_size_badge = lv_obj_create(overlay);
-  lv_obj_set_pos(serving_size_badge, 53, 204);
+  lv_obj_set_pos(serving_size_badge, 53, 212);
   lv_obj_set_size(serving_size_badge, 112, 30);
   lv_obj_remove_flag(serving_size_badge, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(serving_size_badge, lv_color_hex(0x111820), 0);
@@ -1298,16 +1302,16 @@ void build_glass(lv_obj_t *overlay) {
   lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t *card =
-      glass_metric_card(overlay, 64, "REMAINING");
+      glass_metric_card(overlay, 72, "REMAINING");
   home_percent = make_label(card, "--", 14, 34, 202,
                             &lv_font_montserrat_24);
 
-  card = glass_metric_card(overlay, 162, "GALLONS LEFT",
+  card = glass_metric_card(overlay, 170, "GALLONS LEFT",
                            COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons = make_label(card, "--", 14, 36, 202,
                             &lv_font_montserrat_20);
 
-  card = glass_metric_card(overlay, 260, "BEER WEIGHT", 0x91a9b6,
+  card = glass_metric_card(overlay, 268, "BEER WEIGHT", 0x91a9b6,
                            MetricGlyph::BeerWeight);
   home_beer_weight = make_label(card, "--", 14, 36, 202,
                                 &lv_font_montserrat_20);
