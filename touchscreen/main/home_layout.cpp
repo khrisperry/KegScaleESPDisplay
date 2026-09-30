@@ -43,6 +43,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_HARDWARE_TWEAKS_V13
 // TOUCH_FULL_WIDTH_LAYOUT_V14
 // TOUCH_VERTICAL_BALANCE_V15
+// TOUCH_KEG_CONTINUOUS_FILL_V16
 
 enum class ServingVessel {
   Generic,
@@ -128,6 +129,9 @@ lv_obj_t *home_progress = nullptr;
 lv_obj_t *home_capacity = nullptr;
 lv_obj_t *service_values[11] = {};
 lv_obj_t *glass_bands[GLASS_BAND_COUNT] = {};
+lv_obj_t *keg_fill = nullptr;
+constexpr int KEG_INNER_WIDTH = 180;
+constexpr int KEG_INNER_HEIGHT = 258;
 ServingVessel rendered_vessel = ServingVessel::Generic;
 lv_obj_t *view_button = nullptr;
 lv_obj_t *view_button_label = nullptr;
@@ -160,6 +164,7 @@ void reset_home_child_refs() {
   for (auto &value : service_values)
     value = nullptr;
   rendered_vessel = ServingVessel::Generic;
+  keg_fill = nullptr;
   for (auto &band : glass_bands)
     band = nullptr;
 }
@@ -984,37 +989,35 @@ void build_keg_level(lv_obj_t *overlay) {
   outline_shape(overlay, 61, 70, 106, 16, COLOR_GLASS, 3, 8);
   outline_shape(overlay, 97, 61, 34, 10, COLOR_GLASS, 3, 5);
 
-  // Fill to the inside wall of the barrel. Only the last two bands taper to
-  // respect the rounded base; the final band is taller so the liquid reaches
-  // the bottom chime instead of floating above it.
-  for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-    int x = 1;
-    int width = 178;
-    int height = 11;
-    if (i == 0 || i == GLASS_BAND_COUNT - 1) {
-      x = 12;
-      width = 156;
-    } else if (i == 1 || i == GLASS_BAND_COUNT - 2) {
-      x = 6;
-      width = 168;
-    }
-    if (i == GLASS_BAND_COUNT - 1)
-      height = 20;
+  // Use a rounded, clipped inner barrel and ONE continuous liquid object.
+  // This removes the segmented rectangular bands that never matched the keg
+  // walls on hardware. The parent clips the liquid to the same rounded barrel
+  // geometry, so the fill reaches the inner wall and curved base cleanly.
+  lv_obj_t *keg_inner = lv_obj_create(keg_body);
+  lv_obj_set_pos(keg_inner, 4, 4);
+  lv_obj_set_size(keg_inner, KEG_INNER_WIDTH, KEG_INNER_HEIGHT);
+  lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_opa(keg_inner, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(keg_inner, 0, 0);
+  lv_obj_set_style_radius(keg_inner, 24, 0);
+  lv_obj_set_style_clip_corner(keg_inner, true, 0);
+  lv_obj_set_style_pad_all(keg_inner, 0, 0);
 
-    lv_obj_t *band = lv_obj_create(keg_body);
-    glass_bands[i] = band;
-    lv_obj_set_pos(band, x, 10 + i * 10);
-    lv_obj_set_size(band, width, height);
-    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
-    lv_obj_set_style_border_width(band, 0, 0);
-    lv_obj_set_style_radius(band, 1, 0);
-    lv_obj_set_style_pad_all(band, 0, 0);
-  }
+  keg_fill = lv_obj_create(keg_inner);
+  lv_obj_set_pos(keg_fill, 0, KEG_INNER_HEIGHT);
+  lv_obj_set_size(keg_fill, KEG_INNER_WIDTH, 1);
+  lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(keg_fill, lv_color_hex(COLOR_AMBER), 0);
+  lv_obj_set_style_bg_opa(keg_fill, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(keg_fill, 0, 0);
+  lv_obj_set_style_radius(keg_fill, 0, 0);
+  lv_obj_set_style_pad_all(keg_fill, 0, 0);
+  lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
 
-  // Thinner ribs keep the keg structure visible without chopping the liquid
-  // into heavy gray bands.
+  // Barrel chimes/ribs sit above the liquid. Keep them thin enough that the
+  // liquid still reads as one continuous volume.
   shape(keg_body, 10, 16, 160, 4, 0x78909c, 2);
   shape(keg_body, 8, 68, 164, 3, 0x5f7986, 2);
   shape(keg_body, 8, 188, 164, 3, 0x5f7986, 2);
@@ -1603,6 +1606,8 @@ void update_home_values() {
       if (band)
         lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
     }
+    if (keg_fill)
+      lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
     return;
   }
 
@@ -1659,7 +1664,7 @@ void update_home_values() {
                               LV_PART_INDICATOR);
   }
 
-  if (home_view == HomeView::Glass || home_view == HomeView::KegLevel) {
+  if (home_view == HomeView::Glass) {
     const int visible_bands =
         percent == 0 ? 0 : (percent * GLASS_BAND_COUNT + 99) / 100;
     for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
@@ -1670,6 +1675,19 @@ void update_home_values() {
         lv_obj_remove_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
       else
         lv_obj_add_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  if (home_view == HomeView::KegLevel && keg_fill) {
+    lv_obj_set_style_bg_color(keg_fill, lv_color_hex(level_color), 0);
+    if (percent <= 0) {
+      lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      const int fill_height =
+          std::max(1, (percent * KEG_INNER_HEIGHT + 99) / 100);
+      lv_obj_set_pos(keg_fill, 0, KEG_INNER_HEIGHT - fill_height);
+      lv_obj_set_size(keg_fill, KEG_INNER_WIDTH, fill_height);
+      lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
     }
   }
 }
