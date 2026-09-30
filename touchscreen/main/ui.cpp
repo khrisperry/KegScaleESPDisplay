@@ -1690,8 +1690,7 @@ void ui_state(const State &s) {
           connection_badge_text, current.online ? "Connected" : "Offline");
     lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x173247), 0);
     lv_obj_set_style_border_color(
-        connection_badge,
-        lv_color_hex(current.online ? 0x42d3a2 : 0xc76a6a), 0);
+        connection_badge, lv_color_hex(0x55b7e8), 0);
     if (connection_badge_dot)
       lv_obj_set_style_bg_color(
           connection_badge_dot,
