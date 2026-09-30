@@ -19,7 +19,6 @@ run_test "touch calibration" "$test_binary"
 
 run_test "e-paper OTA regression suite" python3 "$root/tests/run_ota_tests.py"
 run_test "e-paper wake regression suite" python3 "$root/tests/run_wake_tests.py"
-run_test "Touch pairing overlay regression" python3 "$root/touchscreen/tests/run_pairing_overlay_test.py"
 
 # The Touch runner sources the same output helper. Run it directly so individual
 # PASS lines remain PASS even if a later Touch test fails.
