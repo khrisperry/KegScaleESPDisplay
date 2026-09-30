@@ -46,6 +46,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_KEG_CONTINUOUS_FILL_V16
 // TOUCH_KEG_EDGE_ALIGNMENT_V17
 // TOUCH_NOTICE_CLEANUP_V18
+// TOUCH_HOME_FULL_HEIGHT_V19
 
 enum class ServingVessel {
   Generic,
@@ -1478,7 +1479,7 @@ void build_home_overlay() {
 
   home_overlay = lv_obj_create(content);
   lv_obj_set_pos(home_overlay, -6, -6);
-  lv_obj_set_size(home_overlay, 456, 394);
+  lv_obj_set_size(home_overlay, 456, 416);
   lv_obj_add_flag(home_overlay, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(home_overlay, LV_OBJ_FLAG_FLOATING);
   lv_obj_remove_flag(home_overlay, LV_OBJ_FLAG_SCROLLABLE);
