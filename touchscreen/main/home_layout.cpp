@@ -39,6 +39,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_VISUAL_FIDELITY_V9
 // TOUCH_CLEAN_LAYOUT_V10
 // TOUCH_REFINED_SPACING_V11
+// TOUCH_ICON_PASS_V12
 
 enum class ServingVessel {
   Generic,
@@ -604,9 +605,178 @@ lv_obj_t *outline_shape(lv_obj_t *parent, int x, int y, int width, int height,
   return o;
 }
 
+
+enum class MetricGlyph : uint8_t {
+  None,
+  Serving,
+  Gallons,
+  BeerWeight,
+  Keg,
+  ServingSize,
+  ScaleWeight,
+  EmptyKeg,
+  Firmware,
+  Display,
+  Calibration,
+};
+
+lv_obj_t *icon_root(lv_obj_t *parent, int x, int y, int size = 20) {
+  lv_obj_t *root = lv_obj_create(parent);
+  lv_obj_set_pos(root, x, y);
+  lv_obj_set_size(root, size, size);
+  lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(root, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(root, 0, 0);
+  lv_obj_set_style_pad_all(root, 0, 0);
+  return root;
+}
+
+lv_obj_t *icon_line(lv_obj_t *parent, const lv_point_precise_t *points,
+                    uint32_t count, uint32_t color, int width = 2) {
+  lv_obj_t *line = lv_line_create(parent);
+  lv_line_set_points(line, points, count);
+  lv_obj_set_style_line_color(line, lv_color_hex(color), 0);
+  lv_obj_set_style_line_width(line, width, 0);
+  lv_obj_set_style_line_rounded(line, true, 0);
+  return line;
+}
+
+void draw_vessel_icon(lv_obj_t *root, ServingVessel vessel, uint32_t color,
+                      bool measurement_marks = false) {
+  // These outlines intentionally use only 2 px strokes and a 20 px canvas so
+  // the hardware rendering stays close to the approved icon sheet.
+  static lv_point_precise_t pint[] = {
+      {4, 3}, {16, 3}, {15, 18}, {5, 18}, {4, 3}};
+  static lv_point_precise_t cup[] = {
+      {3, 4}, {17, 4}, {15, 18}, {5, 18}, {3, 4}};
+  static lv_point_precise_t growler[] = {
+      {8, 2}, {12, 2}, {12, 5}, {15, 8}, {16, 11},
+      {16, 18}, {4, 18}, {4, 11}, {5, 8}, {8, 5}, {8, 2}};
+
+  switch (vessel) {
+  case ServingVessel::Can:
+    outline_shape(root, 5, 2, 10, 17, color, 2, 3);
+    shape(root, 6, 5, 8, 2, color, 1);
+    break;
+  case ServingVessel::Crowler:
+    outline_shape(root, 4, 2, 12, 17, color, 2, 3);
+    shape(root, 5, 5, 10, 2, color, 1);
+    break;
+  case ServingVessel::Growler:
+    icon_line(root, growler, sizeof(growler) / sizeof(growler[0]), color);
+    break;
+  case ServingVessel::SoloCup:
+    icon_line(root, cup, sizeof(cup) / sizeof(cup[0]), color);
+    shape(root, 5, 6, 10, 2, color, 1);
+    break;
+  case ServingVessel::Generic:
+  case ServingVessel::Pint:
+  default:
+    icon_line(root, pint, sizeof(pint) / sizeof(pint[0]), color);
+    shape(root, 5, 6, 10, 2, color, 1);
+    break;
+  }
+
+  if (measurement_marks) {
+    shape(root, 11, 9, 4, 2, color, 1);
+    shape(root, 11, 13, 3, 2, color, 1);
+  }
+}
+
+lv_obj_t *draw_metric_icon(lv_obj_t *parent, MetricGlyph glyph, int x, int y,
+                           uint32_t color = COLOR_HEADER_ACCENT,
+                           ServingVessel vessel = ServingVessel::Generic) {
+  if (glyph == MetricGlyph::None)
+    return nullptr;
+
+  lv_obj_t *root = icon_root(parent, x, y, 20);
+
+  static lv_point_precise_t droplet[] = {
+      {10, 1}, {15, 8}, {18, 13}, {18, 16}, {16, 19},
+      {13, 21}, {7, 21}, {4, 19}, {2, 16}, {2, 13},
+      {5, 8}, {10, 1}};
+  static lv_point_precise_t scale_pan[] = {
+      {3, 7}, {17, 7}, {18, 11}, {17, 14}, {3, 14}, {2, 11}, {3, 7}};
+  static lv_point_precise_t target_h[] = {{2, 10}, {18, 10}};
+  static lv_point_precise_t target_v[] = {{10, 2}, {10, 18}};
+
+  switch (glyph) {
+  case MetricGlyph::Serving:
+    draw_vessel_icon(root, vessel, color, false);
+    break;
+
+  case MetricGlyph::Gallons:
+    icon_line(root, droplet, sizeof(droplet) / sizeof(droplet[0]), color);
+    break;
+
+  case MetricGlyph::BeerWeight:
+    icon_line(root, scale_pan, sizeof(scale_pan) / sizeof(scale_pan[0]), color);
+    shape(root, 4, 15, 3, 3, color, 1);
+    shape(root, 13, 15, 3, 3, color, 1);
+    break;
+
+  case MetricGlyph::Keg:
+    outline_shape(root, 4, 2, 12, 17, color, 2, 4);
+    shape(root, 3, 6, 14, 2, color, 1);
+    shape(root, 3, 12, 14, 2, color, 1);
+    break;
+
+  case MetricGlyph::ServingSize:
+    draw_vessel_icon(root, vessel, color, true);
+    break;
+
+  case MetricGlyph::ScaleWeight:
+    outline_shape(root, 7, 2, 7, 10, color, 2, 2);
+    shape(root, 6, 5, 9, 2, color, 1);
+    shape(root, 2, 14, 16, 3, color, 1);
+    shape(root, 3, 17, 3, 2, color, 1);
+    shape(root, 14, 17, 3, 2, color, 1);
+    break;
+
+  case MetricGlyph::EmptyKeg:
+    outline_shape(root, 4, 2, 12, 17, color, 2, 4);
+    shape(root, 3, 6, 14, 2, color, 1);
+    shape(root, 3, 12, 14, 2, color, 1);
+    break;
+
+  case MetricGlyph::Firmware:
+    outline_shape(root, 5, 5, 10, 10, color, 2, 2);
+    for (int i = 0; i < 3; ++i) {
+      const int p = 6 + i * 4;
+      shape(root, p, 1, 2, 4, color, 1);
+      shape(root, p, 15, 2, 4, color, 1);
+      shape(root, 1, p, 4, 2, color, 1);
+      shape(root, 15, p, 4, 2, color, 1);
+    }
+    break;
+
+  case MetricGlyph::Display:
+    outline_shape(root, 2, 3, 16, 12, color, 2, 2);
+    shape(root, 6, 17, 8, 2, color, 1);
+    shape(root, 8, 15, 4, 3, color, 1);
+    break;
+
+  case MetricGlyph::Calibration:
+    outline_shape(root, 4, 4, 12, 12, color, 2, 10);
+    outline_shape(root, 7, 7, 6, 6, color, 1, 10);
+    icon_line(root, target_h, sizeof(target_h) / sizeof(target_h[0]), color);
+    icon_line(root, target_v, sizeof(target_v) / sizeof(target_v[0]), color);
+    break;
+
+  case MetricGlyph::None:
+  default:
+    break;
+  }
+
+  return root;
+}
+
 lv_obj_t *metric_card(lv_obj_t *overlay, int x, int y, int width,
                       int height, const char *title,
-                      uint32_t accent = COLOR_HEADER_ACCENT) {
+                      uint32_t accent = COLOR_HEADER_ACCENT,
+                      MetricGlyph glyph = MetricGlyph::None,
+                      ServingVessel vessel = ServingVessel::Generic) {
   lv_obj_t *card = lv_obj_create(overlay);
   lv_obj_set_pos(card, x, y);
   lv_obj_set_size(card, width, height);
@@ -618,11 +788,12 @@ lv_obj_t *metric_card(lv_obj_t *overlay, int x, int y, int width,
   lv_obj_set_style_radius(card, 11, 0);
   lv_obj_set_style_pad_all(card, 0, 0);
 
-  // A narrow accent bar gives each metric visual structure without consuming
-  // the text width or requiring an ambiguous icon.
   shape(card, 0, 12, 4, height - 24, accent, 2);
+  const int title_x = glyph == MetricGlyph::None ? 14 : 40;
+  if (glyph != MetricGlyph::None)
+    draw_metric_icon(card, glyph, 14, 7, accent, vessel);
   if (title && title[0])
-    make_label(card, title, 14, 9, width - 26,
+    make_label(card, title, title_x, 9, width - title_x - 12,
                &lv_font_montserrat_14, COLOR_MUTED);
   return card;
 }
@@ -662,10 +833,12 @@ void build_dashboard(lv_obj_t *overlay) {
   const int height = 84;
   const int rows[] = {50, 146, 242};
 
+  const ServingVessel vessel = vessel_for_serving(latest_state.serving);
   lv_obj_t *card =
-      metric_card(overlay, left, rows[0], width, height, "", COLOR_AMBER);
+      metric_card(overlay, left, rows[0], width, height, "", COLOR_AMBER,
+                  MetricGlyph::Serving, vessel);
   home_serving_label =
-      make_label(card, "SERVINGS LEFT", 14, 9, width - 28,
+      make_label(card, "SERVINGS LEFT", 40, 9, width - 52,
                  &lv_font_montserrat_14, COLOR_MUTED);
   home_servings =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_24);
@@ -674,21 +847,23 @@ void build_dashboard(lv_obj_t *overlay) {
   home_percent =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_24);
 
-  card = metric_card(overlay, left, rows[1], width, height, "GALLONS LEFT");
+  card = metric_card(overlay, left, rows[1], width, height, "GALLONS LEFT",
+                     COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_20);
 
   card = metric_card(overlay, right, rows[1], width, height, "BEER WEIGHT",
-                     0x91a9b6);
+                     0x91a9b6, MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_20);
 
   card = metric_card(overlay, left, rows[2], width, height, "KEG SIZE",
-                     0x91a9b6);
+                     0x91a9b6, MetricGlyph::Keg);
   home_capacity =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, right, rows[2], width, height, "SERVING SIZE");
+  card = metric_card(overlay, right, rows[2], width, height, "SERVING SIZE",
+                     COLOR_HEADER_ACCENT, MetricGlyph::ServingSize, vessel);
   home_serving_size =
       make_label(card, "--", 14, 34, width - 28, &lv_font_montserrat_20);
 }
@@ -719,12 +894,13 @@ void build_minimal(lv_obj_t *overlay) {
   home_progress = remaining_bar(remaining, 14, 47, 370, 12);
 
   lv_obj_t *card =
-      metric_card(overlay, 18, 270, 196, 72, "GALLONS LEFT");
+      metric_card(overlay, 18, 270, 196, 72, "GALLONS LEFT",
+                  COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 35, 168, &lv_font_montserrat_20);
 
   card = metric_card(overlay, 222, 270, 196, 72, "BEER WEIGHT",
-                     0x91a9b6);
+                     0x91a9b6, MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 35, 168, &lv_font_montserrat_20);
 }
@@ -762,25 +938,28 @@ void build_gauge(lv_obj_t *overlay) {
                  &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
 
+  const ServingVessel vessel = vessel_for_serving(latest_state.serving);
   const int card_x = 226;
   const int card_w = 198;
   const int card_h = 62;
   lv_obj_t *card =
-      metric_card(overlay, card_x, 58, card_w, card_h, "GALLONS LEFT");
+      metric_card(overlay, card_x, 58, card_w, card_h, "GALLONS LEFT",
+                  COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 31, 170, &lv_font_montserrat_20);
 
   card = metric_card(overlay, card_x, 130, card_w, card_h, "BEER WEIGHT",
-                     0x91a9b6);
+                     0x91a9b6, MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 31, 170, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, card_x, 202, card_w, card_h, "SERVING SIZE");
+  card = metric_card(overlay, card_x, 202, card_w, card_h, "SERVING SIZE",
+                     COLOR_HEADER_ACCENT, MetricGlyph::ServingSize, vessel);
   home_serving_size =
       make_label(card, "--", 14, 31, 170, &lv_font_montserrat_20);
 
   card = metric_card(overlay, card_x, 274, card_w, card_h, "KEG SIZE",
-                     0x91a9b6);
+                     0x91a9b6, MetricGlyph::Keg);
   home_capacity =
       make_label(card, "--", 14, 31, 170, &lv_font_montserrat_20);
 }
@@ -843,31 +1022,39 @@ void build_keg_level(lv_obj_t *overlay) {
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
+  const ServingVessel vessel = vessel_for_serving(latest_state.serving);
   const int x = 222;
   const int w = 202;
   const int h = 62;
   lv_obj_t *card =
-      metric_card(overlay, x, 58, w, h, "", COLOR_AMBER);
+      metric_card(overlay, x, 58, w, h, "", COLOR_AMBER,
+                  MetricGlyph::Serving, vessel);
   home_serving_label =
-      make_label(card, "SERVINGS LEFT", 14, 8, w - 28,
+      make_label(card, "SERVINGS LEFT", 40, 8, w - 52,
                  &lv_font_montserrat_14, COLOR_MUTED);
   home_servings =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 130, w, h, "GALLONS LEFT");
+  card = metric_card(overlay, x, 130, w, h, "GALLONS LEFT",
+                     COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 202, w, h, "BEER WEIGHT", 0x91a9b6);
+  card = metric_card(overlay, x, 202, w, h, "BEER WEIGHT", 0x91a9b6,
+                     MetricGlyph::BeerWeight);
   home_beer_weight =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 
-  card = metric_card(overlay, x, 274, w, h, "SERVING SIZE");
+  card = metric_card(overlay, x, 274, w, h, "SERVING SIZE",
+                     COLOR_HEADER_ACCENT, MetricGlyph::ServingSize, vessel);
   home_serving_size =
       make_label(card, "--", 14, 31, w - 28, &lv_font_montserrat_20);
 }
 
-lv_obj_t *service_row(lv_obj_t *overlay, int y, const char *title) {
+lv_obj_t *service_row(lv_obj_t *overlay, int y, const char *title,
+                      MetricGlyph glyph = MetricGlyph::None,
+                      ServingVessel vessel = ServingVessel::Generic,
+                      uint32_t color = COLOR_HEADER_ACCENT) {
   lv_obj_t *row = lv_obj_create(overlay);
   lv_obj_set_pos(row, 10, y);
   lv_obj_set_size(row, 416, 28);
@@ -879,7 +1066,11 @@ lv_obj_t *service_row(lv_obj_t *overlay, int y, const char *title) {
   lv_obj_set_style_radius(row, 7, 0);
   lv_obj_set_style_pad_all(row, 0, 0);
 
-  make_label(row, title, 10, 5, 232, &lv_font_montserrat_14, COLOR_MUTED);
+  const int text_x = glyph == MetricGlyph::None ? 10 : 36;
+  if (glyph != MetricGlyph::None)
+    draw_metric_icon(row, glyph, 10, 4, color, vessel);
+  make_label(row, title, text_x, 5, 242 - text_x,
+             &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_t *value =
       make_label(row, "--", 246, 5, 158, &lv_font_montserrat_14, COLOR_TEXT);
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
@@ -890,17 +1081,30 @@ void build_service(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
+  const ServingVessel vessel = vessel_for_serving(latest_state.serving);
   const char *titles[11] = {
       "SERVINGS LEFT", "REMAINING", "GALLONS LEFT", "BEER WEIGHT",
       "SCALE WEIGHT", "EMPTY KEG / TARE", "KEG CAPACITY", "SERVING SIZE",
       "SCALE FIRMWARE", "TOUCH FIRMWARE", "CALIBRATION"};
+  const MetricGlyph glyphs[11] = {
+      MetricGlyph::Serving, MetricGlyph::None, MetricGlyph::Gallons,
+      MetricGlyph::BeerWeight, MetricGlyph::ScaleWeight, MetricGlyph::EmptyKeg,
+      MetricGlyph::Keg, MetricGlyph::ServingSize, MetricGlyph::Firmware,
+      MetricGlyph::Display, MetricGlyph::Calibration};
+  const uint32_t colors[11] = {
+      COLOR_AMBER, COLOR_HEADER_ACCENT, COLOR_HEADER_ACCENT, 0x91a9b6,
+      0x91a9b6, 0x91a9b6, 0x91a9b6, COLOR_HEADER_ACCENT,
+      COLOR_HEADER_ACCENT, COLOR_HEADER_ACCENT, COLOR_GREEN};
 
   for (int i = 0; i < 11; ++i)
-    service_values[i] = service_row(overlay, 40 + i * 29, titles[i]);
+    service_values[i] =
+        service_row(overlay, 40 + i * 29, titles[i], glyphs[i], vessel,
+                    colors[i]);
 }
 
 lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title,
-                            uint32_t accent = COLOR_HEADER_ACCENT) {
+                            uint32_t accent = COLOR_HEADER_ACCENT,
+                            MetricGlyph glyph = MetricGlyph::None) {
   lv_obj_t *card = lv_obj_create(overlay);
   lv_obj_set_pos(card, 224, y);
   lv_obj_set_size(card, 202, 82);
@@ -912,7 +1116,11 @@ lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title,
   lv_obj_set_style_radius(card, 12, 0);
   lv_obj_set_style_pad_all(card, 0, 0);
   shape(card, 0, 15, 4, 52, accent, 2);
-  make_label(card, title, 14, 10, 174, &lv_font_montserrat_14, COLOR_MUTED);
+  const int title_x = glyph == MetricGlyph::None ? 14 : 40;
+  if (glyph != MetricGlyph::None)
+    draw_metric_icon(card, glyph, 14, 8, accent);
+  make_label(card, title, title_x, 10, 188 - title_x,
+             &lv_font_montserrat_14, COLOR_MUTED);
   return card;
 }
 
@@ -1090,11 +1298,13 @@ void build_glass(lv_obj_t *overlay) {
   home_percent = make_label(card, "--", 14, 34, 174,
                             &lv_font_montserrat_24);
 
-  card = glass_metric_card(overlay, 162, "GALLONS LEFT");
+  card = glass_metric_card(overlay, 162, "GALLONS LEFT",
+                           COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
   home_gallons = make_label(card, "--", 14, 36, 174,
                             &lv_font_montserrat_20);
 
-  card = glass_metric_card(overlay, 260, "BEER WEIGHT", 0x91a9b6);
+  card = glass_metric_card(overlay, 260, "BEER WEIGHT", 0x91a9b6,
+                           MetricGlyph::BeerWeight);
   home_beer_weight = make_label(card, "--", 14, 36, 174,
                                 &lv_font_montserrat_20);
 }
@@ -1102,6 +1312,7 @@ void build_glass(lv_obj_t *overlay) {
 void update_home_values();
 
 void build_selected_home(lv_obj_t *overlay) {
+  rendered_vessel = vessel_for_serving(latest_state.serving);
   switch (home_view) {
   case HomeView::Glass:
     build_glass(overlay);
@@ -1293,8 +1504,7 @@ void update_home_values() {
   if (home_disconnected || !home_name)
     rebuild_home_for_selected_view();
 
-  if (home_view == HomeView::Glass &&
-      vessel_for_serving(latest_state.serving) != rendered_vessel)
+  if (vessel_for_serving(latest_state.serving) != rendered_vessel)
     rebuild_home_for_selected_view();
 
   char name[48];
