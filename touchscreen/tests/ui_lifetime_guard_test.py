@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Guard the production Touch UI lifetime wiring used by async Setup work."""
 from pathlib import Path
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Touch UI lifetime guard")
 
 root = Path(__file__).resolve().parents[1]
 ui = (root / "main/ui.cpp").read_text(encoding="utf-8")
@@ -33,6 +36,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("FAIL: Touch UI lifetime guard: " + "; ".join(failed))
+    fail_exit("Touch UI lifetime guard: " + "; ".join(failed))
 
-print("PASS: Touch UI lifetime guard")
+pass_line("Touch UI lifetime guard")
