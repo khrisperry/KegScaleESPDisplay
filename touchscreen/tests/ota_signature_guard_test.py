@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Touch OTA signature wiring guard")
 
 root = Path(__file__).resolve().parents[1]
 ota = (root / "main/touchscreen_ota.cpp").read_text()
@@ -22,4 +25,4 @@ assert verify_pos < parse_pos
 assert "signature_result != ESP_OK" in ota
 assert "return signature_result;" in ota
 
-print("PASS: signed Touch OTA manifest verification wiring guard")
+pass_line("signed Touch OTA manifest verification wiring guard")
