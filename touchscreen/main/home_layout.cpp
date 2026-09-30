@@ -44,6 +44,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_FULL_WIDTH_LAYOUT_V14
 // TOUCH_VERTICAL_BALANCE_V15
 // TOUCH_KEG_CONTINUOUS_FILL_V16
+// TOUCH_KEG_EDGE_ALIGNMENT_V17
 
 enum class ServingVessel {
   Generic,
@@ -994,7 +995,10 @@ void build_keg_level(lv_obj_t *overlay) {
   // walls on hardware. The parent clips the liquid to the same rounded barrel
   // geometry, so the fill reaches the inner wall and curved base cleanly.
   lv_obj_t *keg_inner = lv_obj_create(keg_body);
-  lv_obj_set_pos(keg_inner, 4, 4);
+  // Child coordinates are already relative to the keg body's content area,
+  // which starts inside the 4 px outer border. The previous 4 px offset
+  // double-inset the liquid on the left/top and is visible on hardware.
+  lv_obj_set_pos(keg_inner, 0, 0);
   lv_obj_set_size(keg_inner, KEG_INNER_WIDTH, KEG_INNER_HEIGHT);
   lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_CLICKABLE);
