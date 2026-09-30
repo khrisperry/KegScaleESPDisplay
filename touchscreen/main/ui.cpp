@@ -17,7 +17,7 @@
 #include <cstring>
 
 // Implemented by home_layout.cpp. Home is rendered synchronously by the
-// custom Dashboard/Glass renderer instead of the legacy Home widgets.
+// custom multi-view Home renderer instead of the legacy Home widgets.
 void touchscreen_home_render_now();
 void touchscreen_home_set_menu_open(bool open);
 void touchscreen_home_set_keyboard_open(bool open);
@@ -95,14 +95,14 @@ lv_obj_t *button(lv_obj_t *parent, const char *s, int x, int y, int width,
   // Shared modern action-button treatment used throughout all sub-pages.
   // Individual controls such as the drawer close button may further override
   // these defaults after creation.
-  lv_obj_set_style_bg_color(o, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_bg_color(o, lv_color_hex(0x1d4f73), 0);
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(o, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_color(o, lv_color_hex(0x4fa7d1), 0);
   lv_obj_set_style_border_width(o, 1, 0);
   lv_obj_set_style_radius(o, 15, 0);
 
   // Give taps an obvious but restrained pressed-state response.
-  lv_obj_set_style_bg_color(o, lv_color_hex(0x36505f), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(o, lv_color_hex(0x276990), LV_STATE_PRESSED);
   lv_obj_set_style_border_color(o, lv_color_hex(ACCENT), LV_STATE_PRESSED);
 
   auto t = lv_label_create(o);
@@ -315,8 +315,8 @@ void show_qr_fullscreen(lv_event_t *) {
 
   auto back = button(qr_fullscreen, "Back", 166, 420, 148, close_qr_fullscreen);
   lv_obj_set_size(back, 148, 40);
-  lv_obj_set_style_bg_color(back, lv_color_hex(0x2a3945), 0);
-  lv_obj_set_style_border_color(back, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_bg_color(back, lv_color_hex(0x1d4f73), 0);
+  lv_obj_set_style_border_color(back, lv_color_hex(0x4fa7d1), 0);
   lv_obj_set_style_border_width(back, 1, 0);
   lv_obj_set_style_radius(back, 20, 0);
   if (lv_obj_t *back_text = lv_obj_get_child(back, 0))
@@ -365,7 +365,7 @@ void populate_scale_menu() {
   label(menu_panel, "Scale Menu", 14, 14, 150, &lv_font_montserrat_20);
   auto close = button(menu_panel, "X", 182, 10, 32, close_scale_menu);
   lv_obj_set_size(close, 32, 32);
-  lv_obj_set_style_bg_color(close, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_style_bg_color(close, lv_color_hex(0x1d4f73), 0);
   lv_obj_set_style_radius(close, 16, 0);
   lv_obj_set_ext_click_area(close, 10);
   if (lv_obj_t *close_text = lv_obj_get_child(close, 0))
@@ -407,9 +407,9 @@ void populate_scale_menu() {
         menu_panel, title, 14, y, 200, drawer_nav,
         reinterpret_cast<void *>(static_cast<intptr_t>(page)));
     lv_obj_set_size(b, 200, 42);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x1d4f73), 0);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(b, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0x4fa7d1), 0);
     lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, 15, 0);
     if (lv_obj_t *t = lv_obj_get_child(b, 0))
@@ -483,9 +483,9 @@ void ensure_scale_menu(lv_obj_t *root) {
     menu_handle_button = lv_button_create(root);
     lv_obj_set_pos(menu_handle_button, 426, 7);
     lv_obj_set_size(menu_handle_button, 42, 42);
-    lv_obj_set_style_bg_color(menu_handle_button, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_color(menu_handle_button, lv_color_hex(0x1d4f73), 0);
     lv_obj_set_style_bg_opa(menu_handle_button, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(menu_handle_button, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_color(menu_handle_button, lv_color_hex(0x4fa7d1), 0);
     lv_obj_set_style_border_width(menu_handle_button, 1, 0);
     lv_obj_set_style_radius(menu_handle_button, 21, 0);
     lv_obj_set_ext_click_area(menu_handle_button, 5);
@@ -1156,9 +1156,9 @@ void build(int page) {
     lv_obj_t *password_toggle = lv_button_create(content);
     lv_obj_set_pos(password_toggle, 378, 207);
     lv_obj_set_size(password_toggle, 50, 32);
-    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x2a3945), 0);
+    lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x1d4f73), 0);
     lv_obj_set_style_bg_opa(password_toggle, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x587181), 0);
+    lv_obj_set_style_border_color(password_toggle, lv_color_hex(0x4fa7d1), 0);
     lv_obj_set_style_border_width(password_toggle, 1, 0);
     lv_obj_set_style_radius(password_toggle, 10, 0);
     lv_obj_set_style_pad_all(password_toggle, 0, 0);
@@ -1619,27 +1619,33 @@ void ui_start(const Settings &s) {
   lv_obj_set_height(notice, 24);
   lv_label_set_long_mode(notice, LV_LABEL_LONG_DOT);
 
-  // Persistent connection state gets a compact bubble between the two
-  // bottom controls instead of occupying the full width.
-  connection_badge = label(root, "Offline", 211, 438, 82,
+  // Persistent connection state uses the same footprint and visual weight as
+  // the Home and view buttons. Keeping all three controls at 40 px tall fixes
+  // the old floating-pill look while preserving a distinct status color.
+  connection_badge = label(root, "Offline", 176, 432, 118,
                            &lv_font_montserrat_14);
-  lv_obj_set_height(connection_badge, 28);
+  lv_obj_set_height(connection_badge, 40);
   lv_obj_set_style_text_align(connection_badge, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(connection_badge, lv_color_hex(TEXT), 0);
   lv_obj_set_style_bg_color(connection_badge, lv_color_hex(0x7a3b3b), 0);
-  lv_obj_set_style_bg_opa(connection_badge, LV_OPA_70, 0);
-  lv_obj_set_style_radius(connection_badge, 14, 0);
-  lv_obj_set_style_pad_top(connection_badge, 5, 0);
+  lv_obj_set_style_bg_opa(connection_badge, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(connection_badge, lv_color_hex(0xc76a6a), 0);
+  lv_obj_set_style_border_width(connection_badge, 1, 0);
+  lv_obj_set_style_radius(connection_badge, 12, 0);
+  lv_obj_set_style_pad_top(connection_badge, 10, 0);
+  lv_obj_set_style_pad_left(connection_badge, 0, 0);
+  lv_obj_set_style_pad_right(connection_badge, 0, 0);
+
   // Keep only Home / Switch Scale on the main screen. All management pages
   // live in the right-side drawer.
-  home_nav_button = button(root, "Home", 8, 432, 196, nav,
+  home_nav_button = button(root, "Home", 12, 432, 152, nav,
                            reinterpret_cast<void *>(static_cast<intptr_t>(0)));
-  lv_obj_set_size(home_nav_button, 196, 40);
-  lv_obj_set_style_bg_color(home_nav_button, lv_color_hex(0x2a3945), 0);
+  lv_obj_set_size(home_nav_button, 152, 40);
+  lv_obj_set_style_bg_color(home_nav_button, lv_color_hex(0x1d4f73), 0);
   lv_obj_set_style_bg_opa(home_nav_button, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(home_nav_button, lv_color_hex(0x587181), 0);
+  lv_obj_set_style_border_color(home_nav_button, lv_color_hex(0x4fa7d1), 0);
   lv_obj_set_style_border_width(home_nav_button, 1, 0);
-  lv_obj_set_style_radius(home_nav_button, 15, 0);
+  lv_obj_set_style_radius(home_nav_button, 12, 0);
   if (lv_obj_t *home_text = lv_obj_get_child(home_nav_button, 0))
     lv_obj_set_style_text_color(home_text, lv_color_hex(TEXT), 0);
   ensure_scale_menu(root);
@@ -1663,6 +1669,9 @@ void ui_state(const State &s) {
     lv_obj_set_style_bg_color(
         connection_badge,
         lv_color_hex(current.online ? 0x247a5a : 0x7a3b3b), 0);
+    lv_obj_set_style_border_color(
+        connection_badge,
+        lv_color_hex(current.online ? 0x42d3a2 : 0xc76a6a), 0);
   }
   if (lost_connection && (page_id == 0 || page_id == 1 || page_id == 2))
     build(page_id);
