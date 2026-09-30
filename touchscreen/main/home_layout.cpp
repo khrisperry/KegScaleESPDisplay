@@ -40,6 +40,7 @@ constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_CLEAN_LAYOUT_V10
 // TOUCH_REFINED_SPACING_V11
 // TOUCH_ICON_PASS_V12
+// TOUCH_HARDWARE_TWEAKS_V13
 
 enum class ServingVessel {
   Generic,
@@ -693,9 +694,9 @@ lv_obj_t *draw_metric_icon(lv_obj_t *parent, MetricGlyph glyph, int x, int y,
   lv_obj_t *root = icon_root(parent, x, y, 20);
 
   static lv_point_precise_t droplet[] = {
-      {10, 1}, {15, 8}, {18, 13}, {18, 16}, {16, 19},
-      {13, 21}, {7, 21}, {4, 19}, {2, 16}, {2, 13},
-      {5, 8}, {10, 1}};
+      {10, 2}, {14, 7}, {17, 12}, {17, 15}, {15, 18},
+      {12, 19}, {8, 19}, {5, 18}, {3, 15}, {3, 12},
+      {6, 7}, {10, 2}};
   static lv_point_precise_t scale_pan[] = {
       {3, 7}, {17, 7}, {18, 11}, {17, 14}, {3, 14}, {2, 11}, {3, 7}};
   static lv_point_precise_t target_h[] = {{2, 10}, {18, 10}};
@@ -803,9 +804,10 @@ void build_home_header(lv_obj_t *overlay) {
   lv_label_set_long_mode(home_name, LV_LABEL_LONG_DOT);
   lv_obj_set_height(home_name, 26);
 
-  home_status_dot = shape(overlay, 326, 17, 8, 8, COLOR_GREEN, 8);
-  home_status = make_label(overlay, "", 340, 11, 52,
+  home_status_dot = shape(overlay, 304, 17, 8, 8, COLOR_GREEN, 8);
+  home_status = make_label(overlay, "", 318, 11, 82,
                            &lv_font_montserrat_14, COLOR_GREEN);
+  lv_label_set_long_mode(home_status, LV_LABEL_LONG_CLIP);
   lv_obj_set_style_text_align(home_status, LV_TEXT_ALIGN_LEFT, 0);
 }
 
@@ -968,37 +970,33 @@ void build_keg_level(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
-  // A barrel-shaped outline reads more like a keg than the previous rounded
-  // rectangle/battery silhouette.
-  lv_obj_t *outline = lv_line_create(overlay);
-  lv_line_set_points(outline, keg_outline_points,
-                     sizeof(keg_outline_points) /
-                         sizeof(keg_outline_points[0]));
-  lv_obj_set_pos(outline, 24, 78);
-  lv_obj_set_style_line_color(outline, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_line_width(outline, 5, 0);
-  lv_obj_set_style_line_rounded(outline, true, 0);
+  // Large keg body based on the approved simple keg/barrel icon language.
+  // The liquid is drawn as children of the body so it cannot protrude past
+  // the outer silhouette.
+  lv_obj_t *keg_body = lv_obj_create(overlay);
+  lv_obj_set_pos(keg_body, 28, 76);
+  lv_obj_set_size(keg_body, 166, 258);
+  lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(keg_body, lv_color_hex(0x14232d), 0);
+  lv_obj_set_style_bg_opa(keg_body, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(keg_body, lv_color_hex(COLOR_GLASS), 0);
+  lv_obj_set_style_border_width(keg_body, 4, 0);
+  lv_obj_set_style_radius(keg_body, 28, 0);
+  lv_obj_set_style_pad_all(keg_body, 0, 0);
 
-  // Simple top plate/coupler, deliberately small so it does not resemble a
-  // battery terminal.
-  outline_shape(overlay, 78, 63, 88, 13, COLOR_GLASS, 3, 6);
-  outline_shape(overlay, 101, 52, 42, 12, COLOR_GLASS, 3, 4);
+  // Top collar and coupler. One simple collar avoids the previous
+  // stacked-battery-terminal appearance.
+  outline_shape(overlay, 66, 62, 90, 16, COLOR_GLASS, 3, 8);
+  outline_shape(overlay, 94, 53, 34, 10, COLOR_GLASS, 3, 5);
 
-  // Liquid bands taper slightly at the shoulders and base to follow the keg
-  // silhouette. They remain individual objects so the existing percentage
-  // visibility logic can be reused.
+  // 24 liquid bands preserve the existing percentage logic. They stay well
+  // inside the barrel outline and are visually continuous at hardware scale.
   for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-    int width = 142;
-    if (i < 3 || i > 20)
-      width = 126;
-    else if (i < 5 || i > 18)
-      width = 136;
-    const int x = 105 - width / 2;
-
-    lv_obj_t *band = lv_obj_create(overlay);
+    lv_obj_t *band = lv_obj_create(keg_body);
     glass_bands[i] = band;
-    lv_obj_set_pos(band, x, 103 + i * 9);
-    lv_obj_set_size(band, width, 10);
+    lv_obj_set_pos(band, 14, 27 + i * 9);
+    lv_obj_set_size(band, 130, 10);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
@@ -1007,18 +1005,19 @@ void build_keg_level(lv_obj_t *overlay) {
     lv_obj_set_style_pad_all(band, 0, 0);
   }
 
-  // Keg chimes/ribs are drawn after the liquid so they remain visible.
-  shape(overlay, 45, 92, 120, 6, 0x708792, 3);
-  shape(overlay, 40, 128, 130, 4, 0x516b78, 2);
-  shape(overlay, 40, 276, 130, 4, 0x516b78, 2);
-  shape(overlay, 45, 316, 120, 6, 0x708792, 3);
+  // Keg chimes/ribs overlay the liquid so the graphic still reads as a keg
+  // at low and high fill levels.
+  shape(keg_body, 10, 16, 138, 7, 0x78909c, 3);
+  shape(keg_body, 8, 66, 142, 5, 0x5f7986, 2);
+  shape(keg_body, 8, 180, 142, 5, 0x5f7986, 2);
+  shape(keg_body, 10, 231, 138, 7, 0x78909c, 3);
 
   home_percent =
-      make_label(overlay, "--", 52, 154, 106, &lv_font_montserrat_28,
+      make_label(overlay, "--", 55, 153, 112, &lv_font_montserrat_28,
                  COLOR_TEXT);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *remaining =
-      make_label(overlay, "REMAINING", 52, 189, 106,
+      make_label(overlay, "REMAINING", 55, 188, 112,
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
