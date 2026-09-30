@@ -13,6 +13,7 @@ run_test "Touch UI lifetime guard" python3 "$root/tests/ui_lifetime_guard_test.p
 run_test "Touch main architecture guard" python3 "$root/tests/main_architecture_guard_test.py"
 run_test "Touch OTA signature wiring guard" python3 "$root/tests/ota_signature_guard_test.py"
 run_test "Touch pairing rearm isolation guard" python3 "$root/tests/pairing_rearm_isolation_guard_test.py"
+run_test "Touch pairing overlay regression" python3 "$root/tests/run_pairing_overlay_test.py"
 run_test "Touch connection regression" python3 "$root/tests/run_connection_test.py"
 
 test_binary="$(mktemp)"
