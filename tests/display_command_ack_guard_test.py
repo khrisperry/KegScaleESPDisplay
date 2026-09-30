@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Guard e-paper reliable-command BLE wiring and completion boundaries."""
 from pathlib import Path
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Display command ACK guard")
 
 root = Path(__file__).resolve().parents[1]
 client = (root / "components/ble_client/ble_client.c").read_text(encoding="utf-8")
@@ -36,6 +39,6 @@ checks = {
 
 failed = [name for name, ok in checks.items() if not ok]
 if failed:
-    raise SystemExit("FAIL: Display command ACK guard: " + "; ".join(failed))
+    fail_exit("Display command ACK guard: " + "; ".join(failed))
 
-print("PASS: Display command ACK guard")
+pass_line("Display command ACK guard")
