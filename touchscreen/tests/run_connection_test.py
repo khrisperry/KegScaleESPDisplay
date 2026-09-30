@@ -5,8 +5,10 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from test_output import fail_exit, install_excepthook, run_command
 
 root = Path(__file__).resolve().parents[2]
+install_excepthook("Touch connection regression")
 spec = importlib.util.spec_from_file_location('helpers', root / 'tests/run_ota_tests.py')
 helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helpers)
@@ -46,18 +48,20 @@ with tempfile.TemporaryDirectory(prefix='keg-connection-') as directory:
         encoding='utf-8')
     if (cjson / 'cJSON.c').exists():
         obj = tmp / 'cjson.o'
-        subprocess.run(['cc', '-c', str(cjson / 'cJSON.c'), '-o', str(obj)], check=True)
+        run_command('Touch cJSON compile', ['cc', '-c', str(cjson / 'cJSON.c'), '-o', str(obj)])
         json_link = str(obj)
     else:
         cjson = Path('/usr/include/cjson')
         if not (cjson / 'cJSON.h').exists():
-            raise SystemExit('Install libcjson-dev or configure the Touch ESP-IDF project first.')
+            fail_exit('Touch connection regression: install libcjson-dev or configure the Touch ESP-IDF project first.')
         json_link = '-lcjson'
     binary = tmp / 'connection-test'
-    subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                    '-I' + str(tmp), '-I' + str(cjson),
-                    '-I' + str(root / 'touchscreen/tests/host'),
-                    '-I' + str(root / 'touchscreen/components/controller_link/include'),
-                    str(root / 'touchscreen/tests/connection_test.cpp'), json_link,
-                    '-o', str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
+    run_command('Touch connection regression compile', [
+        'c++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+        '-I' + str(tmp), '-I' + str(cjson),
+        '-I' + str(root / 'touchscreen/tests/host'),
+        '-I' + str(root / 'touchscreen/components/controller_link/include'),
+        str(root / 'touchscreen/tests/connection_test.cpp'), json_link,
+        '-o', str(binary)
+    ])
+    run_command('Touch connection regression', [str(binary)])
