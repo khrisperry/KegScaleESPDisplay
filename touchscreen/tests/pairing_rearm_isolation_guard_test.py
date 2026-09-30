@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Prevent pairing repair from resetting Wi-Fi or disturbing another Scale slot."""
 from pathlib import Path
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Touch pairing rearm isolation guard")
 
 root = Path(__file__).resolve().parents[1]
 guard = (root / "main" / "pairing_guard.cpp").read_text(encoding="utf-8")
@@ -29,6 +32,6 @@ checks = {
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:
-    raise SystemExit("FAIL: Touch pairing rearm isolation guard: " + "; ".join(failed))
+    fail_exit("Touch pairing rearm isolation guard: " + "; ".join(failed))
 
-print("PASS: Touch pairing rearm isolation guard")
+pass_line("Touch pairing rearm isolation guard")
