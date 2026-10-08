@@ -1,4 +1,7 @@
 #include "app.h"
+#ifdef TOUCHPOUR_FIRMWARE
+#include "tap_control.h"
+#endif
 #include "ble_client.h"
 #include "cJSON.h"
 #include "controller_link.h"
@@ -948,6 +951,12 @@ void discover_unpaired_scale_qr(uint8_t slot) {
 }
 
 void action(const Action &a) {
+#ifdef TOUCHPOUR_FIRMWARE
+  if (tap::busy()) {
+    ui_message("Stop pouring before changing settings");
+    return;
+  }
+#endif
   cJSON *o = cJSON_Parse(a.body);
 
   if (!strcmp(a.kind, "cancel_pairing")) {
@@ -1885,7 +1894,11 @@ extern "C" void touchscreen_app_main() {
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   char hostname[32];
+#ifdef TOUCHPOUR_FIRMWARE
+  snprintf(hostname, sizeof(hostname), "TouchPour-%02X%02X", mac[4], mac[5]);
+#else
   snprintf(hostname, sizeof(hostname), "KegTouch-%02X%02X", mac[4], mac[5]);
+#endif
   esp_netif_set_hostname(netif, hostname);
   ESP_LOGI(TAG, "Touchscreen network hostname: %s", hostname);
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -1917,6 +1930,9 @@ extern "C" void touchscreen_app_main() {
   } else {
     ESP_LOGW(TAG, "mDNS initialization failed: %s", esp_err_to_name(e));
   }
+#ifdef TOUCHPOUR_FIRMWARE
+  tap::network_start();
+#endif
   for (uint8_t slot = 0; slot < 2; ++slot)
     connect_scale(slot);
   /* Hardware/UI, NVS and networking initialized. An offline scale must not

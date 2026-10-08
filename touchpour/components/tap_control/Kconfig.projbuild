@@ -1,0 +1,14 @@
+menu "TouchPour hardware"
+config TAP_SDA
+    int "LiDAR SDA GPIO"
+    default 11
+config TAP_SCL
+    int "LiDAR SCL GPIO"
+    default 10
+config TAP_SERVO
+    int "Servo signal GPIO"
+    default 15
+config TAP_BUTTON
+    int "Optional physical pour button GPIO"
+    default 18
+endmenu

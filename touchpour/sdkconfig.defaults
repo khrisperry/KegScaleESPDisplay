@@ -1,0 +1,98 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# ESP32-S3-WROOM-1-N16R8
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Use the board's full 16 MB flash and reserve OTA-capable app slots.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# 8 MB octal PSRAM used by the RGB framebuffer/LVGL.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# ESP-IDF requires 64-byte D-cache lines when an ESP32-S3 RGB panel uses
+# PSRAM-backed framebuffers with a bounce buffer. Without this the RGB stream
+# can drift/corrupt under PSRAM contention (for example Wi-Fi/flash activity).
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Public CA bundle for touchscreen HTTPS OTA.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+
+# We use our own UI, not LVGL's demo/example applications.
+CONFIG_LV_BUILD_EXAMPLES=n
+CONFIG_LV_BUILD_DEMOS=n
+
+# Enable LVGL's floating-point formatter. Without this, its built-in printf
+# renders formats such as %.0f as literal text like "f".
+CONFIG_LV_USE_FLOAT=y
+
+# QR code shown in the touchscreen Scale Menu.
+CONFIG_LV_USE_QRCODE=y
+
+# Fonts used by the 480x480 UI.
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# Wi-Fi remains the primary touchscreen transport. BLE is enabled only as a
+# central/observer so an unpaired touchscreen can discover a scale and build a
+# setup QR code even when the scale is not yet on the LAN.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=y
+CONFIG_BT_NIMBLE_GATT_SERVER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_BONDS=1
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_ENCRYPTION=y
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LWIP_MAX_SOCKETS=12
+
+# Resolve discovered .local scale names after DHCP changes.
+CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y
+
+# Synchronized driver-owned RGB frames.
+# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC is not set
+# CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC is not set
+# CONFIG_MBEDTLS_IRAM_8BIT_MEM_ALLOC is not set
+
+# mbedTLS dynamic allocations use the board's 8 MB PSRAM.
+
+
+# Let WebSocket transmit operations use a separate mutex from the receive loop.
+# This prevents encrypted heartbeat/command sends from blocking behind the
+# client's receive lock while preserving ESP-IDF's built-in control frames.
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_FONT_MONTSERRAT_36=y
+
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y

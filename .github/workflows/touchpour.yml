@@ -1,0 +1,44 @@
+name: TouchPour Display
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'touchpour/**'
+      - 'touchscreen/main/**'
+      - 'touchscreen/components/controller_link/**'
+      - 'components/ble_client/**'
+      - '.github/workflows/touchpour.yml'
+  pull_request:
+    paths:
+      - 'touchpour/**'
+      - 'touchscreen/main/**'
+      - 'touchscreen/components/controller_link/**'
+      - 'components/ble_client/**'
+      - '.github/workflows/touchpour.yml'
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash touchpour/tests/run_host_tests.sh
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: touchpour
+      - uses: actions/upload-artifact@v4
+        with:
+          name: touchpour-esp32s3-v0.1.0
+          if-no-files-found: error
+          path: |
+            touchpour/build/touchpour_display.bin
+            touchpour/build/bootloader/bootloader.bin
+            touchpour/build/partition_table/partition-table.bin
+            touchpour/build/ota_data_initial.bin
+            touchpour/build/flasher_args.json
