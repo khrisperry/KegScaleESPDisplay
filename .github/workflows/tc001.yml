@@ -1,0 +1,39 @@
+name: TC001 pixel display
+on:
+  workflow_dispatch:
+  push:
+    paths: ['tc001/**', 'components/ble_client/**', 'components/pairing/**', '.github/workflows/tc001.yml']
+  pull_request:
+    paths: ['tc001/**', 'components/ble_client/**', 'components/pairing/**', '.github/workflows/tc001.yml']
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tc001/tests/run.sh
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        demo: [false, true]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable labeled demonstration build
+        if: matrix.demo
+        run: echo 'CONFIG_TC001_DEMO=y' >> tc001/sdkconfig.defaults
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.2
+          target: esp32
+          path: tc001
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keg-tc001-demo-${{ matrix.demo }}
+          if-no-files-found: error
+          path: |
+            tc001/build/keg_scale_tc001.bin
+            tc001/build/bootloader/bootloader.bin
+            tc001/build/partition_table/partition-table.bin
+            tc001/build/flasher_args.json

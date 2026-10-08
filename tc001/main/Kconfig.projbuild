@@ -1,0 +1,9 @@
+menu "Keg TC001"
+config TC001_DEMO
+    bool "Show sample data without a scale (clearly labeled DEMO)"
+    default n
+config TC001_MATRIX_LAYOUT
+    int "Matrix wiring: 0=row serpentine, 1=8x8 tiles, 2=column serpentine"
+    range 0 2
+    default 0
+endmenu

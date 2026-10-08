@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+set(EXTRA_COMPONENT_DIRS "../components/ble_client" "../components/pairing")
+set(COMPONENTS main)
+set(PROJECT_VER "1.0.0-tc001-dev")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(keg_scale_tc001)
