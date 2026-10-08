@@ -30,7 +30,7 @@ int main(int argc,char **argv) {
         FILE *f=fopen(argv[1],"w");assert(f);
         s=(pixel_state_t){.servings=42,.percent=68,.gallons=3.4,.ready=true,.stable=true,.name="COTTAGE IPA"};
         fprintf(f,"const frames = [");
-        const char *messages[]={"123456","PAIR - OPEN SCALE WEB","NO LINK","SETTLE","SETUP","DEMO"};
+        const char *messages[]={"A1B2C3","PAIR - OPEN SCALE WEB","NO LINK","SETTLE","SETUP","DEMO"};
         for(unsigned page=0;page<10;page++) {
             if(page) fprintf(f,",");
             fprintf(f,"[");

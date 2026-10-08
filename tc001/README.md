@@ -1,55 +1,62 @@
 # Keg Scale Display — ULANZI TC001
 
-First development firmware: **1.0.0-tc001-dev**, hardware ID `ulanzi_tc001`.
-Separate ESP-IDF project; the existing e-paper and touchscreen targets are unchanged.
+Development firmware **1.0.1-tc001-dev** connects over **Wi-Fi**, using the same authenticated protocol-1 WebSocket and shared `controller_link` crypto component as the Wi-Fi touchscreen. This is a separate ESP-IDF project; the existing e-paper and touchscreen targets are unchanged.
 
 ## What it shows
 
 The 32×8 RGB matrix rotates every 8 seconds:
 
-1. Amber beer mug and **servings remaining** (uses the serving size configured on the scale).
-2. Keg icon and **percent remaining**.
+1. Beer mug + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
+2. Keg icon + **percent remaining**.
 3. **US gallons remaining**, with `G` suffix.
 4. Scrolling **beer name**.
 
-A bottom fill bar appears on every keg screen. Green above 25%, amber at 11–25%, red at 10% or below.
-`SETUP` replaces values when the scale does not mark the keg ready; `SETTLE` replaces unstable readings.
-`NO LINK` replaces values after 30 seconds without a valid snapshot. Reads are retried automatically.
-Long text/numbers scroll. No temperature is shown because keg temperature is not part of the current snapshot.
+The bottom fill bar is green above 25%, amber at 11–25%, red at 10% or below. `SETUP` replaces invalid/not-ready readings; `SETTLE` replaces unstable readings. Readings older than 12 seconds become `NO LINK` and trigger reconnect. `WIFI WAIT` indicates Wi-Fi has disconnected.
 
-Open [preview/index.html](preview/index.html) in a browser for the standalone interactive preview.
-[preview/screens.png](preview/screens.png) is a screen contact sheet.
-Both are generated from the real C renderer, using sample data, not a separate mock UI.
+Open [preview/index.html](preview/index.html) in a modern browser for the standalone interactive preview. [preview/screens.png](preview/screens.png) is the contact sheet. They use the actual C renderer with sample data. Keg temperature is not shown because it is not in the current scale snapshot.
 
-## Connection
+## First Wi-Fi setup
 
-This version connects **directly over BLE** using the existing KegScaleESP protocol and shared client.
-It does not require Wi-Fi, MQTT, Home Assistant, or an Internet connection.
+1. Flash the clock through USB. First boot opens a WPA2-protected setup network named **KegPixel-XXXX**.
+2. The clock cycles through its setup network name, **eight-character password**, `192.168.4.1`, and `WIFI SETUP`. The password is the eight-character screen without a label, and can contain letters and digits.
+3. Join that network from your phone/computer. Stay connected if it says “No Internet,” and open **http://192.168.4.1/**.
+4. Scan/select a **2.4 GHz Wi-Fi** network, enter its password, and optionally unmask it. Enter the scale's IP or hostname, for example `192.168.91.25` or `KegScale-1234.local`.
+5. Save; the clock restarts and joins your network. No BLE, MQTT broker, Home Assistant, or cloud service is required.
 
-1. Turn on the scale and flashed clock within Bluetooth range.
-2. Open the scale's webpage in your phone or computer.
-3. Select the scale's **Add display** pairing flow. Only one scale should be in pairing mode.
-4. The TC001 shows a fixed six-digit code. Enter it in the scale's pairing prompt.
-5. After an authenticated bond and compatible state read, the clock saves the scale identity and starts showing keg data.
+For discovery rather than manual IP entry, first save Wi-Fi with the scale address blank. Rejoin the same setup network after restart and select **Find scales**; the clock queries the same `_kegscale._tcp` mDNS service as the touchscreen through its Wi-Fi station connection. Save the chosen scale address to restart into live mode. A manual IP works when mDNS is unavailable across VLANs. The devices need network access to each other on TCP port 80.
 
-The one-time code is not saved. Bonds persist across reboots. Encrypted display maintenance uses the existing authenticated BLE client. Removal/replacement commands from the scale are acknowledged before deleting the local bond. The clock reports its distinct firmware version; battery voltage is reported as unavailable until the hardware divider is verified.
+Wi-Fi credentials and the authorized scale key persist in NVS. A blank password preserves the existing password only for the same SSID; explicitly select **Open network** to clear it. Passwords and keys are not logged or returned by the setup API.
 
-The scale's existing display slot limits still apply: adding this clock may replace a previously paired display. This first version does not expand scale-side display capacity, expose TC001-specific settings in the scale web UI, or apply e-paper layout settings to its local page rotation.
+## Authorize the scale connection
 
-## Buttons
+1. Reconnect your phone/computer to your normal network and open the scale's webpage.
+2. Open **Settings → Displays → Wi-Fi touchscreen** (or `/controller`). Log in there if web administrator authentication is enabled.
+3. Choose **Add touchscreen**. The clock retries its connection automatically.
+4. Enter the clock's **six-character hexadecimal code**, including any letters A–F, in the scale's authorization prompt.
+5. After approval, the clock saves the shared key and receives live encrypted snapshots. On restart it proves possession of the saved key and reconnects automatically.
+
+The scale currently supports **one authenticated Wi-Fi controller per scale**. The TC001 uses that existing slot, so it replaces a Wi-Fi touchscreen on the same scale; both cannot be connected concurrently. The independently paired BLE e-paper display can remain connected. This change does not alter scale-side display capacity or rename its existing touchscreen management page.
+
+The scale pushes cached readings at roughly 2 Hz. The TC001 sends encrypted application heartbeats every 3 seconds, retries connections at 10-second intervals, and drops sessions with readings older than 12 seconds. Wi-Fi power saving is disabled for continuous USB-powered use. Unauthenticated plaintext cannot supply readings; messages are authenticated with AES-256-GCM and replay protection from the shared touchscreen component. The displayed verification code is never sent over the WebSocket or exposed in the setup API.
+
+Removing the pairing on the scale while connected sends an encrypted `unpair` notice, which clears the clock's saved key. If removal happened while the clock was offline, use its setup page to clear its local pairing too. Before changing scales, remove the old pairing on that scale and select the local clear-pairing checkbox. Changing an already-paired host is rejected unless local pairing is explicitly cleared.
+
+## Buttons and recovery
 
 | Button | Action |
 | --- | --- |
-| Left | Previous page; pause automatic rotation for 20 seconds |
-| Right | Next page; pause automatic rotation for 20 seconds |
+| Left | Previous keg page; pause automatic rotation for 20 seconds |
+| Right | Next keg page; pause automatic rotation for 20 seconds |
 | Middle, short press | Cycle brightness: 6%, 13%, 25% |
-| Middle, hold 5 seconds | Forget the saved scale and return to pairing |
+| Middle, hold 5 seconds | Open the protected Wi-Fi setup network; preserve current pairing and credentials |
 
-Brightness resets to 13% after restart. Buttons are debounced. Long-press reset may wait for an active BLE operation to finish. Battery sleep, buzzer, auto brightness, and battery percentage are not implemented; USB power is the intended initial use.
+The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup mode closes automatically after 10 minutes. With missing Wi-Fi or scale settings it remains available. Saving settings restarts the clock; reopening setup does not automatically delete the pairing. The eight-character AP password is stored once and remains the same across restarts.
+
+Brightness resets to 13% after restart. Battery sleep, battery telemetry, buzzer, and auto brightness are not implemented; this version is designed for continuous USB power.
 
 ## Build and flash on Windows
 
-Use an **ESP-IDF 5.5.2 terminal**, matching the CI toolchain. This project targets classic `esp32`, not ESP32-S3/C3.
+Use an **ESP-IDF 6.0.1 terminal**, matching the touchscreen and this project's CI toolchain. The TC001 target is classic `esp32`, not ESP32-S3/C3.
 
 ```powershell
 cd C:\Users\kperry\Documents\GitHub\KegScaleESPDisplay
@@ -57,49 +64,35 @@ git fetch origin
 git switch feature/tc001-pixel-display
 git pull --ff-only
 cd tc001
+# Needed only if an older TC001 build folder/config still targets IDF 5.5.2:
+idf.py fullclean
 idf.py set-target esp32
 idf.py build
 ```
 
-When the clock arrives, connect a USB-C **data cable**. Save the original 4 MiB flash before replacing it:
+Connect a USB-C **data cable**. Save the original 4 MiB flash before replacing it:
 
 ```powershell
 # Replace COM5 with the actual port; stop any serial monitor first.
-python -m esptool --chip esp32 --port COM5 read_flash 0x0 0x400000 tc001-original.bin
+python -m esptool --chip esp32 --port COM5 read-flash 0x0 0x400000 tc001-original.bin
 idf.py -p COM5 flash monitor
 ```
 
-If it does not enter flashing mode automatically, follow the TC001/AWTRIX flashing instructions for the actual unit. Confirm successful backup before an erase is needed. `idf.py flash` uses this project's bootloader, partition table, and app; do not flash the e-paper/touchscreen images onto the clock. Replacing stock firmware also replaces its stock app functions.
+If it does not enter flashing mode automatically, follow the TC001/AWTRIX flashing instructions for the actual unit. Confirm successful backup before an erase is needed. `idf.py flash` writes this project's bootloader, partition table, and application; do not flash the e-paper/touchscreen binaries on the clock. Replacing stock firmware replaces its stock app functions.
 
-First-flash NVS can contain stock data; if startup reports `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, restore/back up as needed and then run `idf.py -p COM5 erase-flash` followed by `idf.py -p COM5 flash monitor`. The firmware intentionally does not automatically erase stored bonds on NVS errors.
+The firmware does not silently erase NVS on startup errors. If stock/old NVS causes `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, back up as needed and run `idf.py -p COM5 erase-flash`, then flash again. This erases saved Wi-Fi and pairings too. Old TC001 BLE pairing data is not used by this Wi-Fi version; remove its old BLE registration separately on the scale if you had paired the earlier firmware.
 
-## Demo build
+## Demo, hardware, and validation
 
-`idf.py menuconfig` → **Keg TC001** → enable sample-data demonstration, then build/flash.
-The demo shows `DEMO` for the first 1.5 seconds of each page and does not connect to a scale.
-Disable it and rebuild to return to live mode. Demo long-press reset is ignored.
+`idf.py menuconfig` → **Keg TC001** → enable demonstration, then build/flash. It shows `DEMO` for the first 1.5 seconds of each page and does not start networking. Disable it and rebuild for live use.
 
-## Hardware mapping and bring-up
+Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. **Physical hardware is not yet tested.** Verify orientation/color order, button levels, setup AP, station reconnect, pairing/removal, and sustained encrypted state updates when the clock arrives.
 
-Hardware mapping is grounded in [AWTRIX's TC001 hardware docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and its [DisplayManager](https://github.com/Blueforcer/awtrix3/blob/main/src/DisplayManager.cpp)/[PeripheryManager](https://github.com/Blueforcer/awtrix3/blob/main/src/PeripheryManager.cpp) source:
-
-| Item | Configuration |
-| --- | --- |
-| RGB matrix | GPIO32, WS2812-compatible GRB, 256 pixels |
-| Left / middle / right | GPIO26 / GPIO27 / GPIO14, active low |
-| Matrix layout | Default row serpentine; menuconfig also supports four 8×8 row-progressive tiles or column serpentine |
-
-Physical hardware has **not** been tested. Verify matrix orientation, color order, button levels, sustained BLE reads/reconnect, pairing/removal, USB boot behavior, and power consumption when the TC001 arrives. In particular, the middle button's electrical behavior must be confirmed on the actual revision. Layout can be changed in menuconfig without changing the renderer.
-
-## Updates and validation
-
-**USB updates only** for this first version. It intentionally does not download/apply scale-offered e-paper firmware or reuse the e-paper/touchscreen OTA feeds. Signed TC001 OTA integration requires a dedicated hardware/channel entry and scale support in a future change.
+USB firmware updates only for now. A dedicated TC001 OTA hardware/channel entry and matching scale-side support are needed before adding signed OTA; it does not install e-paper/touchscreen OTA images.
 
 ```bash
-# Host checks: mappings, thresholds, invalid floats, status screens, scrolling.
 ./tc001/tests/run.sh
-# Regenerate standalone preview and contact sheet (Python Pillow required).
-python3 tc001/tools/build_preview.py
+python3 tc001/tools/build_preview.py  # Pillow required
 ```
 
-The CI workflow builds both live and clearly labeled demo firmware and runs the host renderer checks. Host rendering/build success cannot establish physical pairing or matrix operation.
+Host tests cover pixel mapping, gauges/statuses, scrolling, allowed host strings, stale timeout, plaintext handshake gating, and bounded WebSocket frame assembly/generation checks. The shared crypto has its existing actual-source tests in `touchscreen/tests/controller_link_test.c`. CI builds live and demo firmware and runs host checks. Build/test success does not establish operation on physical hardware.
