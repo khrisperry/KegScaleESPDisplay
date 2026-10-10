@@ -31,7 +31,7 @@ Initial setup is driven entirely from the scale web interface:
 
 On every normal wake the display reconnects only to its saved scale identity. It never chooses a scale by signal strength.
 
-**Remove display** is delivered as an authenticated command on the display's next wake. **Replace display** first removes the old bond and then opens a new pairing window. If the original scale is permanently unavailable, three deliberate power cycles before the display reaches its normal deep-sleep path clear the saved pairing and return the display to recovery pairing mode. USB/NVS erase remains the last-resort service recovery method.
+**Remove display** is delivered as an authenticated command on the display's next wake. **Replace display** first removes the old bond and then opens a new pairing window. If the original scale is permanently unavailable, hold the board's **Button 1 (GPIO39)**, press and release **RESET**, and keep GPIO39 held for **five seconds after startup** to clear the saved scale identity and BLE bond. The display shows **RECOVERY MODE / READY TO PAIR**, then scans for a new pairing-enabled scale. A short press does nothing. Three deliberate hardware resets before the display enters deep sleep remain an alternative. Timer/touch wakes and software restarts never count as recovery resets. **Do not use BOOT/GPIO0 for recovery**, as that enters the ESP32 download mode. USB/NVS erase remains the last-resort service recovery method.
 
 ## Source scale BLE protocol
 
