@@ -2,6 +2,15 @@ name: ESP-IDF Build
 
 on:
   workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/build.yml
+      - components/**
+      - main/**
+      - version.txt
+      - sdkconfig.defaults
+      - tests/**
 
 permissions:
   contents: read
