@@ -34,6 +34,10 @@ static const char *TAG = "display";
 #define RETAINED_MAGIC 0x4B534454U
 #define SIGNIFICANT_WEIGHT_LBS 0.5f
 #define SCALE_OFFLINE_FAILURE_THRESHOLD 5U
+/* LILYGO T5 V2.3.1 Button 1, distinct from GPIO0/BOOT. */
+#define RECOVERY_BUTTON_GPIO GPIO_NUM_39
+#define RECOVERY_BUTTON_HOLD_MS 5000U
+#define RECOVERY_BUTTON_POLL_MS 50U
 #define BATTERY_ADC_SAMPLES 16
 #define BATTERY_ADC_FULL_SCALE 4095.0f
 #define BATTERY_DIVIDER_SCALE 7.46f
@@ -1211,6 +1215,60 @@ static bool handle_unpair_request(
     return true;
 }
 
+/*
+ * GPIO39 is input-only and has no internal pull-up on classic ESP32.
+ * Use the T5 board's external button bias; do not enable an ESP32 pull-up.
+ * This is intentionally startup-only so native GPIO12 touch wake is unchanged.
+ */
+static bool recovery_button_held_at_startup(
+    esp_reset_reason_t reset_reason,
+    bool paired)
+{
+    if (!paired ||
+        (reset_reason != ESP_RST_POWERON &&
+         reset_reason != ESP_RST_EXT)) {
+        return false;
+    }
+
+    const gpio_config_t button_config = {
+        .pin_bit_mask = 1ULL << RECOVERY_BUTTON_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    esp_err_t err = gpio_config(&button_config);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not configure GPIO39 recovery button: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    /* Require a held button at startup and debounce it before timing. */
+    if (gpio_get_level(RECOVERY_BUTTON_GPIO) != 0) {
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(RECOVERY_BUTTON_POLL_MS));
+    if (gpio_get_level(RECOVERY_BUTTON_GPIO) != 0) {
+        return false;
+    }
+
+    ESP_LOGW(TAG, "GPIO39 recovery button pressed; keep holding for 5 seconds");
+
+    for (unsigned elapsed = 0; elapsed < RECOVERY_BUTTON_HOLD_MS;
+         elapsed += RECOVERY_BUTTON_POLL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(RECOVERY_BUTTON_POLL_MS));
+        if (gpio_get_level(RECOVERY_BUTTON_GPIO) != 0) {
+            ESP_LOGI(TAG, "GPIO39 released before recovery hold completed; pairing preserved");
+            return false;
+        }
+    }
+
+    ESP_LOGW(TAG, "GPIO39 held for 5 seconds; local pairing recovery requested");
+    return true;
+}
+
 void app_main(void)
 {
     ESP_LOGI(
@@ -1241,6 +1299,11 @@ void app_main(void)
     pairing_config_t pairing = {0};
     esp_err_t err =
         pairing_load(&pairing);
+
+    const esp_reset_reason_t reset_reason = esp_reset_reason();
+    ESP_LOGI(TAG, "Startup reset reason=%d", (int)reset_reason);
+    const bool button_recovery_requested =
+        recovery_button_held_at_startup(reset_reason, err == ESP_OK && pairing.paired);
 
     const bool touch_wake =
         is_touch_wake();
@@ -1289,55 +1352,59 @@ void app_main(void)
             esp_err_to_name(confirm_err));
     }
 
-    const uint32_t wake_causes =
-        esp_sleep_get_wakeup_causes();
-
-    if (wake_causes == 0) {
+    /*
+     * The sleep-wakeup bitmap is not a reliable indicator of a deliberate
+     * hardware reset. Count POWERON/EXT resets; never count timer/touch wakeups,
+     * software restarts (including OTA), or watchdog resets.
+     */
+    bool recovery_requested = button_recovery_requested;
+    if (reset_reason == ESP_RST_POWERON ||
+        reset_reason == ESP_RST_EXT) {
         uint8_t power_cycles = 0;
-        bool recovery_requested = false;
-
-        esp_err_t recovery_err =
-            pairing_note_power_cycle(
-                &power_cycles,
-                &recovery_requested);
+        bool cycle_recovery_requested = false;
+        const esp_err_t recovery_err = pairing_note_power_cycle(
+            &power_cycles, &cycle_recovery_requested);
 
         if (recovery_err == ESP_OK) {
-            ESP_LOGI(
-                TAG,
-                "Power-cycle recovery count=%u",
-                (unsigned)power_cycles);
+            ESP_LOGI(TAG, "Power-cycle recovery count=%u/3",
+                     (unsigned)power_cycles);
+            recovery_requested |= cycle_recovery_requested;
+        } else {
+            ESP_LOGW(TAG, "Could not count power cycles: %s",
+                     esp_err_to_name(recovery_err));
+        }
+    } else {
+        pairing_reset_power_cycle_count();
+    }
+
+    if (recovery_requested) {
+        ESP_LOGW(TAG, "%s recovery requested; clearing saved scale pairing",
+                 button_recovery_requested ? "GPIO39 button" : "Three-reset");
+
+        if (pairing.paired) {
+            const esp_err_t forget_err = ble_client_forget_peer(&pairing.peer);
+            if (forget_err != ESP_OK) {
+                ESP_LOGW(TAG, "Could not remove old BLE bond: %s",
+                         esp_err_to_name(forget_err));
+            }
         }
 
-        if (recovery_err == ESP_OK &&
-            recovery_requested) {
-            ESP_LOGW(
-                TAG,
-                "Three deliberate power cycles detected; entering recovery pairing mode");
-
-            if (pairing.paired) {
-                ble_client_forget_peer(
-                    &pairing.peer);
-            }
-
-            pairing_clear();
-            memset(
-                &pairing,
-                0,
-                sizeof(pairing));
-            memset(
-                &s_retained,
-                0,
-                sizeof(s_retained));
+        const esp_err_t clear_err = pairing_clear();
+        if (clear_err == ESP_OK) {
+            memset(&pairing, 0, sizeof(pairing));
+            memset(&s_retained, 0, sizeof(s_retained));
 
             display_ui_show_message(
                 "KEG DISPLAY",
                 "RECOVERY MODE",
                 "READY TO PAIR");
 
+            ESP_LOGW(TAG, "Recovery succeeded; waiting for new scale pairing");
             vTaskDelay(pdMS_TO_TICKS(750));
+        } else {
+            ESP_LOGE(TAG, "Recovery failed to clear saved pairing: %s",
+                     esp_err_to_name(clear_err));
         }
-    } else {
-        pairing_reset_power_cycle_count();
     }
 
     if (err == ESP_OK &&
