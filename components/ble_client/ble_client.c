@@ -277,7 +277,11 @@ typedef struct {
     int security_status;
     uint16_t conn_handle;
     uint32_t pairing_passkey;
+    uint32_t diag_attempt;
+    int64_t diag_started_us;
 } connect_context_t;
+
+static uint32_t s_pair_diag_attempt;
 
 typedef struct {
     SemaphoreHandle_t done;
@@ -513,6 +517,13 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
 
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
+            if (context->diag_attempt != 0) {
+                ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=gap_connect status=%d handle=%u elapsed_ms=%lld",
+                         (unsigned long)context->diag_attempt,
+                         event->connect.status,
+                         (unsigned)event->connect.conn_handle,
+                         (long long)((esp_timer_get_time() - context->diag_started_us) / 1000));
+            }
             context->status = event->connect.status;
 
             if (event->connect.status == 0) {
@@ -524,6 +535,13 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
+            if (context->diag_attempt != 0) {
+                ESP_LOGW(TAG, "PAIR_DIAG client attempt=%lu event=gap_disconnect reason=%d handle=%u elapsed_ms=%lld",
+                         (unsigned long)context->diag_attempt,
+                         event->disconnect.reason,
+                         (unsigned)event->disconnect.conn.conn_handle,
+                         (long long)((esp_timer_get_time() - context->diag_started_us) / 1000));
+            }
             ESP_LOGI(
                 TAG,
                 "Scale disconnected; reason=%d",
@@ -531,6 +549,13 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_ENC_CHANGE:
+            if (context->diag_attempt != 0) {
+                ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=security_change handle=%u status=%d elapsed_ms=%lld",
+                         (unsigned long)context->diag_attempt,
+                         (unsigned)event->enc_change.conn_handle,
+                         event->enc_change.status,
+                         (long long)((esp_timer_get_time() - context->diag_started_us) / 1000));
+            }
             context->security_status =
                 event->enc_change.status;
 
@@ -541,6 +566,12 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_PASSKEY_ACTION: {
+            if (context->diag_attempt != 0) {
+                ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=passkey_action action=%d handle=%u (code redacted)",
+                         (unsigned long)context->diag_attempt,
+                         event->passkey.params.action,
+                         (unsigned)event->passkey.conn_handle);
+            }
             if (event->passkey.params.action !=
                 BLE_SM_IOACT_DISP ||
                 context->pairing_passkey < 100000 ||
@@ -562,6 +593,8 @@ static int connect_gap_event(struct ble_gap_event *event, void *arg)
                     event->passkey.conn_handle,
                     &io);
 
+            ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=display_passkey_injected rc=%d",
+                     (unsigned long)context->diag_attempt, rc);
             ESP_LOGI(
                 TAG,
                 "Displayed pairing passkey supplied to NimBLE; rc=%d",
@@ -1284,7 +1317,18 @@ static esp_err_t connect_peer(
         .status = BLE_HS_EAPP,
         .conn_handle = BLE_HS_CONN_HANDLE_NONE,
         .pairing_passkey = pairing_passkey,
+        .diag_attempt = pairing_passkey >= 100000 && pairing_passkey <= 999999 ?
+            ++s_pair_diag_attempt : 0,
+        .diag_started_us = esp_timer_get_time(),
     };
+
+    if (connect_context->diag_attempt != 0) {
+        ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=connect_start peer=%s address_type=%u connect_timeout_ms=%d (code redacted)",
+                 (unsigned long)connect_context->diag_attempt,
+                 peer->scale_id,
+                 (unsigned)peer->address_type,
+                 CONNECT_TIMEOUT_MS);
+    }
 
     s_active_connection = connect_context;
 
@@ -1304,6 +1348,10 @@ static esp_err_t connect_peer(
             connect_context);
 
     if (rc != 0) {
+        if (connect_context->diag_attempt != 0) {
+            ESP_LOGW(TAG, "PAIR_DIAG client attempt=%lu event=connect_start_rejected rc=%d",
+                     (unsigned long)connect_context->diag_attempt, rc);
+        }
         s_active_connection = NULL;
         vSemaphoreDelete(done);
         return ESP_FAIL;
@@ -1314,6 +1362,11 @@ static esp_err_t connect_peer(
     connect_context->done = NULL;
 
     if (err != ESP_OK) {
+        if (connect_context->diag_attempt != 0) {
+            ESP_LOGW(TAG, "PAIR_DIAG client attempt=%lu event=connect_wait_failed err=%s elapsed_ms=%lld",
+                     (unsigned long)connect_context->diag_attempt, esp_err_to_name(err),
+                     (long long)((esp_timer_get_time() - connect_context->diag_started_us) / 1000));
+        }
         s_active_connection = NULL;
         return err;
     }
@@ -1321,10 +1374,20 @@ static esp_err_t connect_peer(
     if (connect_context->status != 0 ||
         connect_context->conn_handle ==
             BLE_HS_CONN_HANDLE_NONE) {
+        if (connect_context->diag_attempt != 0) {
+            ESP_LOGW(TAG, "PAIR_DIAG client attempt=%lu event=connect_failed status=%d handle=%u",
+                     (unsigned long)connect_context->diag_attempt, connect_context->status,
+                     (unsigned)connect_context->conn_handle);
+        }
         s_active_connection = NULL;
         return ESP_FAIL;
     }
 
+    if (connect_context->diag_attempt != 0) {
+        ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=connected handle=%u",
+                 (unsigned long)connect_context->diag_attempt,
+                 (unsigned)connect_context->conn_handle);
+    }
     *conn_handle = connect_context->conn_handle;
     return ESP_OK;
 }
@@ -1403,11 +1466,20 @@ static esp_err_t secure_connection(
 
     context->security_status = BLE_HS_EAPP;
 
+    if (context->diag_attempt != 0) {
+        ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=security_start handle=%u timeout_ms=%d",
+                 (unsigned long)context->diag_attempt, (unsigned)conn_handle,
+                 PAIRING_SECURITY_TIMEOUT_MS);
+    }
     rc =
         ble_gap_security_initiate(
             conn_handle);
 
     if (rc != 0) {
+        if (context->diag_attempt != 0) {
+            ESP_LOGW(TAG, "PAIR_DIAG client attempt=%lu event=security_start_failed rc=%d",
+                     (unsigned long)context->diag_attempt, rc);
+        }
         vSemaphoreDelete(
             context->security_done);
         context->security_done = NULL;
@@ -1432,6 +1504,12 @@ static esp_err_t secure_connection(
         context->security_done);
     context->security_done = NULL;
 
+    if (context->diag_attempt != 0) {
+        ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=security_result err=%s status=%d elapsed_ms=%lld",
+                 (unsigned long)context->diag_attempt, esp_err_to_name(err),
+                 context->security_status,
+                 (long long)((esp_timer_get_time() - context->diag_started_us) / 1000));
+    }
     if (err != ESP_OK ||
         context->security_status != 0) {
         return err != ESP_OK ? err : ESP_FAIL;
@@ -1585,6 +1663,9 @@ esp_err_t ble_client_pair(
                 &connection);
     }
 
+    ESP_LOGI(TAG, "PAIR_DIAG client attempt=%lu event=pair_result result=%s elapsed_ms=%lld",
+             (unsigned long)connection.diag_attempt, esp_err_to_name(err),
+             (long long)((esp_timer_get_time() - connection.diag_started_us) / 1000));
     if (conn_handle !=
         BLE_HS_CONN_HANDLE_NONE) {
         disconnect_peer(conn_handle);
