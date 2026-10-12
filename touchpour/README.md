@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.2
+# TouchPour Display — V0.1.3
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -19,8 +19,8 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 | LiDAR SDA | GPIO11 | VL53L0X SDA |
 | LiDAR SCL | GPIO10 | VL53L0X SCL |
 | LiDAR power | 3V3 / GND | Existing compatible VL53L0X module VCC / GND |
-| Servo control | GPIO15 | Servo signal |
-| Optional physical button | GPIO18 / GND | Normally open, active-low button |
+| Servo control | GPIO18 | Servo signal |
+| Optional physical button | GPIO15 / GND | Normally open, active-low button |
 | Servo power | Separate suitable servo supply | Servo V+; common GND with Waveshare |
 | USB | GPIO19 / GPIO20 | Reserved for USB flashing/logging |
 
@@ -33,6 +33,14 @@ Power the servo from a supply sized for its load and stall current; the board's 
 Scale transport, sessions, discovery, pairing guard, controller setup and text utilities are compiled directly from `../touchscreen/main`, with the shared controller_link and ble_client components. Existing touchscreen behavior is retained outside the `TOUCHPOUR_FIRMWARE` build definition. The compact portrait UI and board driver are specific to TouchPour.
 
 Pour controller, VL53L0X driver, web UI, foam capture and history are adapted from `khrisperry/TapLidarMotor` (see `SOURCE.md` for the exact imported file hashes). The namespace prevents collisions with the scale app's settings, actions and control names. The scale connection and tap website share one Wi-Fi driver and credential store. The large foam-recording buffer uses PSRAM; pour history occupies a dedicated partition after both application slots.
+
+## V0.1.3 servo GPIO18 wiring
+
+- Servo PWM was moved from GPIO15 to **GPIO18**, matching the original TouchPour wiring plan.
+- Optional physical button moved from GPIO18 to **GPIO15** to avoid any output/input pin collision. LiDAR remains GPIO11/10.
+- **Existing installations:** `touchpour/sdkconfig` is generated locally and retains the old GPIO mapping even after `git pull`; from `touchpour`, run `idf.py menuconfig` → `TouchPour hardware`, set **Servo signal GPIO = 18** and **Optional physical pour button GPIO = 15**, save, then build/flash. Compilation deliberately fails if old pin settings are left active.
+- Confirm the PWM signal lead uses **GPIO18**, not VBus/3V3 or the GPIO15 expansion pin; servo power needs an external supply appropriate to the servo rating, with a common ground.
+- First test: remove mechanical linkage and use the web UI's Setup → Servo test. Serial boot logs now print the selected PWM pin and 50 Hz rate.
 
 ## V0.1.1 display fixes
 
