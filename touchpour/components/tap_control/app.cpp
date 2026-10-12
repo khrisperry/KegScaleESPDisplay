@@ -61,7 +61,9 @@ static void set_servo(int us) {
     return;
   }
   servo_us = us;
-  ESP_LOGI(TAG, "Servo command: %d us", us);
+  // Event-only diagnostics: PWM commands remain visible without 500 ms sensor spam.
+  ESP_LOGI(TAG, "Servo PWM GPIO%d: %d us, 50 Hz, duty=%lu/16384",
+           CONFIG_TAP_SERVO, us, (unsigned long)duty);
 }
 static void sensor_task(void *) {
   VL53L0X lidar;
@@ -224,28 +226,6 @@ static void controller_task(void *) {
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
-static void measurement_log_task(void *) {
-  TickType_t wake = xTaskGetTickCount();
-  for (;;) {
-    xSemaphoreTake(state_mutex, portMAX_DELAY);
-    Sample s = sample; Settings c = settings;
-    bool hold = manual_hold.pouring, pouring = pouring_active();
-    bool saving = history_saving;
-    int pulse = servo_us, stable = hold ? manual_hold.count : control.count;
-    uint32_t now = now_ms();
-    const char *reason = hold ? manual_hold.reason : control.reason;
-    bool ready = control.ready(c, now) && !pouring && !setup_mode && !manual_test_active && !firmware_updating && !saving;
-    xSemaphoreGive(state_mutex);
-    ESP_LOGI("tap_measure", "mode=%s pouring=%d distance=%d mm valid=%d status=%d age=%lu ms "
-             "cutoff=%d mm cutoff_applied=%d lidar_checks_applied=%d min=%d max=%d tray=%d jump=%d stability_spread=%d stale_limit=%d ms stable=%d/5 "
-             "servo=%d us max_pour=%d ms history_saving=%d reason=%s ready=%d",
-             hold ? "MANUAL_HOLD" : "NORMAL", pouring, s.mm, s.valid, s.status,
-             (unsigned long)(now - s.at), c.stop_mm, !hold, !hold,
-             c.min_mm, c.max_mm, c.tray_mm, c.jump_mm, c.stable_mm, c.stale_ms, stable,
-             pulse, c.max_pour_ms, saving, reason, ready);
-    vTaskDelayUntil(&wake, pdMS_TO_TICKS(500));
-  }
-}
 void start() {
   ESP_ERROR_CHECK(nvs_flash_init());
   foam_init();
@@ -288,7 +268,6 @@ void start() {
                            nullptr) == pdPASS);
   configASSERT(xTaskCreate(sensor_task, "lidar", 4096, nullptr, 4, nullptr) ==
                pdPASS);
-  configASSERT(xTaskCreate(measurement_log_task, "measure_log", 3072, nullptr, 2, nullptr) == pdPASS);
 
 }
 
