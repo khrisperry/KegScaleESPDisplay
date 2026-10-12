@@ -1,5 +1,10 @@
 CONFIG_IDF_TARGET="esp32s3"
 
+# TouchPour-specific expansion pins (LiDAR stays on GPIO11/10).
+# Existing local sdkconfig files keep their old values until updated.
+CONFIG_TAP_SERVO=18
+CONFIG_TAP_BUTTON=15
+
 # ESP32-S3-WROOM-1-N16R8
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
