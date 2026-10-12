@@ -103,9 +103,10 @@ lv_display_t *touchpour_board_start() {
     {0xE1,14,{0xD0,0x09,0x0F,0x08,0x07,0x14,0x37,0x44,0x4D,0x38,0x15,0x16,0x2C,0x2E}}
   };
   for (auto &c : init) ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io, c.cmd, c.b, c.n));
-  // The panel is mounted portrait with the touch controller in natural X/Y order.
-  // X mirroring makes all LVGL text run right-to-left and misaligns touch.
-  ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, false, false));
+  // IMPORTANT: esp_lvgl_port re-applies cfg.rotation during lvgl_port_add_disp().
+  // Do not set a panel mirror here: it would be silently overwritten.
+  // The board's native scan is horizontally mirrored relative to LVGL;
+  // the corrected base orientation and handle's 180-degree rotation are below.
   ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
   lvgl_port_cfg_t port = ESP_LVGL_PORT_INIT_CONFIG();
@@ -115,11 +116,24 @@ lv_display_t *touchpour_board_start() {
   cfg.io_handle = io; cfg.panel_handle = panel; cfg.buffer_size = 240 * 40;
   cfg.double_buffer = true; cfg.hres = 240; cfg.vres = 320;
   cfg.color_format = LV_COLOR_FORMAT_RGB565;
+  // Establish a readable, non-mirrored 0-degree baseline for this panel.
+  // The port applies these flags AFTER the display is registered, so a
+  // separate esp_lcd_panel_mirror() before add_disp() is ineffective.
+  cfg.rotation.swap_xy = false;
+  cfg.rotation.mirror_x = true;
+  cfg.rotation.mirror_y = false;
   // The SPI panel IO already transmits RGB565 in the proper byte order.
   // Swapping here turned navy into pink and blue buttons into green.
   cfg.flags.buff_dma = true; cfg.flags.swap_bytes = false;
   auto display = lvgl_port_add_disp(&cfg);
   configASSERT(display);
+  // This tap handle mounts the screen inverted: rotate the corrected
+  // baseline by 180 degrees. LVGL also rotates pointer coordinates from
+  // read_touch(), keeping touch hit targets aligned with their labels.
+  configASSERT(lvgl_port_lock(0));
+  lv_display_set_rotation(display, LV_DISPLAY_ROTATION_180);
+  lvgl_port_unlock();
+  ESP_LOGI("touchpour", "LCD orientation: readable baseline, rotated 180 degrees");
   gpio_config_t reset{};
   reset.pin_bit_mask = 1ULL << 2; reset.mode = GPIO_MODE_OUTPUT;
   ESP_ERROR_CHECK(gpio_config(&reset));
