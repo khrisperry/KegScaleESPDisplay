@@ -103,7 +103,9 @@ lv_display_t *touchpour_board_start() {
     {0xE1,14,{0xD0,0x09,0x0F,0x08,0x07,0x14,0x37,0x44,0x4D,0x38,0x15,0x16,0x2C,0x2E}}
   };
   for (auto &c : init) ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io, c.cmd, c.b, c.n));
-  ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, true, false));
+  // The panel is mounted portrait with the touch controller in natural X/Y order.
+  // X mirroring makes all LVGL text run right-to-left and misaligns touch.
+  ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, false, false));
   ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
   lvgl_port_cfg_t port = ESP_LVGL_PORT_INIT_CONFIG();
@@ -113,7 +115,9 @@ lv_display_t *touchpour_board_start() {
   cfg.io_handle = io; cfg.panel_handle = panel; cfg.buffer_size = 240 * 40;
   cfg.double_buffer = true; cfg.hres = 240; cfg.vres = 320;
   cfg.color_format = LV_COLOR_FORMAT_RGB565;
-  cfg.flags.buff_dma = true; cfg.flags.swap_bytes = true;
+  // The SPI panel IO already transmits RGB565 in the proper byte order.
+  // Swapping here turned navy into pink and blue buttons into green.
+  cfg.flags.buff_dma = true; cfg.flags.swap_bytes = false;
   auto display = lvgl_port_add_disp(&cfg);
   configASSERT(display);
   gpio_config_t reset{};
