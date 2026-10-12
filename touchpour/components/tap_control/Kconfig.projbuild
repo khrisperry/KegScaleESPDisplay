@@ -7,8 +7,8 @@ config TAP_SCL
     default 10
 config TAP_SERVO
     int "Servo signal GPIO"
-    default 15
+    default 18
 config TAP_BUTTON
     int "Optional physical pour button GPIO"
-    default 18
+    default 15
 endmenu
