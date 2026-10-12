@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.1
+# TouchPour Display — V0.1.2
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -40,6 +40,13 @@ Pour controller, VL53L0X driver, web UI, foam capture and history are adapted fr
 - Removed a second RGB565 byte swap that produced pink backgrounds and lime-green buttons instead of the configured dark theme.
 - Expanded the scrollable Setup form and hid the disabled Auto Pour button while configuring the device. Home retains its dedicated Auto Pour / STOP button.
 - Flash the new firmware over USB and confirm text orientation, dark colors, and touch accuracy on the physical panel. Hardware verification is still required.
+
+## V0.1.2 orientation correction
+
+- Fix mirrored UI text at the LVGL port layer: `lvgl_port_add_disp()` overrides `esp_lcd_panel_mirror()` calls made before display registration, so base mirror settings now live in `cfg.rotation`.
+- Apply `LV_DISPLAY_ROTATION_180` for the inverted physical tap-handle mounting; portrait remains 240 × 320. LVGL rotates raw input points accordingly.
+- Retain the V0.1.1 corrected RGB565 byte order and taller Setup panel.
+- On hardware, confirm text is readable with the handle in its installed orientation, touch buttons and fields respond where displayed, and a touch anywhere stops an active auto pour. Verify STOP before reconnecting the servo linkage.
 
 ## Board revisions
 
