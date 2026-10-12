@@ -25,8 +25,8 @@ bool firmware_updating = false;
 bool update_closed = false;
 int servo_us = 0;
 static_assert(CONFIG_TAP_SDA == 11 && CONFIG_TAP_SCL == 10 &&
-              CONFIG_TAP_SERVO == 15 && CONFIG_TAP_BUTTON == 18,
-              "TouchPour reserves exposed I2C 11/10, servo 15, button 18");
+              CONFIG_TAP_SERVO == 18 && CONFIG_TAP_BUTTON == 15,
+              "TouchPour requires I2C 11/10, servo GPIO18, optional button GPIO15. Update menuconfig if using an older sdkconfig.");
 std::atomic<bool> touch_stop_armed{false};
 bool busy() {
   if (!state_mutex) return true;
@@ -274,6 +274,8 @@ void start() {
   c.channel = LEDC_CHANNEL_0;
   c.timer_sel = LEDC_TIMER_0;
   ESP_ERROR_CHECK(ledc_channel_config(&c));
+  ESP_LOGI(TAG, "Servo PWM output: GPIO%d, 50 Hz; optional button: GPIO%d",
+           CONFIG_TAP_SERVO, CONFIG_TAP_BUTTON);
   if (settings.servo_calibrated)
     set_servo(settings.closed_us);
   gpio_config_t b = {};
