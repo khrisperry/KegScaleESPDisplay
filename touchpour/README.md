@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.0
+# TouchPour Display — V0.1.1
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -33,6 +33,13 @@ Power the servo from a supply sized for its load and stall current; the board's 
 Scale transport, sessions, discovery, pairing guard, controller setup and text utilities are compiled directly from `../touchscreen/main`, with the shared controller_link and ble_client components. Existing touchscreen behavior is retained outside the `TOUCHPOUR_FIRMWARE` build definition. The compact portrait UI and board driver are specific to TouchPour.
 
 Pour controller, VL53L0X driver, web UI, foam capture and history are adapted from `khrisperry/TapLidarMotor` (see `SOURCE.md` for the exact imported file hashes). The namespace prevents collisions with the scale app's settings, actions and control names. The scale connection and tap website share one Wi-Fi driver and credential store. The large foam-recording buffer uses PSRAM; pour history occupies a dedicated partition after both application slots.
+
+## V0.1.1 display fixes
+
+- Corrected a horizontal LCD mirror setting that made text appear backwards.
+- Removed a second RGB565 byte swap that produced pink backgrounds and lime-green buttons instead of the configured dark theme.
+- Expanded the scrollable Setup form and hid the disabled Auto Pour button while configuring the device. Home retains its dedicated Auto Pour / STOP button.
+- Flash the new firmware over USB and confirm text orientation, dark colors, and touch accuracy on the physical panel. Hardware verification is still required.
 
 ## Board revisions
 
