@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.5
+# TouchPour Display — V0.1.6
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -6,12 +6,18 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 
 - A large round **POUR** button sits at the center (150 px diameter, y=108–257). Beers remaining and the serving vessel sit above it; status (y=272–289) and instructions (y=296–313) have separate rows below. There is no on-screen manual button because the display moves with the tap handle.
 - Swipe left/right above the controls to cycle beers remaining, keg percentage, and minimal gallons views. Changing views is blocked during a pour.
-- POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the footer reads **Touch anywhere to stop**.
+- POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the status reads **Touch anywhere to stop**. The footer shows the live **LiDAR: <distance> mm** at idle and during pouring, or indicates stale/invalid readings.
 - Serving artwork follows the paired scale's serving size: 12 oz can, 16 oz pint, or 20 oz Solo cup. The compact drawings reuse the touch display's tapered outline, amber fill, gray rim/seam and Solo base styling. Other serving sizes use the pint silhouette; no crowler/growler artwork is included. The fill tracks keg percentage.
 - **Touch anywhere on the screen to emergency stop an active pour.** A new touch is processed before LVGL widget dispatch, so there is no need to locate the button. Multi-touch also stops. The whole contact is consumed until all fingers are released; it cannot navigate or restart pouring. A touchscreen read failure while pouring also requests a close.
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.6 installed orientation and live distance
+
+- Turned the image 180 degrees relative to V0.1.5 after physical testing found it upside down. V0.1.5 already set LVGL rotation to 180; this correction returns to rotation 0, retaining the readable panel mirror baseline. LVGL changes pointer mapping with display orientation; raw emergency-stop detection remains independent of coordinates.
+- Replaced the swipe footer with the controller's current LiDAR reading in millimeters, updated every 50 ms. Invalid readings show **no reading** and measurements older than the controller's freshness limit show **stale**. The distance stays visible during pouring, with the emergency-stop reminder in the separate status row above.
+- Version/build checks are local; `[skip ci]` prevents GitHub Actions for this update. Confirm the screen and touch targets in the installed handle, then verify touch-anywhere stop.
 
 ## V0.1.5 screen and speaker cues
 

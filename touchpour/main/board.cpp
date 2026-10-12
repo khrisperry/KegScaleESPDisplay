@@ -127,13 +127,14 @@ lv_display_t *touchpour_board_start() {
   cfg.flags.buff_dma = true; cfg.flags.swap_bytes = false;
   auto display = lvgl_port_add_disp(&cfg);
   configASSERT(display);
-  // This tap handle mounts the screen inverted: rotate the corrected
-  // baseline by 180 degrees. LVGL also rotates pointer coordinates from
-  // read_touch(), keeping touch hit targets aligned with their labels.
+  // Hardware testing found the V0.1.5 orientation upside down. Returning
+  // from ROTATION_180 to the readable baseline turns the displayed image
+  // 180 degrees relative to that build. LVGL applies the same change to
+  // pointer coordinates; do not also flip raw touch coordinates.
   configASSERT(lvgl_port_lock(0));
-  lv_display_set_rotation(display, LV_DISPLAY_ROTATION_180);
+  lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);
   lvgl_port_unlock();
-  ESP_LOGI("touchpour", "LCD orientation: readable baseline, rotated 180 degrees");
+  ESP_LOGI("touchpour", "LCD orientation: installed-handle baseline (180 degrees from V0.1.5)");
   gpio_config_t reset{};
   reset.pin_bit_mask = 1ULL << 2; reset.mode = GPIO_MODE_OUTPUT;
   ESP_ERROR_CHECK(gpio_config(&reset));

@@ -176,6 +176,9 @@ void poll(lv_timer_t *) {
   bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
   bool calibrated=tap::settings.servo_calibrated;
+  const tap::Sample measurement=tap::sample;
+  const uint32_t age=uint32_t(esp_timer_get_time()/1000)-measurement.at;
+  const bool fresh=age<=uint32_t(tap::settings.stale_ms);
   char reason[128];snprintf(reason,sizeof(reason),"%s",tap::manual_hold.pouring?tap::manual_hold.reason:tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
   if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
@@ -184,9 +187,12 @@ void poll(lv_timer_t *) {
   lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
   if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_bg_color(auto_btn,lv_color_hex(active?0xcb3546:0x267de5),0);
-  lv_label_set_text(footer,active?"Touch anywhere to stop":"Swipe for keg details");
+  char distance[48];
+  if(measurement.valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.mm);
+  else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid?"stale":"no reading");
+  lv_label_set_text(footer,distance);
   if(!page && !pairing) {
-    if(active)message("Pouring...");
+    if(active)message("Touch anywhere to stop");
     else if(!calibrated)message("Calibrate servo on website");
     else if(ready)message(reading.valid&&!reading.online?"Cup ready - Scale stale":"Cup detected - Ready");
     else message(reason);
@@ -213,7 +219,7 @@ void ui_start(const Settings &s) {
   lv_obj_set_style_text_align(auto_text,LV_TEXT_ALIGN_CENTER,0);
   auto_caption=label(auto_btn,"Auto fill",&lv_font_montserrat_14);
   lv_obj_set_style_text_align(auto_caption,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(auto_caption,LV_ALIGN_CENTER,0,24);
-  footer=label(root,"Swipe for keg details",&lv_font_montserrat_14);
+  footer=label(root,"LiDAR: waiting",&lv_font_montserrat_14);
   lv_obj_set_pos(footer,8,296);lv_obj_set_size(footer,224,18);lv_obj_set_style_text_align(footer,LV_TEXT_ALIGN_CENTER,0);
   if(saved.ssid[0])show_home();else show_setup();lv_timer_create(poll,50,nullptr);lvgl_port_unlock();
 }
