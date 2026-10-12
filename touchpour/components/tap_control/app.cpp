@@ -2,6 +2,7 @@
 #include "foam_capture.h"
 #include "button_gesture.h"
 #include "pour_history.h"
+#include "audio.h"
 #include "VL53L0X.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -100,6 +101,7 @@ static void sensor_task(void *) {
 static void controller_task(void *) {
   bool initial_high = gpio_get_level((gpio_num_t)CONFIG_TAP_BUTTON);
   ButtonGesture button(initial_high, now_ms());
+  SoundEvents sounds;
   uint32_t manual_deadline = 0;
 
   ESP_LOGI(TAG, "Button GPIO%d: active-low, debounce=30 ms, tap starts on release, "
@@ -122,6 +124,9 @@ static void controller_task(void *) {
       button_event = "HOLD RELEASED / CLOSE";
     }
     if (!manual_hold.pouring) control.update(settings, sample, now);
+    bool cup_ready=control.ready(settings,now);
+    bool cup_absent=sample.valid && uint32_t(now-sample.at)<=uint32_t(settings.stale_ms) &&
+                    (sample.mm>settings.max_mm || sample.mm>=settings.tray_mm-20);
     // The operator controls manual fill. LiDAR readings never authorize or
     // interrupt it; retain only the independent maximum-time limit.
     if (manual_hold.pouring && now - manual_hold.started >= (uint32_t)settings.max_pour_ms)
@@ -143,6 +148,8 @@ static void controller_task(void *) {
       touch_stop_armed = false;
       stop_requested = false;
       xSemaphoreGive(state_mutex);
+      auto cue=sounds.update(false,false,cup_absent,false,now);
+      if(cue!=SoundCue::None)audio_notify(cue);
       if (event.pressed)
         ESP_LOGI(TAG, "BUTTON GPIO%d pressed: ignored during firmware update", CONFIG_TAP_BUTTON);
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -213,9 +220,13 @@ static void controller_task(void *) {
     history_observe(sample, settings, now_ms(), servo_us, pouring_active(),
                     manual_hold.pouring, event.pressed || event.short_press || event.long_press, reason);
     bool stopped = was && !pouring_active();
+    auto cue=sounds.update(cup_ready && !setup_mode && !manual_test_active,
+                           pouring_active(),cup_absent,
+                           strcmp(reason,"Fill target reached")==0,now);
     int mm = sample.mm, pulse = servo_us, cutoff = settings.stop_mm;
     uint32_t age = now - sample.at, sequence = sample.sequence;
     xSemaphoreGive(state_mutex);
+    if(cue!=SoundCue::None)audio_notify(cue);
     if (stopped)
       ESP_LOGI(TAG, "POUR STOP: mode=%s reason=%s distance=%d mm cutoff=%d mm cutoff_applied=%d lidar_checks_applied=%d age=%lu ms sequence=%lu servo=%d us",
                held_was ? "MANUAL_HOLD" : "NORMAL", reason, mm, cutoff, !held_was, !held_was,
@@ -264,6 +275,7 @@ void start() {
   b.pull_up_en = GPIO_PULLUP_ENABLE;
   ESP_ERROR_CHECK(gpio_config(&b));
   history_init();
+  audio_start();
   configASSERT(xTaskCreate(controller_task, "pour_control", 4096, nullptr, 8,
                            nullptr) == pdPASS);
   configASSERT(xTaskCreate(sensor_task, "lidar", 4096, nullptr, 4, nullptr) ==

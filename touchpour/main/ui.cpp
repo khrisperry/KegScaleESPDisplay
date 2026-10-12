@@ -2,6 +2,8 @@
 #include "board.h"
 #include "tap_control.h"
 #include "pour_history.h"
+#include "serving_vessel.h"
+#include "audio.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
 #include "esp_app_desc.h"
@@ -15,13 +17,13 @@
 namespace {
 Settings saved{};
 State reading{};
-lv_obj_t *content, *title, *notice, *auto_btn, *auto_text;
-lv_obj_t *value, *units, *detail, *meter, *network_list, *scale_list;
+lv_obj_t *content, *title, *notice, *auto_btn, *auto_text, *auto_caption, *footer, *vessel;
+lv_obj_t *value, *units, *network_list, *scale_list;
 lv_obj_t *ssid, *password, *host, *keyboard;
 int view = 0, page = 0;
 uint32_t generation = 1;
 bool pairing = false;
-const uint32_t BG=0x101c26, CARD=0x203441, TEXT=0xf2f6f8, ACCENT=0x54d6bf;
+const uint32_t BG=0x101c26, CARD=0x203441, TEXT=0xf2f6f8;
 void show_home();
 void show_setup();
 void message(const char *s) { lv_label_set_text(notice, s ? s : ""); }
@@ -52,18 +54,16 @@ void home_value() {
   if(page || !value)return;
   char b[96];
   lv_label_set_text(title,reading.name[0]?reading.name:"TouchPour");
+  if(vessel)lv_obj_delete(vessel);
+  vessel=serving_vessel::create(content,serving_vessel::for_serving(reading.serving),reading.valid,reading.percent);
+  lv_obj_set_pos(vessel,22,0);
   if(!reading.valid) {
     lv_label_set_text(value,"--"); lv_label_set_text(units,"Waiting for scale");
-    lv_label_set_text(detail,"Pair in Setup to see keg data");
-    if(meter)lv_bar_set_value(meter,0,LV_ANIM_OFF);
     return;
   }
   if(view==0) { snprintf(b,sizeof(b),"%.0f",reading.servings); lv_label_set_text(value,b); lv_label_set_text(units,"beers remaining"); }
   else if(view==1) { snprintf(b,sizeof(b),"%.0f%%",reading.percent); lv_label_set_text(value,b); lv_label_set_text(units,"keg remaining"); }
   else { snprintf(b,sizeof(b),"%.1f",reading.gallons); lv_label_set_text(value,b); lv_label_set_text(units,"gallons remaining"); }
-  snprintf(b,sizeof(b),"%.1f gal  |  %.0f%%\n%s  |  %d / 3",reading.gallons,reading.percent,reading.online?"Connected":"Reading stale",view+1);
-  lv_label_set_text(detail,b);
-  if(meter)lv_bar_set_value(meter,int(fmax(0,fmin(100,reading.percent))),LV_ANIM_OFF);
 }
 void change_view(lv_event_t *e) {
   if(page || pairing || tap::busy())return;
@@ -76,29 +76,28 @@ void change_view(lv_event_t *e) {
 void clear_page() {
   ++generation;
   if(keyboard) { lv_obj_delete(keyboard); keyboard=nullptr; }
-  lv_obj_clean(content); value=units=detail=meter=network_list=scale_list=ssid=password=host=nullptr;
+  lv_obj_clean(content); vessel=value=units=network_list=scale_list=ssid=password=host=nullptr;
 }
 void show_home() {
   clear_page(); page=0; tap::setup_mode=false;
   // Restore the dedicated home screen controls after leaving Setup.
   lv_obj_remove_flag(auto_btn,LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_size(content,224,200);
-  lv_obj_set_pos(notice,8,243);
+  lv_obj_set_size(content,224,64);
+  lv_obj_set_style_bg_opa(content,LV_OPA_TRANSP,0);
+  lv_obj_set_style_pad_all(content,0,0);
+  lv_obj_set_pos(notice,8,272);
+  lv_obj_remove_flag(footer,LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);
   lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_OFF);
   lv_obj_remove_flag(content,LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(content,LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
-  value=label(content,"--",&lv_font_montserrat_48);
-  lv_obj_set_style_text_align(value,LV_TEXT_ALIGN_CENTER,0);
-  units=label(content,"Waiting for scale");lv_obj_set_style_text_align(units,LV_TEXT_ALIGN_CENTER,0);
-  if(view!=2) {
-    meter=lv_bar_create(content);lv_obj_set_size(meter,196,view==1?44:18);
-    lv_obj_set_style_bg_color(meter,lv_color_hex(ACCENT),LV_PART_INDICATOR);
-  }
-  detail=label(content,"Swipe to change view",&lv_font_montserrat_14);
-  lv_obj_set_style_text_align(detail,LV_TEXT_ALIGN_CENTER,0);
-  for(auto o:{value,units,detail,meter}) if(o) lv_obj_add_flag(o,LV_OBJ_FLAG_GESTURE_BUBBLE);
-  home_value(); message("Swipe left or right above buttons");
+  lv_obj_set_layout(content,LV_LAYOUT_NONE);
+  value=label(content,"--",&lv_font_montserrat_36);
+  lv_obj_set_pos(value,78,0);lv_obj_set_size(value,142,42);
+  units=label(content,"Waiting for scale",&lv_font_montserrat_14);
+  lv_obj_set_pos(units,78,45);lv_obj_set_size(units,146,18);
+  lv_label_set_long_mode(units,LV_LABEL_LONG_DOT);
+  for(auto o:{value,units}) lv_obj_add_flag(o,LV_OBJ_FLAG_GESTURE_BUBBLE);
+  home_value(); message("Place cup below the sensor");
 }
 void focus(lv_event_t *e) {
   if(!keyboard) {
@@ -121,7 +120,10 @@ void show_setup() {
   // Setup cannot pour: use the space normally reserved for Auto Pour
   // for scrollable Wi-Fi/scale controls, keeping the status line visible.
   lv_obj_add_flag(auto_btn,LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(footer,LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_size(content,224,242);
+  lv_obj_set_style_bg_opa(content,LV_OPA_COVER,0);
+  lv_obj_set_style_pad_all(content,8,0);
   lv_obj_set_pos(notice,8,289);
   lv_label_set_text(title,"TouchPour Setup");
   lv_obj_add_flag(content,LV_OBJ_FLAG_SCROLLABLE);
@@ -146,6 +148,13 @@ void show_setup() {
     cJSON_AddNumberToObject(j,"brightness",saved.brightness);cJSON_AddNumberToObject(j,"slot",0);submit("settings",j);
   });
   button(content,"Remove scale pairing",[](lv_event_t *){submit("forget");});
+  button(content,tap::audio_enabled()?"Sounds: On (tap to mute)":"Sounds: Muted (tap to enable)",[](lv_event_t *event){
+    bool enabled=!tap::audio_enabled();
+    if(!tap::audio_set_enabled(enabled)){message("Could not save sound setting");return;}
+    auto b=static_cast<lv_obj_t *>(lv_event_get_target(event));
+    lv_label_set_text(lv_obj_get_child(b,0),enabled?"Sounds: On (tap to mute)":"Sounds: Muted (tap to enable)");
+  });
+  button(content,"Test speaker",[](lv_event_t *){tap::audio_notify(tap::SoundCue::Complete);});
   label(content,"Use Add touchscreen on the scale to pair. Pour calibration, servo tests and last five pours are on this device's website.",&lv_font_montserrat_14);
   auto netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};char b[96];
   if(netif && esp_netif_get_ip_info(netif,&ip)==ESP_OK) {
@@ -163,17 +172,25 @@ void auto_action(lv_event_t *) {
 }
 void poll(lv_timer_t *) {
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
-  bool active=tap::pouring_active();
+  bool active=tap::touch_stop_armed.load();
   bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
   bool calibrated=tap::settings.servo_calibrated;
-  const char *reason=tap::manual_hold.pouring?tap::manual_hold.reason:tap::control.reason;
+  char reason[128];snprintf(reason,sizeof(reason),"%s",tap::manual_hold.pouring?tap::manual_hold.reason:tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
-  if(!blocked && (active || ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
-  lv_label_set_text(auto_text,active?"STOP":"Auto Pour");
-  lv_obj_set_style_bg_color(auto_btn,lv_color_hex(active?0xa8333a:0x24577e),0);
-  if(!page && !pairing && (active || !calibrated))message(active?"Touch anywhere to STOP":"Calibrate servo on device website");
-  else if(!page && !pairing && !active && calibrated)message(reason);
+  if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
+  lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"POUR");
+  lv_obj_set_style_text_font(auto_text,active?&lv_font_montserrat_20:&lv_font_montserrat_28,0);
+  lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
+  if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(auto_btn,lv_color_hex(active?0xcb3546:0x267de5),0);
+  lv_label_set_text(footer,active?"Touch anywhere to stop":"Swipe for keg details");
+  if(!page && !pairing) {
+    if(active)message("Pouring...");
+    else if(!calibrated)message("Calibrate servo on website");
+    else if(ready)message(reading.valid&&!reading.online?"Cup ready - Scale stale":"Cup detected - Ready");
+    else message(reason);
+  }
 }
 }
 void ui_start(const Settings &s) {
@@ -182,12 +199,22 @@ void ui_start(const Settings &s) {
   lv_obj_remove_flag(root,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_style_bg_color(root,lv_color_hex(BG),0);
   lv_obj_set_style_text_font(root,&lv_font_montserrat_14,0);
   title=label(root,"TouchPour");lv_obj_set_pos(title,8,7);lv_obj_set_width(title,177);lv_label_set_long_mode(title,LV_LABEL_LONG_DOT);
-  auto menu=button(root,"=",[](lv_event_t *){page?show_home():show_setup();});lv_obj_set_pos(menu,192,3);lv_obj_set_size(menu,40,30);
+  auto menu=button(root,LV_SYMBOL_LIST,[](lv_event_t *){page?show_home():show_setup();});lv_obj_set_pos(menu,192,3);lv_obj_set_size(menu,40,30);
   content=lv_obj_create(root);lv_obj_set_pos(content,8,38);lv_obj_set_size(content,224,200);
   lv_obj_set_style_bg_color(content,lv_color_hex(CARD),0);lv_obj_set_style_border_width(content,0,0);lv_obj_set_style_pad_all(content,8,0);lv_obj_set_style_pad_row(content,8,0);
   lv_obj_add_event_cb(content,change_view,LV_EVENT_GESTURE,nullptr);
   notice=label(root,"");lv_obj_set_pos(notice,8,243);lv_obj_set_size(notice,224,18);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);
-  auto_btn=button(root,"Auto Pour",auto_action);lv_obj_set_pos(auto_btn,8,266);lv_obj_set_size(auto_btn,224,44);auto_text=lv_obj_get_child(auto_btn,0);
+  lv_obj_set_style_text_align(notice,LV_TEXT_ALIGN_CENTER,0);
+  auto_btn=button(root,"POUR",auto_action);lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);auto_text=lv_obj_get_child(auto_btn,0);
+  lv_obj_set_style_radius(auto_btn,LV_RADIUS_CIRCLE,0);lv_obj_set_style_pad_all(auto_btn,0,0);
+  lv_obj_set_style_shadow_width(auto_btn,0,0);
+  lv_obj_set_style_text_font(auto_text,&lv_font_montserrat_28,0);
+  lv_obj_set_style_text_color(auto_text,lv_color_hex(TEXT),0);
+  lv_obj_set_style_text_align(auto_text,LV_TEXT_ALIGN_CENTER,0);
+  auto_caption=label(auto_btn,"Auto fill",&lv_font_montserrat_14);
+  lv_obj_set_style_text_align(auto_caption,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(auto_caption,LV_ALIGN_CENTER,0,24);
+  footer=label(root,"Swipe for keg details",&lv_font_montserrat_14);
+  lv_obj_set_pos(footer,8,296);lv_obj_set_size(footer,224,18);lv_obj_set_style_text_align(footer,LV_TEXT_ALIGN_CENTER,0);
   if(saved.ssid[0])show_home();else show_setup();lv_timer_create(poll,50,nullptr);lvgl_port_unlock();
 }
 void ui_state(const State &s) {if(lvgl_port_lock(1000)){reading=s;home_value();lvgl_port_unlock();}}

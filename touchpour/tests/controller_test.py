@@ -4,9 +4,10 @@ import subprocess
 import tempfile
 root=pathlib.Path(__file__).resolve().parents[1]
 source=(root/'components/tap_control/app.cpp').read_text()
-controller=source[source.index('static void controller_task('):source.index('static void measurement_log_task(')]
+controller=source[source.index('static void controller_task('):source.index('\nvoid start()')]
 harness=r'''
 #include "button_gesture.h"
+#include "audio_events.h"
 using namespace tap;
 #include <atomic>
 #include <cassert>
@@ -26,6 +27,8 @@ struct Action{enum Kind{START,CLOSE,TEST}kind;int pulse;};
 using gpio_num_t=int;
 uint32_t clock_ms=0,limit=0;
 int scenario=0,opens=0,closes=0;
+std::vector<SoundCue> played;
+void audio_notify(SoundCue cue){played.push_back(cue);if(cue==SoundCue::Complete||cue==SoundCue::Stop)assert(servo_us==settings.closed_us);}
 uint32_t opened=0,closed=0;
 uint32_t now_ms(){return clock_ms;}
 int gpio_get_level(int){
@@ -55,6 +58,7 @@ void vTaskDelay(int ms){
 '''+controller+r'''
 void run(int which,uint32_t until){
   scenario=which;clock_ms=0;limit=until;opens=closes=0;opened=closed=0;
+  played.clear();
   settings={};settings.servo_calibrated=settings.distance_calibrated=true;settings.closed_us=1000;settings.open_us=2500;
   control={};manual_hold={};sample={};servo_us=1000;stop_requested=false;
   if(which==5)settings.max_pour_ms=1000;
@@ -64,15 +68,18 @@ void run(int which,uint32_t until){
 }
 int main(){
   run(0,2500);assert(opens==1&&opened==1130&&closed==1800&&!pouring_active());assert(!strcmp(control.reason,"Fill target reached"));
+  assert(played.size()==3&&played[0]==SoundCue::Cup&&played[1]==SoundCue::Start&&played[2]==SoundCue::Complete);
   run(1,5000);assert(opens==1&&opened==3030&&closed==4500&&!pouring_active());assert(!strcmp(control.reason,"Manual fill: button released"));
   run(2,5000);assert(opens==1&&closed==4500&&!pouring_active());
   run(3,5000);assert(opens==1&&closed==3200&&!pouring_active());assert(!strcmp(control.reason,"Emergency stop"));
+  assert(played.size()==2&&played[0]==SoundCue::Start&&played[1]==SoundCue::Stop);
   run(4,6500);assert(opens==1&&opened==5530&&closed==6000&&!pouring_active());
   run(5,5000);assert(opens==1&&closed==4030&&!pouring_active());assert(!strcmp(control.reason,"Maximum pour time"));
   run(6,5000);assert(opens==1&&opened==3030&&closed==4500&&!pouring_active());
   run(7,5000);assert(opens==1&&closed==4500&&!pouring_active());
   run(8,5000);assert(opens==1&&closed==4500&&!pouring_active());
   run(9,5000);assert(opens==0&&!pouring_active());
+  assert(played.empty());
   run(10,3500);assert(opens==1&&opened==1130&&closed==1500&&!pouring_active()&&!touch_stop_armed);
   run(11,3500);assert(opens==2&&opened==2630&&closed==1500&&pouring_active()&&touch_stop_armed);
   puts("PASS: emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");

@@ -1,16 +1,29 @@
-# TouchPour Display — V0.1.4
+# TouchPour Display — V0.1.5
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
 ## Controls and layout
 
-- One full-width **Auto Pour** button in a reserved bottom strip (y=266–309). Content and status stay above it. There is no on-screen manual button because the display moves with the tap handle.
+- A large round **POUR** button sits at the center (150 px diameter, y=108–257). Beers remaining and the serving vessel sit above it; status (y=272–289) and instructions (y=296–313) have separate rows below. There is no on-screen manual button because the display moves with the tap handle.
 - Swipe left/right above the controls to cycle beers remaining, keg percentage, and minimal gallons views. Changing views is blocked during a pour.
-- Auto Pour starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. It becomes **STOP** during a pour.
+- POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the footer reads **Touch anywhere to stop**.
+- Serving artwork follows the paired scale's serving size: 12 oz can, 16 oz pint, or 20 oz Solo cup. The compact drawings reuse the touch display's tapered outline, amber fill, gray rim/seam and Solo base styling. Other serving sizes use the pint silhouette; no crowler/growler artwork is included. The fill tracks keg percentage.
 - **Touch anywhere on the screen to emergency stop an active pour.** A new touch is processed before LVGL widget dispatch, so there is no need to locate the button. Multi-touch also stops. The whole contact is consumed until all fingers are released; it cannot navigate or restart pouring. A touchscreen read failure while pouring also requests a close.
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.5 screen and speaker cues
+
+- Cup detection: one soft chirp after the controller confirms a stable cup. Detection stays latched through a pour/stop and readiness resets; a valid out-of-range reading lasting 600 ms rearms it for the next cup.
+- Pour start: two rising notes after the controller accepts the start and commands the servo open. Rejected starts are silent.
+- Fill target reached: three-note completion chime. Emergency stop, cup removal, sensor faults, maximum time and manual closure use a distinct descending stop tone.
+- Sounds are generated locally using the board's PCM5101 output, stereo 16-bit Philips I2S at 16 kHz: BCLK GPIO48, LRCK GPIO38, DIN GPIO47. No additional wiring beyond connecting the supplied speaker is needed; the board's physical volume knob sets loudness.
+- Setup includes a persistent **Sounds: On / Muted** toggle and **Test speaker**. Audio errors are logged without interrupting pour control. A low-priority audio worker handles DMA; the controller posts cues without waiting, after sending any required close command. The newest cue replaces pending/playing audio so stop cannot wait behind a start chime.
+- Touch-anywhere emergency stop remains in the raw touch driver, before LVGL dispatch. The new screen and speaker do not alter this path.
+- Built/tested locally; the update commit uses `[skip ci]` so GitHub Actions does not run for this change.
+
+After building/flashing V0.1.5, check each of the three serving icons, swipe views, Setup and return-home spacing; test the speaker and mute persistence. Then verify stable cup → detection cue, accepted start → start cue, target stop → completion cue, and touch anywhere → immediate closure/stop tone with no restart until release and a fresh tap. Confirm cup jitter does not repeat chirps, and removing/replacing the cup rearms detection.
 
 ## Wiring
 
