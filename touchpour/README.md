@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.9
+# TouchPour Display — V0.1.10
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -12,6 +12,14 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.10 web layout and idle status
+
+- Restyled the embedded website with a consistent dark theme, clearer navigation, a Setup sidebar on desktop and wrapping navigation on phones, aligned two-column calibration fields, full-width Wi-Fi fields, grouped actions and structured pour-download rows. Kept the close control available in Setup. Everything is bundled in the firmware; no external fonts, scripts or styles are needed.
+- Removed the obsolete TapLidar SoftAP password/instructions from Wi-Fi Setup; this device shares Wi-Fi with its touch display. Firmware upload now checks the correct ESP32-S3 chip ID and `touchpour_display` application name rather than rejecting the S3 image with the old C3 checks.
+- Idle display status now reports the current cup/sensor condition. With no cup, it says **No cup detected** instead of retaining an earlier Emergency stop reason. An idle close request still closes the servo and clears queued starts, but records **Tap closed**. A stop during pouring or a servo test retains **Emergency stop** and the original immediate-close path.
+- The red emergency button follows actual pouring/servo-test motion. Cup presence alone never activates it. Music, smoothing, calibration, history and touch-anywhere stop are retained.
+- Local checks only; `[skip ci]` skips GitHub Actions. Test web calibration, network settings and upload selection, plus removing a cup while idle and stopping a real pour.
 
 ## V0.1.9 instrumental pouring tune
 
@@ -113,15 +121,14 @@ The board driver probes CST3530 at 0x58 (V2) and CST328 at 0x1A (V1), using the 
 Use the ESP-IDF **6.0.1** shell, the same environment used for the current touchscreen.
 
 ```powershell
-cd C:\Users\kperry\Documents\GitHub\KegScaleESPDisplay
-git pull
-cd touchpour
+cd C:\Users\kperry\Documents\GitHub\KegScaleESPDisplay\touchpour
+git pull --ff-only
 idf.py set-target esp32s3
 idf.py build
-idf.py -p COM7 flash monitor
+idf.py -p COM20 flash monitor
 ```
 
-Replace COM7 with the display's port. If USB flashing does not connect, hold BOOT while tapping RESET, release BOOT, and retry. This project has its own build directory and firmware name `touchpour_display.bin`.
+COM20 is the current display's port. If USB flashing does not connect, hold BOOT while tapping RESET, release BOOT, and retry. This project has its own build directory and firmware name `touchpour_display.bin`.
 
 On first boot, enter Wi-Fi using the screen's Setup page (scan, select SSID, password, show/hide). Save the credentials; enter or discover the scale address. Open **Add touchscreen** on the scale to complete the existing pairing flow. A pairing code appears in the status line. Return to the display with the Back button.
 
@@ -139,4 +146,6 @@ bash touchpour/tests/run_host_tests.sh
 
 This includes existing automatic cutoff/button/foam checks, anywhere-touch emergency contacts and the actual pour-controller loop with timed emergency stops and fresh-contact rearming. Hardware acceptance on arrival: verify V1/V2 log, portrait orientation, touch/button alignment, Wi-Fi and scale pairing, servo endpoints with linkage disconnected, sensor readings, auto cutoff, emergency touches across the screen, held-touch restart prevention, maximum time, and persisted pour history after reboot.
 
-Validation completed: ESP-IDF 6.0.1 ESP32-S3 build passed; application size 0x1bab20 bytes (1,813,280 bytes), within each 6 MB app slot. Six host suites passed. Physical board, sensor and servo verification is pending device arrival.
+Current V0.1.10 validation: ten host suites pass, including idle status and actual-controller idle-close behavior; Playwright browser checks pass for desktop/mobile layouts, aligned fields, Wi-Fi, calibration capture, pour downloads, S3 firmware validation and active-pour lockouts. The full ESP-IDF build was not rerun for this update. Browser checks can be run with `node touchpour/tests/web_test.cjs` when Playwright and its Chromium browser are installed.
+
+Initial V0.1.0 validation: ESP-IDF 6.0.1 ESP32-S3 build passed; application size 0x1bab20 bytes (1,813,280 bytes), within each 6 MB app slot. Later V0.1.8 built successfully and the user confirmed audio output on the board.

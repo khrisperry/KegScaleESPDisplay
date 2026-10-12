@@ -4,6 +4,7 @@
 #include "pour_history.h"
 #include "serving_vessel.h"
 #include "audio.h"
+#include "idle_status.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
 #include "esp_app_desc.h"
@@ -179,14 +180,14 @@ void auto_action(lv_event_t *) {
 }
 void poll(lv_timer_t *) {
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
-  bool active=tap::touch_stop_armed.load();
+  bool active=tap::pouring_active() || tap::manual_test_active;
   bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
-  bool calibrated=tap::settings.servo_calibrated;
+  const tap::Settings config=tap::settings;
   const tap::Sample measurement=tap::sample;
   const uint32_t age=uint32_t(esp_timer_get_time()/1000)-measurement.at;
   const bool fresh=age<=uint32_t(tap::settings.stale_ms);
-  char reason[128];snprintf(reason,sizeof(reason),"%s",tap::manual_hold.pouring?tap::manual_hold.reason:tap::control.reason);
+  const char *idle=tap::idle_status(config,measurement,uint32_t(esp_timer_get_time()/1000),ready,tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
   if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
   lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"POUR");
@@ -200,9 +201,7 @@ void poll(lv_timer_t *) {
   lv_label_set_text(footer,distance);
   if(!page && !pairing) {
     if(active)message("Touch anywhere to stop");
-    else if(!calibrated)message("Calibrate servo on website");
-    else if(ready)message(reading.valid&&!reading.online?"Cup ready - Scale stale":"Cup detected - Ready");
-    else message(reason);
+    else message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);
   }
 }
 }

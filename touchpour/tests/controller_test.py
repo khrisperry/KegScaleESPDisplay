@@ -32,6 +32,7 @@ void audio_notify(SoundCue cue){played.push_back(cue);if(cue==SoundCue::Complete
 uint32_t opened=0,closed=0;
 uint32_t now_ms(){return clock_ms;}
 int gpio_get_level(int){
+  if(scenario==12)return 1;
   if(scenario>=10)return !((clock_ms>=1000&&clock_ms<1100)||(scenario==11&&clock_ms>=2500&&clock_ms<2600));
   if(scenario==0)return !(clock_ms>=1000&&clock_ms<1100);
   if(scenario==4)return !((clock_ms<3000)||(clock_ms>=3500&&clock_ms<6000));
@@ -51,9 +52,10 @@ struct Done{};
 void vTaskDelay(int ms){
   clock_ms+=ms;
   if(clock_ms>=limit)throw Done{};
-  if(clock_ms%100==0 && !(scenario==8&&clock_ms>500)){int mm=scenario>=10?200:scenario==0?(clock_ms>=1800?75:200):scenario==7?(clock_ms%200==0?20:1900):60;bool valid=!(scenario==2&&clock_ms>=3300)&&scenario!=6;sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};}
+  if(clock_ms%100==0 && !(scenario==8&&clock_ms>500)){int mm=scenario==12?600:scenario>=10?200:scenario==0?(clock_ms>=1800?75:200):scenario==7?(clock_ms%200==0?20:1900):60;bool valid=!(scenario==2&&clock_ms>=3300)&&scenario!=6;sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};}
   if(scenario==3&&clock_ms==3200)stop_requested=true;
-  if(scenario>=10&&clock_ms==1500){assert(touch_stop_armed);stop_requested=true;}
+  if(scenario==12&&clock_ms==1000)stop_requested=true;
+  if((scenario==10||scenario==11)&&clock_ms==1500){assert(touch_stop_armed);stop_requested=true;}
 }
 '''+controller+r'''
 void run(int which,uint32_t until){
@@ -82,6 +84,8 @@ int main(){
   assert(played.empty());
   run(10,3500);assert(opens==1&&opened==1130&&closed==1500&&!pouring_active()&&!touch_stop_armed);
   run(11,3500);assert(opens==2&&opened==2630&&closed==1500&&pouring_active()&&touch_stop_armed);
+  run(12,1300);assert(opens==0&&!pouring_active()&&!touch_stop_armed&&played.empty());
+  assert(!strcmp(control.reason,"Tap closed")); // idle close is not an emergency
   puts("PASS: emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''

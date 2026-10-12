@@ -162,7 +162,7 @@ static void controller_task(void *) {
     bool stop = stop_requested.exchange(false) || (event.pressed && (was || manual_deadline));
     if (stop) {
       button.cancelUntilRelease();
-      control.stop("Emergency stop");
+      control.stop(was || manual_deadline ? "Emergency stop" : "Tap closed");
       manual_hold.stop(control.reason);
       manual_deadline = 0;
       xQueueReset(actions);
