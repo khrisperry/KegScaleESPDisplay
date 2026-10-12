@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 #include <stdint.h>
 
 namespace tap {
@@ -25,6 +26,11 @@ struct Sample {
   int mm = 0, status = 0;
   bool valid = false;
   uint32_t at = 0, sequence = 0;
+  float filtered_mm = 0;
+  bool filtered_valid = false;
+  int stable_distance() const {
+    return filtered_valid ? int(std::lround(filtered_mm)) : mm;
+  }
 };
 struct Control {
   bool pouring = false;
@@ -82,20 +88,21 @@ struct Control {
       last_valid = s.at;
       return;
     }
-    if (s.mm < c.min_mm || s.mm > c.max_mm || s.mm >= c.tray_mm - 20) {
+    if (s.stable_distance() < c.min_mm || s.stable_distance() > c.max_mm ||
+        s.mm <= c.stop_mm || s.mm >= c.tray_mm - 20) {
       reset_ready();
       return;
     }
     if (count && (uint32_t)(s.at - last_valid) > (uint32_t)c.stale_ms)
       reset_ready();
     if (!count) {
-      low = high = s.mm;
+      low = high = s.stable_distance();
       count = 1;
     } else {
-      low = std::min(low, s.mm);
-      high = std::max(high, s.mm);
+      low = std::min(low, s.stable_distance());
+      high = std::max(high, s.stable_distance());
       if (high - low > c.stable_mm) {
-        low = high = s.mm;
+        low = high = s.stable_distance();
         count = 1;
       } else
         count = std::min(count + 1, 5);

@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
-for test in emergency_touch control button foam_capture audio_events; do
+for test in emergency_touch control button foam_capture audio_events distance_filter; do
   g++ -std=c++17 -Wall -Wextra -Werror "tests/${test}_test.cpp" -o "$test_dir/$test"
   "$test_dir/$test"
 done

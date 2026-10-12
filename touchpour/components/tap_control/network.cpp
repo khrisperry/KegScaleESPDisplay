@@ -160,7 +160,10 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddBoolToObject(j, "ready",
                         control.ready(settings, now) && !setup_mode &&
                             !manual_test_active && !firmware_updating && !history_saving && !pouring_active());
-  cJSON_AddNumberToObject(j, "distance_mm", sample.mm);
+  cJSON_AddNumberToObject(j, "distance_mm", sample.stable_distance());
+  cJSON_AddNumberToObject(j, "raw_distance_mm", sample.mm);
+  cJSON_AddNumberToObject(j, "filtered_distance_mm", sample.filtered_mm);
+  cJSON_AddBoolToObject(j, "filtered_valid", sample.filtered_valid);
   cJSON_AddNumberToObject(j, "sensor_status", sample.status);
   cJSON_AddNumberToObject(j, "age_ms", now - sample.at);
   cJSON_AddBoolToObject(j, "measurement_valid",
@@ -238,7 +241,7 @@ static esp_err_t foam_csv(httpd_req_t *r) {
   snprintf(filename, sizeof(filename), "attachment; filename=\"tap-foam-v%s.csv\"",
            esp_app_get_description()->version);
   httpd_resp_set_hdr(r, "Content-Disposition", filename);
-  const char *header = "elapsed_ms,sequence,distance_mm,sensor_status,valid,interval_ms,delta_mm,rate_mm_per_s,controller_age_ms,pouring,ready,servo_test,button_pressed,servo_us,stable_samples,cutoff_mm,tray_mm,manual_hold,markers,reason,firmware\r\n";
+  const char *header = "elapsed_ms,sequence,distance_mm,sensor_status,valid,interval_ms,delta_mm,rate_mm_per_s,controller_age_ms,pouring,ready,servo_test,button_pressed,servo_us,stable_samples,cutoff_mm,tray_mm,manual_hold,markers,reason,firmware,filtered_distance_mm,filtered_valid\r\n";
   esp_err_t e = httpd_resp_sendstr_chunk(r, header);
   if (e != ESP_OK) return e;
   char chunk[2048], line[512];
@@ -246,7 +249,8 @@ static esp_err_t foam_csv(httpd_req_t *r) {
   for (size_t i = 0; i < recording.count; ++i) {
     FoamRow row{};
     if (!foam_row(i, row)) return ESP_FAIL;
-    char delta[32] = {}, rate[32] = {}, markers[64] = {};
+    char delta[32] = {}, rate[32] = {}, markers[64] = {}, filtered[32] = {};
+    if(row.filtered_valid)snprintf(filtered,sizeof(filtered),"%.3f",double(row.filtered_mm));
     if (row.flags & FoamCapture::DELTA_VALID) {
       snprintf(delta, sizeof(delta), "%ld", (long)row.delta_mm);
       if (row.interval_ms)
@@ -256,14 +260,14 @@ static esp_err_t foam_csv(httpd_req_t *r) {
     if (row.markers & FoamCapture::CUP_REMOVED) strcat(markers, "cup_removed|");
     if (row.markers & FoamCapture::CUP_RETURNED) strcat(markers, "cup_returned|");
     if (markers[0]) markers[strlen(markers) - 1] = 0;
-    int n = snprintf(line, sizeof(line), "%lu,%lu,%ld,%d,%d,%lu,%s,%s,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%s,\"%s\",%s\r\n",
+    int n = snprintf(line, sizeof(line), "%lu,%lu,%ld,%d,%d,%lu,%s,%s,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%s,\"%s\",%s,%s,%d\r\n",
         (unsigned long)row.elapsed_ms, (unsigned long)row.sequence, (long)row.mm, row.status,
         !!(row.flags & FoamCapture::VALID), (unsigned long)row.interval_ms, delta, rate,
         (unsigned long)row.age_ms, !!(row.flags & FoamCapture::POURING),
         !!(row.flags & FoamCapture::READY), !!(row.flags & FoamCapture::SERVO_TEST),
         !!(row.flags & FoamCapture::BUTTON), row.servo_us, row.stable_samples,
         row.cutoff_mm, row.tray_mm, !!(row.flags & FoamCapture::MANUAL_HOLD), markers, row.reason ? row.reason : "",
-        esp_app_get_description()->version);
+        esp_app_get_description()->version,filtered,row.filtered_valid);
     if (n < 0 || (size_t)n >= sizeof(line)) return ESP_FAIL;
     if (used + n > sizeof(chunk)) {
       e = httpd_resp_send_chunk(r, chunk, used);

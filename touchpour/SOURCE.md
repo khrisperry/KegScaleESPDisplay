@@ -28,3 +28,5 @@ Source tree: `d2a8e4fa3ecdd69badc5bb8eb3bdbead1d197735`
 | `main/pour_history.h` | `0616236043f2c8bbc04d46999d134567e086ada4` |
 
 Adaptations: namespace `tap`, ESP32-S3 GPIOs, anywhere-touch emergency-stop integration, shared Wi-Fi owner/credential store, TouchPour firmware name and website wording. Vendor touch register and panel initialization protocol: Waveshare ESP32-S3-Touch-LCD-2.8-V2-Demo.zip, downloaded 2026-10-08, https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8-V2-Demo.zip.
+
+V0.1.7 smoothing synchronization (2026-10-12): copied `main/distance_filter.h` verbatim from TapLidarMotor (blob `cd384cc200f726791560d497f0e34bab2c66c093`). Adapted its filtered Sample fields, idle readiness, status/web display and calibration capture, and dual raw/filtered foam recording. The three-sample median and EMA coefficient 0.4 match upstream. This is a targeted smoothing port; the original persistent pour-history format is retained.

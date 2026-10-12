@@ -11,6 +11,8 @@ struct FoamRow {
   int16_t status, servo_us, cutoff_mm, tray_mm;
   uint8_t flags, markers, stable_samples;
   const char *reason;
+  float filtered_mm;
+  bool filtered_valid;
 };
 class FoamCapture {
 public:
@@ -48,7 +50,8 @@ public:
     rows[count++] = {s.at - started, s.sequence, now - s.at, interval,
                      s.mm, delta_valid ? s.mm - previous_mm : 0,
                      (int16_t)s.status, (int16_t)servo, (int16_t)c.stop_mm,
-                     (int16_t)c.tray_mm, flags, pending_markers, 0, reason};
+                     (int16_t)c.tray_mm, flags, pending_markers, 0, reason,
+                     s.filtered_mm,s.filtered_valid};
     previous_valid = s.valid; previous_at = s.at; previous_mm = s.mm;
     pending_button = false; pending_markers = 0;
     if (count == capacity) stop(now);

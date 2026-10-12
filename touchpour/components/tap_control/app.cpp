@@ -3,6 +3,7 @@
 #include "button_gesture.h"
 #include "pour_history.h"
 #include "audio.h"
+#include "distance_filter.h"
 #include "VL53L0X.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -72,6 +73,7 @@ static void sensor_task(void *) {
   lidar.setTimeout(120);
   bool initialized = false;
   uint32_t seq = 0;
+  DistanceFilter filter;
   for (;;) {
     Wire.healthy = true;
     int mm = 0;
@@ -93,6 +95,8 @@ static void sensor_task(void *) {
     }
     Sample s{mm, lidar.range_status, valid, now_ms(), ++seq};
     xSemaphoreTake(state_mutex, portMAX_DELAY);
+    s.filtered_mm=filter.update(mm,valid,s.at,settings.stale_ms);
+    s.filtered_valid=valid;
     sample = s;
     xSemaphoreGive(state_mutex);
     vTaskDelay(pdMS_TO_TICKS(initialized ? 20 : 1000));
@@ -126,7 +130,7 @@ static void controller_task(void *) {
     if (!manual_hold.pouring) control.update(settings, sample, now);
     bool cup_ready=control.ready(settings,now);
     bool cup_absent=sample.valid && uint32_t(now-sample.at)<=uint32_t(settings.stale_ms) &&
-                    (sample.mm>settings.max_mm || sample.mm>=settings.tray_mm-20);
+                    (sample.stable_distance()>settings.max_mm || sample.mm>=settings.tray_mm-20);
     // The operator controls manual fill. LiDAR readings never authorize or
     // interrupt it; retain only the independent maximum-time limit.
     if (manual_hold.pouring && now - manual_hold.started >= (uint32_t)settings.max_pour_ms)

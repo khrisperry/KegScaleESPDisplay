@@ -188,8 +188,8 @@ void poll(lv_timer_t *) {
   if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_bg_color(auto_btn,lv_color_hex(active?0xcb3546:0x267de5),0);
   char distance[48];
-  if(measurement.valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.mm);
-  else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid?"stale":"no reading");
+  if(measurement.valid && measurement.filtered_valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.stable_distance());
+  else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid&&!fresh?"stale":"no reading");
   lv_label_set_text(footer,distance);
   if(!page && !pairing) {
     if(active)message("Touch anywhere to stop");

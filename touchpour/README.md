@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.6
+# TouchPour Display — V0.1.7
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -12,6 +12,14 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.7 TapLidarMotor smoothing
+
+- Imported the same three-sample median followed by an exponential moving average (alpha 0.4). Invalid readings and gaps exceeding the configured freshness limit reset the filter, so old cup measurements cannot carry into a new reading.
+- The screen, web distance, and calibration captures use the smoothed value. Idle cup readiness also uses the smoothed range/spread, while retaining raw full-cup/tray checks.
+- Active pour cutoff, cup removal, erratic readings, invalid/stale sensor checks and manual hold behavior retain their immediate raw inputs. Smoothing cannot delay a close command or touch-anywhere stop.
+- Web status includes `raw_distance_mm`, `filtered_distance_mm`, and `filtered_valid`. Foam-test CSV keeps raw distance/delta/rate and adds filtered distance/validity columns. Persistent last-five-pours history and serial event logs retain raw readings; saved history and calibration remain compatible.
+- Build and tests run locally; the commit uses `[skip ci]`. Verify a stationary cup gives a steadier display, real movement is still followed, and cutoff/anywhere-stop close promptly.
 
 ## V0.1.6 installed orientation and live distance
 
