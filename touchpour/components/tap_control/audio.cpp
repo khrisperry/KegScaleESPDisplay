@@ -10,17 +10,22 @@
 
 namespace tap {
 namespace {
-constexpr int rate=16000, frames=128;
+// PCM5101 uses BCLK to generate its master clock (no external MCLK).
+// TI's PLL table forbids 16 kHz / 32 BCLK per frame. Match Waveshare's
+// 44.1 kHz, 16-bit stereo example: BCLK = 44100 * 16 * 2 = 1.4112 MHz.
+constexpr int rate=44100, frames=128, ramp_frames=rate/200;
 constexpr const char *tag="tap_audio";
 i2s_chan_handle_t output;
 QueueHandle_t cues;
 std::atomic<bool> enabled{true};
+std::atomic<bool> audio_ready{false};
 struct Note { int hz, ms; };
 constexpr Note cup[]={{1100,90},{0,40}};
 constexpr Note start[]={{660,90},{0,30},{990,120},{0,40}};
 constexpr Note complete[]={{784,100},{988,100},{1175,180},{0,40}};
 constexpr Note stop[]={{880,100},{0,25},{440,160},{0,40}};
 void audio_task(void *) {
+  audio_ready=true;
   const Note *notes=nullptr;
   int count=0,index=0,offset=0;
   float phase=0;
@@ -28,6 +33,7 @@ void audio_task(void *) {
   for (;;) {
     SoundCue cue;
     if (xQueueReceive(cues,&cue,0)==pdTRUE) {
+      if(cue!=SoundCue::None)ESP_LOGI(tag,"Playing cue=%d, %d Hz / 16-bit stereo",int(cue),rate);
       index=offset=0; phase=0;
       switch(cue) {
       case SoundCue::Cup: notes=cup;count=2;break;
@@ -44,7 +50,7 @@ void audio_task(void *) {
         int hz=notes[index].hz;
         // 5 ms attack/release avoids clicks; moderate PCM amplitude, with
         // final loudness set by Waveshare's physical volume knob.
-        float envelope=std::fmin(1.0f,std::fmin(offset/80.0f,(length-1-offset)/80.0f));
+        float envelope=std::fmin(1.0f,std::fmin(float(offset)/ramp_frames,float(length-1-offset)/ramp_frames));
         if(hz) {
           sample=int16_t(std::sin(phase)*5000*envelope);
           phase+=6.28318530718f*hz/rate;
@@ -59,6 +65,7 @@ void audio_task(void *) {
     // the cue; no SD card, network access, codec control bus, or PWM needed.
     esp_err_t error=i2s_channel_write(output,pcm,sizeof(pcm),&written,50);
     if(error!=ESP_OK || written!=sizeof(pcm)) {
+      audio_ready=false;
       ESP_LOGW(tag,"Audio write failed: %s; pour control continues",esp_err_to_name(error));
       i2s_channel_disable(output);
       vTaskDelete(nullptr);
@@ -68,6 +75,12 @@ void audio_task(void *) {
 }
 }
 bool audio_enabled(){return enabled.load();}
+bool audio_test() {
+  ESP_LOGI(tag,"Speaker test requested: enabled=%d ready=%d",int(enabled.load()),int(audio_ready.load()));
+  if(!enabled || !audio_ready)return false;
+  audio_notify(SoundCue::Complete);
+  return true;
+}
 bool audio_set_enabled(bool value) {
   nvs_handle_t handle;
   if(nvs_open("tap_audio",NVS_READWRITE,&handle)!=ESP_OK)return false;
@@ -110,6 +123,7 @@ void audio_start() {
     ESP_LOGW(tag,"Audio unavailable: %s; pour control continues",esp_err_to_name(error));
     if(cues){vQueueDelete(cues);cues=nullptr;}
     if(output){i2s_channel_disable(output);i2s_del_channel(output);output=nullptr;}
-  } else ESP_LOGI(tag,"PCM5101 speaker: BCLK48/LRCK38/DIN47, sounds %s",enabled?"enabled":"muted");
+  } else ESP_LOGI(tag,"PCM5101 speaker: BCLK48/LRCK38/DIN47, rate=%d Hz, BCLK=%d Hz, sounds %s",
+                 rate,rate*16*2,enabled?"enabled":"muted");
 }
 } // namespace tap

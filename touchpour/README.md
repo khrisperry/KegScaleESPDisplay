@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.7
+# TouchPour Display — V0.1.8
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -12,6 +12,13 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.8 PCM5101 speaker clock correction
+
+- Replaced the unsupported 16 kHz / 16-bit stereo (32 BCLK per frame) clock setup with Waveshare's 44.1 kHz / 16-bit stereo format. With no external MCLK, the PCM5101 PLL requires a supported BCLK/LRCK combination; TI's table marks 16 kHz / 32 BCLK unsupported, while 44.1 kHz / 32 BCLK is supported (1.4112 MHz BCLK). See https://www.ti.com/lit/ds/symlink/pcm5101a.pdf, BCK PLL clock table.
+- Speaker-test feedback distinguishes muted sounds and an unavailable audio worker. Serial logs show the clock setup, speaker-test request and each cue played; there is no repeating audio log spam. The worker still runs below pour-control priority and never delays servo closure.
+- On the ESP32-S3Touch-LCD2.8 240x320 Rev1.1 board, connect the supplied speaker to the speaker header and set the physical volume knob above minimum. In Setup, confirm **Sounds: On**, then press **Test speaker**. If silent, share the boot `tap_audio` line and logs from pressing the speaker test.
+- Local build/tests only; `[skip ci]` skips GitHub Actions. Actual speaker output still needs verification on the board.
 
 ## V0.1.7 TapLidarMotor smoothing
 
@@ -32,7 +39,7 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Cup detection: one soft chirp after the controller confirms a stable cup. Detection stays latched through a pour/stop and readiness resets; a valid out-of-range reading lasting 600 ms rearms it for the next cup.
 - Pour start: two rising notes after the controller accepts the start and commands the servo open. Rejected starts are silent.
 - Fill target reached: three-note completion chime. Emergency stop, cup removal, sensor faults, maximum time and manual closure use a distinct descending stop tone.
-- Sounds are generated locally using the board's PCM5101 output, stereo 16-bit Philips I2S at 16 kHz: BCLK GPIO48, LRCK GPIO38, DIN GPIO47. No additional wiring beyond connecting the supplied speaker is needed; the board's physical volume knob sets loudness.
+- Sounds are generated locally using the board's PCM5101 output, stereo 16-bit Philips I2S at 44.1 kHz (corrected in V0.1.8): BCLK GPIO48, LRCK GPIO38, DIN GPIO47. No additional wiring beyond connecting the supplied speaker is needed; the board's physical volume knob sets loudness.
 - Setup includes a persistent **Sounds: On / Muted** toggle and **Test speaker**. Audio errors are logged without interrupting pour control. A low-priority audio worker handles DMA; the controller posts cues without waiting, after sending any required close command. The newest cue replaces pending/playing audio so stop cannot wait behind a start chime.
 - Touch-anywhere emergency stop remains in the raw touch driver, before LVGL dispatch. The new screen and speaker do not alter this path.
 - Built/tested locally; the update commit uses `[skip ci]` so GitHub Actions does not run for this change.

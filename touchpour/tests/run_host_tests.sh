@@ -8,4 +8,5 @@ for test in emergency_touch control button foam_capture audio_events distance_fi
   "$test_dir/$test"
 done
 python3 tests/controller_test.py
+python3 tests/audio_driver_test.py
 python3 tests/pour_history_test.py
