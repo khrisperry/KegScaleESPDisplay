@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.3
+# TouchPour Display — V0.1.4
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -10,7 +10,7 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - **Touch anywhere on the screen to emergency stop an active pour.** A new touch is processed before LVGL widget dispatch, so there is no need to locate the button. Multi-touch also stops. The whole contact is consumed until all fingers are released; it cannot navigate or restart pouring. A touchscreen read failure while pouring also requests a close.
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
-- Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, 500 ms serial measurements, and persistent history for the last five pours.
+- Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
 
 ## Wiring
 
@@ -33,6 +33,12 @@ Power the servo from a supply sized for its load and stall current; the board's 
 Scale transport, sessions, discovery, pairing guard, controller setup and text utilities are compiled directly from `../touchscreen/main`, with the shared controller_link and ble_client components. Existing touchscreen behavior is retained outside the `TOUCHPOUR_FIRMWARE` build definition. The compact portrait UI and board driver are specific to TouchPour.
 
 Pour controller, VL53L0X driver, web UI, foam capture and history are adapted from `khrisperry/TapLidarMotor` (see `SOURCE.md` for the exact imported file hashes). The namespace prevents collisions with the scale app's settings, actions and control names. The scale connection and tap website share one Wi-Fi driver and credential store. The large foam-recording buffer uses PSRAM; pour history occupies a dedicated partition after both application slots.
+
+## V0.1.4 quieter serial diagnostics
+
+- Removed the unconditional 500 ms `tap_measure` serial logger task. The LiDAR/controller continues sampling and running normally; web status, optional foam capture and the last-five-pours history remain available.
+- Kept event-driven servo, button, pour-stop and error logs. On each changed servo output, logs now include `Servo PWM GPIO18: <pulse> us, 50 Hz, duty=<value>/16384` so test commands can be distinguished without sensor spam.
+- **Servo troubleshooting:** A steady 5 V measured across the servo's power and ground during a test is expected. Check that the signal lead really connects to GPIO18 and that the servo's power-supply ground connects to Waveshare GND. At 50 Hz a 1000–2000 us 3.3 V logic pulse averages only about 0.165–0.33 V on a DC meter. A scope/logic analyzer or servo tester is better to verify actual pulse widths. Disconnect the linkage before testing.
 
 ## V0.1.3 servo GPIO18 wiring
 
