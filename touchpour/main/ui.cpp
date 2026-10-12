@@ -80,6 +80,11 @@ void clear_page() {
 }
 void show_home() {
   clear_page(); page=0; tap::setup_mode=false;
+  // Restore the dedicated home screen controls after leaving Setup.
+  lv_obj_remove_flag(auto_btn,LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_size(content,224,200);
+  lv_obj_set_pos(notice,8,243);
+  lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_OFF);
   lv_obj_remove_flag(content,LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(content,LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
@@ -113,8 +118,15 @@ lv_obj_t *field(const char *caption,const char *text,bool secret=false) {
 void show_setup() {
   if(tap::busy()) { message("Stop pouring before Setup"); return; }
   clear_page(); page=1; tap::setup_mode=true;
+  // Setup cannot pour: use the space normally reserved for Auto Pour
+  // for scrollable Wi-Fi/scale controls, keeping the status line visible.
+  lv_obj_add_flag(auto_btn,LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_size(content,224,242);
+  lv_obj_set_pos(notice,8,289);
   lv_label_set_text(title,"TouchPour Setup");
   lv_obj_add_flag(content,LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(content,LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_ACTIVE);
   lv_obj_set_flex_flow(content,LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START);
   button(content,"Back to display",[](lv_event_t *){show_home();});
@@ -172,7 +184,7 @@ void ui_start(const Settings &s) {
   title=label(root,"TouchPour");lv_obj_set_pos(title,8,7);lv_obj_set_width(title,177);lv_label_set_long_mode(title,LV_LABEL_LONG_DOT);
   auto menu=button(root,"=",[](lv_event_t *){page?show_home():show_setup();});lv_obj_set_pos(menu,192,3);lv_obj_set_size(menu,40,30);
   content=lv_obj_create(root);lv_obj_set_pos(content,8,38);lv_obj_set_size(content,224,200);
-  lv_obj_set_style_bg_color(content,lv_color_hex(CARD),0);lv_obj_set_style_border_width(content,0,0);lv_obj_set_style_pad_all(content,8,0);
+  lv_obj_set_style_bg_color(content,lv_color_hex(CARD),0);lv_obj_set_style_border_width(content,0,0);lv_obj_set_style_pad_all(content,8,0);lv_obj_set_style_pad_row(content,8,0);
   lv_obj_add_event_cb(content,change_view,LV_EVENT_GESTURE,nullptr);
   notice=label(root,"");lv_obj_set_pos(notice,8,243);lv_obj_set_size(notice,224,18);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);
   auto_btn=button(root,"Auto Pour",auto_action);lv_obj_set_pos(auto_btn,8,266);lv_obj_set_size(auto_btn,224,44);auto_text=lv_obj_get_child(auto_btn,0);
