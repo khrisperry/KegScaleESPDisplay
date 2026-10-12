@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "pour_melody.h"
 #include "driver/i2s_std.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -19,9 +20,8 @@ i2s_chan_handle_t output;
 QueueHandle_t cues;
 std::atomic<bool> enabled{true};
 std::atomic<bool> audio_ready{false};
-struct Note { int hz, ms; };
+using Note=AudioNote;
 constexpr Note cup[]={{1100,90},{0,40}};
-constexpr Note start[]={{660,90},{0,30},{990,120},{0,40}};
 constexpr Note complete[]={{784,100},{988,100},{1175,180},{0,40}};
 constexpr Note stop[]={{880,100},{0,25},{440,160},{0,40}};
 void audio_task(void *) {
@@ -29,15 +29,17 @@ void audio_task(void *) {
   const Note *notes=nullptr;
   int count=0,index=0,offset=0;
   float phase=0;
+  bool repeat=false;
   int16_t pcm[frames*2]{};
   for (;;) {
     SoundCue cue;
     if (xQueueReceive(cues,&cue,0)==pdTRUE) {
       if(cue!=SoundCue::None)ESP_LOGI(tag,"Playing cue=%d, %d Hz / 16-bit stereo",int(cue),rate);
-      index=offset=0; phase=0;
+      index=offset=0; phase=0;repeat=false;
       switch(cue) {
       case SoundCue::Cup: notes=cup;count=2;break;
-      case SoundCue::Start: notes=start;count=4;break;
+      case SoundCue::Start: notes=pour_melody;count=pour_melody_count;repeat=true;break;
+      case SoundCue::Preview: notes=pour_melody;count=pour_melody_count;break;
       case SoundCue::Complete: notes=complete;count=4;break;
       case SoundCue::Stop: notes=stop;count=4;break;
       default: notes=nullptr;count=0;break;
@@ -56,7 +58,7 @@ void audio_task(void *) {
           phase+=6.28318530718f*hz/rate;
           if(phase>=6.28318530718f)phase-=6.28318530718f;
         }
-        if(++offset>=length){offset=0;phase=0;++index;}
+        if(++offset>=length){offset=0;phase=0;++index;if(index==count && repeat)index=0;}
       }
       pcm[2*f]=pcm[2*f+1]=sample;
     }
@@ -79,6 +81,12 @@ bool audio_test() {
   ESP_LOGI(tag,"Speaker test requested: enabled=%d ready=%d",int(enabled.load()),int(audio_ready.load()));
   if(!enabled || !audio_ready)return false;
   audio_notify(SoundCue::Complete);
+  return true;
+}
+bool audio_preview() {
+  ESP_LOGI(tag,"Pour tune preview requested: enabled=%d ready=%d",int(enabled.load()),int(audio_ready.load()));
+  if(!enabled || !audio_ready)return false;
+  audio_notify(SoundCue::Preview);
   return true;
 }
 bool audio_set_enabled(bool value) {

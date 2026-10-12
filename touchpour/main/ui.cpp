@@ -158,6 +158,10 @@ void show_setup() {
     bool played=tap::audio_test();
     message(played?"Speaker test playing":tap::audio_enabled()?"Audio unavailable - see serial":"Enable sounds to test speaker");
   });
+  button(content,"Test pour tune",[](lv_event_t *){
+    bool played=tap::audio_preview();
+    message(played?"Playing 99 Bottles preview":tap::audio_enabled()?"Audio unavailable - see serial":"Enable sounds to test tune");
+  });
   label(content,"Use Add touchscreen on the scale to pair. Pour calibration, servo tests and last five pours are on this device's website.",&lv_font_montserrat_14);
   auto netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};char b[96];
   if(netif && esp_netif_get_ip_info(netif,&ip)==ESP_OK) {

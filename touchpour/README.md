@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.8
+# TouchPour Display — V0.1.9
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -12,6 +12,14 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.9 instrumental pouring tune
+
+- Automatic and physical-button manual pours play an instrumental **99 Bottles of Beer** verse from the start, looping for as long as the controller is actually pouring. It replaces the short start cue. There are no vocals, downloads or SD-card files.
+- When the controller stops pouring, the loop is replaced by the completion or descending stop cue. The servo close command still happens before the audio event is posted. Playback runs in the same low-priority worker; emergency stop remains independent of audio. The final few milliseconds already queued in I2S DMA can finish while the close command proceeds immediately.
+- Setup → **Test pour tune** previews one verse and then falls silent without operating the servo. **Test speaker** retains the short completion chime. The saved sound mute and physical volume control apply to both.
+- Melody-data attribution and its CC BY-SA 4.0 license are in `components/tap_control/pour_melody.h`.
+- Local checks only; `[skip ci]` skips GitHub Actions. On hardware, verify music continues throughout a pour and is interrupted by target completion, touch-anywhere stop, cup removal or a sensor fault.
 
 ## V0.1.8 PCM5101 speaker clock correction
 
@@ -37,7 +45,7 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 ## V0.1.5 screen and speaker cues
 
 - Cup detection: one soft chirp after the controller confirms a stable cup. Detection stays latched through a pour/stop and readiness resets; a valid out-of-range reading lasting 600 ms rearms it for the next cup.
-- Pour start: two rising notes after the controller accepts the start and commands the servo open. Rejected starts are silent.
+- Pour start: instrumental 99 Bottles of Beer loops after the controller accepts the start and commands the servo open (V0.1.9). Rejected starts are silent.
 - Fill target reached: three-note completion chime. Emergency stop, cup removal, sensor faults, maximum time and manual closure use a distinct descending stop tone.
 - Sounds are generated locally using the board's PCM5101 output, stereo 16-bit Philips I2S at 44.1 kHz (corrected in V0.1.8): BCLK GPIO48, LRCK GPIO38, DIN GPIO47. No additional wiring beyond connecting the supplied speaker is needed; the board's physical volume knob sets loudness.
 - Setup includes a persistent **Sounds: On / Muted** toggle and **Test speaker**. Audio errors are logged without interrupting pour control. A low-priority audio worker handles DMA; the controller posts cues without waiting, after sending any required close command. The newest cue replaces pending/playing audio so stop cannot wait behind a start chime.

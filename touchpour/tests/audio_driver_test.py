@@ -8,6 +8,7 @@ source = (root / "components/tap_control/audio.cpp").read_text()
 source = "\n".join(line for line in source.splitlines() if not line.startswith("#include"))
 harness = r'''
 #include "audio.h"
+#include "pour_melody.h"
 #include <atomic>
 #include <cmath>
 #include <cassert>
@@ -40,7 +41,8 @@ i2s_std_config_t configured;
 void(*worker)(void*)=nullptr;
 bool pending=false;
 tap::SoundCue queued=tap::SoundCue::None;
-int writes=0,peak=0;
+int writes=0,peak=0,limit=200,nonzero_writes=0,last_nonzero=0,interrupt_at=0;
+tap::SoundCue interrupt_cue=tap::SoundCue::None;
 bool saved_enabled=true;
 struct Done{};
 int xQueueReceive(void*,void* value,int){if(!pending)return 0;memcpy(value,&queued,sizeof(queued));pending=false;return pdTRUE;}
@@ -61,13 +63,18 @@ int i2s_channel_disable(void*){return ESP_OK;}
 int i2s_del_channel(void*){return ESP_OK;}
 int i2s_channel_write(void*,const void* data,size_t size,size_t* written,int){
  const auto pcm=static_cast<const int16_t*>(data);
- for(size_t i=0;i<size/sizeof(int16_t);i+=2){assert(pcm[i]==pcm[i+1]);peak=std::max(peak,std::abs(int(pcm[i])));}
+ int chunk_peak=0;
+ for(size_t i=0;i<size/sizeof(int16_t);i+=2){assert(pcm[i]==pcm[i+1]);chunk_peak=std::max(chunk_peak,std::abs(int(pcm[i])));}
+ peak=std::max(peak,chunk_peak);
+ if(chunk_peak){++nonzero_writes;last_nonzero=writes;}
  *written=size;
- if(++writes>=200)throw Done{};
+ ++writes;
+ if(writes==interrupt_at){queued=interrupt_cue;pending=true;}
+ if(writes>=limit)throw Done{};
  return ESP_OK;
 }
 '''+source+r'''
-void run(){writes=peak=0;try{worker(nullptr);}catch(Done&){} }
+void run(int chunks=200){writes=peak=nonzero_writes=last_nonzero=0;limit=chunks;try{worker(nullptr);}catch(Done&){} }
 int main(){
  tap::audio_start();assert(worker);
  // This no-MCLK clock pair is permitted by the PCM5101 PLL table.
@@ -80,6 +87,16 @@ int main(){
  assert(tap::audio_set_enabled(false)&&!saved_enabled&&!tap::audio_test());run();assert(peak==0);
  tap::audio_notify(tap::SoundCue::Start);run();assert(peak==0);
  assert(tap::audio_set_enabled(true)&&saved_enabled);assert(tap::audio_test());run();assert(peak>4000);
+ // 18.5 seconds exceeds a verse: pour music must wrap and keep playing.
+ tap::audio_notify(tap::SoundCue::Start);run(6400);assert(last_nonzero>6300);
+ // Preview plays one complete verse and does not loop indefinitely.
+ assert(tap::audio_preview());run(6400);assert(nonzero_writes>4000&&last_nonzero<5100);
+ // Stop/completion interrupt the loop and then stay silent.
+ for(auto cue:{tap::SoundCue::Stop,tap::SoundCue::Complete,tap::SoundCue::None}){
+  interrupt_at=200;interrupt_cue=cue;
+  tap::audio_notify(tap::SoundCue::Start);run(1000);
+  assert(last_nonzero<370);interrupt_at=0;
+ }
  puts("PASS: real speaker clock/pins, stereo PCM generation, test cue, mute/save/unmute, low-priority worker");
 }
 '''

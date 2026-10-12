@@ -2,7 +2,7 @@
 #include <cstdint>
 
 namespace tap {
-enum class SoundCue { None, Cup, Start, Complete, Stop };
+enum class SoundCue { None, Cup, Start, Complete, Stop, Preview };
 struct SoundEvents {
   bool cup_latched=false, pouring=false, absence_pending=false;
   uint32_t absent_since=0;
