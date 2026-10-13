@@ -1,0 +1,16 @@
+name: Cancel maintenance-triggered OTA publish
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/maintenance-cancel-publish.yml']
+permissions:
+  actions: write
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve active OTA feed during retention maintenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST repos/${{ github.repository }}/actions/runs/38390897828/cancel
