@@ -5,6 +5,7 @@
 #include "serving_vessel.h"
 #include "audio.h"
 #include "idle_status.h"
+#include "servings_format.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
 #include "esp_app_desc.h"
@@ -62,7 +63,7 @@ void home_value() {
     lv_label_set_text(value,"--"); lv_label_set_text(units,"Waiting for scale");
     return;
   }
-  if(view==0) { snprintf(b,sizeof(b),"%.0f",reading.servings); lv_label_set_text(value,b); lv_label_set_text(units,"beers remaining"); }
+  if(view==0) { snprintf(b,sizeof(b),"%u",touchpour_complete_servings(reading.servings)); lv_label_set_text(value,b); lv_label_set_text(units,"beers remaining"); }
   else if(view==1) { snprintf(b,sizeof(b),"%.0f%%",reading.percent); lv_label_set_text(value,b); lv_label_set_text(units,"keg remaining"); }
   else { snprintf(b,sizeof(b),"%.1f",reading.gallons); lv_label_set_text(value,b); lv_label_set_text(units,"gallons remaining"); }
 }
