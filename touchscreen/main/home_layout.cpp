@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_app_desc.h"
 #include "lvgl.h"
+#include "vessel_artwork.h"
 #include "nvs.h"
 #include <algorithm>
 #include <cmath>
@@ -23,12 +24,10 @@ constexpr uint32_t COLOR_AMBER = 0xd58b12;
 constexpr uint32_t COLOR_LOW_ORANGE = 0xef6c00;
 constexpr uint32_t COLOR_LOW_RED = 0xb71c1c;
 constexpr uint32_t COLOR_WARNING = 0xf2ad45;
-constexpr uint32_t COLOR_GLASS = 0xb9c6cc;
 constexpr uint32_t COLOR_HEADER_BUTTON = 0x173b55;
 constexpr uint32_t COLOR_HEADER_ACCENT = 0x55b7e8;
 constexpr uint32_t COLOR_METRIC_CARD = 0x182a37;
 constexpr uint32_t COLOR_METRIC_BORDER = 0x2b4b5d;
-constexpr int GLASS_BAND_COUNT = 24;
 // TOUCH_DRAWER_REFINEMENTS_V2_4
 // TOUCH_SHELL_POLISH_V3
 // TOUCH_LAYOUT_POLISH_V4
@@ -98,17 +97,6 @@ HomeView previous_home_view(HomeView view) {
   return static_cast<HomeView>((current + count - 1U) % count);
 }
 
-static lv_point_precise_t pint_outline_points[] = {
-    {0, 0}, {174, 0}, {152, 280}, {22, 280}, {0, 0}};
-
-static lv_point_precise_t solo_outline_points[] = {
-    {0, 0}, {174, 0}, {150, 280}, {24, 280}, {0, 0}};
-
-static lv_point_precise_t growler_outline_points[] = {
-    {82, 0},   {128, 0}, {128, 40}, {166, 64}, {184, 96},
-    {184, 282}, {18, 282}, {18, 96}, {36, 64},  {82, 40},
-    {82, 0}};
-
 State latest_state{};
 int active_page = 0;
 bool home_menu_open = false;
@@ -131,10 +119,7 @@ lv_obj_t *home_arc = nullptr;
 lv_obj_t *home_progress = nullptr;
 lv_obj_t *home_capacity = nullptr;
 lv_obj_t *service_values[11] = {};
-lv_obj_t *glass_bands[GLASS_BAND_COUNT] = {};
-lv_obj_t *keg_fill = nullptr;
-constexpr int KEG_INNER_WIDTH = 180;
-constexpr int KEG_INNER_HEIGHT = 258;
+vessel_artwork::View home_artwork;
 ServingVessel rendered_vessel = ServingVessel::Generic;
 lv_obj_t *view_button = nullptr;
 lv_obj_t *view_button_label = nullptr;
@@ -167,9 +152,7 @@ void reset_home_child_refs() {
   for (auto &value : service_values)
     value = nullptr;
   rendered_vessel = ServingVessel::Generic;
-  keg_fill = nullptr;
-  for (auto &band : glass_bands)
-    band = nullptr;
+  home_artwork = {};
 }
 
 void ascii_safe(const char *source, char *dest, size_t size) {
@@ -977,64 +960,14 @@ void build_keg_level(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
-  lv_obj_t *keg_body = lv_obj_create(overlay);
-  lv_obj_set_pos(keg_body, 20, 84);
-  lv_obj_set_size(keg_body, 188, 266);
-  lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_remove_flag(keg_body, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_bg_color(keg_body, lv_color_hex(0x14232d), 0);
-  lv_obj_set_style_bg_opa(keg_body, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(keg_body, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_border_width(keg_body, 4, 0);
-  lv_obj_set_style_radius(keg_body, 28, 0);
-  lv_obj_set_style_pad_all(keg_body, 0, 0);
-
-  outline_shape(overlay, 61, 70, 106, 16, COLOR_GLASS, 3, 8);
-  outline_shape(overlay, 97, 61, 34, 10, COLOR_GLASS, 3, 5);
-
-  // Use a rounded, clipped inner barrel and ONE continuous liquid object.
-  // This removes the segmented rectangular bands that never matched the keg
-  // walls on hardware. The parent clips the liquid to the same rounded barrel
-  // geometry, so the fill reaches the inner wall and curved base cleanly.
-  lv_obj_t *keg_inner = lv_obj_create(keg_body);
-  // Child coordinates are already relative to the keg body's content area,
-  // which starts inside the 4 px outer border. The previous 4 px offset
-  // double-inset the liquid on the left/top and is visible on hardware.
-  lv_obj_set_pos(keg_inner, 0, 0);
-  lv_obj_set_size(keg_inner, KEG_INNER_WIDTH, KEG_INNER_HEIGHT);
-  lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_remove_flag(keg_inner, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_bg_opa(keg_inner, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(keg_inner, 0, 0);
-  lv_obj_set_style_radius(keg_inner, 24, 0);
-  lv_obj_set_style_clip_corner(keg_inner, true, 0);
-  lv_obj_set_style_pad_all(keg_inner, 0, 0);
-
-  keg_fill = lv_obj_create(keg_inner);
-  lv_obj_set_pos(keg_fill, 0, KEG_INNER_HEIGHT);
-  lv_obj_set_size(keg_fill, KEG_INNER_WIDTH, 1);
-  lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_bg_color(keg_fill, lv_color_hex(COLOR_AMBER), 0);
-  lv_obj_set_style_bg_opa(keg_fill, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(keg_fill, 0, 0);
-  lv_obj_set_style_radius(keg_fill, 0, 0);
-  lv_obj_set_style_pad_all(keg_fill, 0, 0);
-  lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
-
-  // Barrel chimes/ribs sit above the liquid. Keep them thin enough that the
-  // liquid still reads as one continuous volume.
-  shape(keg_body, 10, 16, 160, 4, 0x78909c, 2);
-  shape(keg_body, 8, 68, 164, 3, 0x5f7986, 2);
-  shape(keg_body, 8, 188, 164, 3, 0x5f7986, 2);
-  shape(keg_body, 10, 239, 160, 4, 0x78909c, 2);
+  home_artwork = vessel_artwork::create(overlay, vessel_artwork::Kind::Keg, -2, 60);
 
   home_percent =
-      make_label(overlay, "--", 54, 165, 120, &lv_font_montserrat_28,
+      make_label(overlay, "--", 44, 350, 130, &lv_font_montserrat_28,
                  COLOR_TEXT);
   lv_obj_set_style_text_align(home_percent, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_t *remaining =
-      make_label(overlay, "REMAINING", 54, 200, 120,
+      make_label(overlay, "REMAINING", 44, 386, 130,
                  &lv_font_montserrat_14, COLOR_MUTED);
   lv_obj_set_style_text_align(remaining, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -1123,7 +1056,7 @@ lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title,
                             MetricGlyph glyph = MetricGlyph::None) {
   lv_obj_t *card = lv_obj_create(overlay);
   lv_obj_set_pos(card, 214, y);
-  lv_obj_set_size(card, 230, 82);
+  lv_obj_set_size(card, 230, 68);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_METRIC_CARD), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -1140,190 +1073,43 @@ lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title,
   return card;
 }
 
-void vessel_band_geometry(ServingVessel vessel, int index, int *x, int *y,
-                          int *width, int *height) {
-  const int last = GLASS_BAND_COUNT - 1;
-
+vessel_artwork::Kind artwork_kind(ServingVessel vessel) {
   switch (vessel) {
-  case ServingVessel::Can:
-    *x = 44;
-    *y = 70 + index * 11;
-    *width = 130;
-    *height = 12;
-    break;
-
-  case ServingVessel::Crowler:
-    *x = 35;
-    *y = 70 + index * 11;
-    *width = 148;
-    *height = 12;
-    break;
-
-  case ServingVessel::Growler: {
-    // Final growler liquid geometry: keep the shoulder transition, but let the
-    // fill reach the bottom like the pint/can views with a slight vertical
-    // overlap between bands so the base line does not show through.
-    *y = 108 + index * 9;
-    if (index < 5)
-      *width = 112 + index * 12;
-    else
-      *width = 160;
-    *x = 109 - *width / 2;
-    *height = (index == GLASS_BAND_COUNT - 1) ? 18 : 12;
-    break;
-  }
-
-  case ServingVessel::SoloCup: {
-    const int top_width = 166;
-    const int bottom_width = 126;
-    *width = top_width - ((top_width - bottom_width) * index) / last;
-    *x = 109 - *width / 2;
-    *y = 70 + index * 11;
-    *height = 12;
-    break;
-  }
-
+  case ServingVessel::Can: return vessel_artwork::Kind::Can;
+  case ServingVessel::SoloCup: return vessel_artwork::Kind::Cup;
+  case ServingVessel::Crowler: return vessel_artwork::Kind::Crowler;
+  case ServingVessel::Growler: return vessel_artwork::Kind::Growler;
   case ServingVessel::Generic:
   case ServingVessel::Pint:
-  default: {
-    const int top_width = 164;
-    const int bottom_width = 130;
-    *width = top_width - ((top_width - bottom_width) * index) / last;
-    *x = 109 - *width / 2;
-    *y = 70 + index * 11;
-    *height = 12;
-    break;
-  }
-  }
-}
-
-void build_vessel_outline(lv_obj_t *overlay, ServingVessel vessel) {
-  if (vessel == ServingVessel::Can || vessel == ServingVessel::Crowler) {
-    lv_obj_t *outline = lv_obj_create(overlay);
-    const bool crowler = vessel == ServingVessel::Crowler;
-    lv_obj_set_pos(outline, crowler ? 31 : 39, 66);
-    lv_obj_set_size(outline, crowler ? 156 : 140, 280);
-    lv_obj_remove_flag(outline, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(outline, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_color(outline, lv_color_hex(COLOR_GLASS), 0);
-    lv_obj_set_style_border_width(outline, 5, 0);
-    lv_obj_set_style_radius(outline, crowler ? 11 : 18, 0);
-
-    lv_obj_t *seam = lv_obj_create(overlay);
-    lv_obj_set_pos(seam, crowler ? 43 : 51, 79);
-    lv_obj_set_size(seam, crowler ? 132 : 116, 2);
-    lv_obj_set_style_bg_color(seam, lv_color_hex(COLOR_GLASS), 0);
-    lv_obj_set_style_border_width(seam, 0, 0);
-    lv_obj_remove_flag(seam, LV_OBJ_FLAG_SCROLLABLE);
-    return;
-  }
-
-  lv_obj_t *outline = lv_line_create(overlay);
-  if (vessel == ServingVessel::Growler) {
-    lv_line_set_points(outline, growler_outline_points,
-                       sizeof(growler_outline_points) /
-                           sizeof(growler_outline_points[0]));
-    lv_obj_set_pos(outline, 8, 58);
-  } else if (vessel == ServingVessel::SoloCup) {
-    lv_line_set_points(outline, solo_outline_points,
-                       sizeof(solo_outline_points) /
-                           sizeof(solo_outline_points[0]));
-    lv_obj_set_pos(outline, 22, 66);
-  } else {
-    lv_line_set_points(outline, pint_outline_points,
-                       sizeof(pint_outline_points) /
-                           sizeof(pint_outline_points[0]));
-    lv_obj_set_pos(outline, 22, 66);
-  }
-
-  lv_obj_set_style_line_color(outline, lv_color_hex(COLOR_GLASS), 0);
-  lv_obj_set_style_line_width(outline, 6, 0);
-  lv_obj_set_style_line_rounded(outline, true, 0);
-
-  if (vessel == ServingVessel::SoloCup) {
-    lv_obj_t *rim = lv_obj_create(overlay);
-    lv_obj_set_pos(rim, 39, 76);
-    lv_obj_set_size(rim, 140, 10);
-    lv_obj_remove_flag(rim, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(rim, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_color(rim, lv_color_hex(COLOR_GLASS), 0);
-    lv_obj_set_style_border_width(rim, 5, 0);
-    lv_obj_set_style_radius(rim, 8, 0);
-
-    lv_obj_t *base = lv_obj_create(overlay);
-    lv_obj_set_pos(base, 72, 330);
-    lv_obj_set_size(base, 74, 3);
-    lv_obj_remove_flag(base, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(base, lv_color_hex(COLOR_GLASS), 0);
-    lv_obj_set_style_border_width(base, 0, 0);
+  default: return vessel_artwork::Kind::Pint;
   }
 }
 
 void build_glass(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
-
   rendered_vessel = vessel_for_serving(latest_state.serving);
+  home_artwork = vessel_artwork::create(overlay, artwork_kind(rendered_vessel), -2, 66);
 
-  for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-    int x = 0, y = 0, width = 0, height = 0;
-    vessel_band_geometry(rendered_vessel, i, &x, &y, &width, &height);
-    y += 8;
+  // The full web artwork is unobstructed. Keep the count with the other live
+  // metrics instead of painting numbers, labels and a badge over the vessel.
+  lv_obj_t *card = glass_metric_card(overlay, 66, "");
+  home_serving_label = make_label(card, "SERVINGS LEFT", 14, 8, 202,
+                                  &lv_font_montserrat_14, COLOR_MUTED);
+  home_servings = make_label(card, "--", 14, 31, 202, &lv_font_montserrat_28);
 
-    lv_obj_t *band = lv_obj_create(overlay);
-    glass_bands[i] = band;
-    lv_obj_set_pos(band, x, y);
-    lv_obj_set_size(band, width, height);
-    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(band, lv_color_hex(COLOR_AMBER), 0);
-    lv_obj_set_style_border_width(band, 0, 0);
-    lv_obj_set_style_radius(band, 0, 0);
-    lv_obj_set_style_pad_all(band, 0, 0);
-  }
-
-  build_vessel_outline(overlay, rendered_vessel);
-
-  home_servings = make_label(overlay, "--", 34, 120, 150,
-                             &lv_font_montserrat_48);
-  lv_obj_set_style_text_align(home_servings, LV_TEXT_ALIGN_CENTER, 0);
-
-  home_serving_label = make_label(overlay, "SERVINGS LEFT", 25, 174, 168,
-                                  &lv_font_montserrat_16, COLOR_TEXT);
-  lv_label_set_long_mode(home_serving_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_height(home_serving_label, 48);
-  lv_obj_set_style_text_line_space(home_serving_label, -2, 0);
-  lv_obj_set_style_text_align(home_serving_label, LV_TEXT_ALIGN_CENTER, 0);
-
-  lv_obj_t *serving_size_badge = lv_obj_create(overlay);
-  lv_obj_set_pos(serving_size_badge, 53, 212);
-  lv_obj_set_size(serving_size_badge, 112, 30);
-  lv_obj_remove_flag(serving_size_badge, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(serving_size_badge, lv_color_hex(0x111820), 0);
-  lv_obj_set_style_bg_opa(serving_size_badge, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(serving_size_badge, lv_color_hex(0x4c5961), 0);
-  lv_obj_set_style_border_width(serving_size_badge, 1, 0);
-  lv_obj_set_style_radius(serving_size_badge, 15, 0);
-  lv_obj_set_style_pad_all(serving_size_badge, 0, 0);
-
-  home_serving_size =
-      make_label(serving_size_badge, "-- OZ EACH", 0, 6, 112,
-                 &lv_font_montserrat_14, COLOR_TEXT);
-  lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
-
-  lv_obj_t *card =
-      glass_metric_card(overlay, 72, "REMAINING");
-  home_percent = make_label(card, "--", 14, 34, 202,
-                            &lv_font_montserrat_24);
-
-  card = glass_metric_card(overlay, 170, "GALLONS LEFT",
+  card = glass_metric_card(overlay, 142, "REMAINING");
+  home_percent = make_label(card, "--", 14, 34, 202, &lv_font_montserrat_24);
+  card = glass_metric_card(overlay, 218, "GALLONS LEFT",
                            COLOR_HEADER_ACCENT, MetricGlyph::Gallons);
-  home_gallons = make_label(card, "--", 14, 36, 202,
-                            &lv_font_montserrat_20);
-
-  card = glass_metric_card(overlay, 268, "BEER WEIGHT", 0x91a9b6,
+  home_gallons = make_label(card, "--", 14, 34, 202, &lv_font_montserrat_20);
+  card = glass_metric_card(overlay, 294, "BEER WEIGHT", 0x91a9b6,
                            MetricGlyph::BeerWeight);
-  home_beer_weight = make_label(card, "--", 14, 36, 202,
-                                &lv_font_montserrat_20);
+  home_beer_weight = make_label(card, "--", 14, 34, 202, &lv_font_montserrat_20);
+
+  home_serving_size = make_label(overlay, "-- OZ EACH", 8, 368, 202,
+                                 &lv_font_montserrat_14, COLOR_MUTED);
+  lv_obj_set_style_text_align(home_serving_size, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 void update_home_values();
@@ -1609,12 +1395,7 @@ void update_home_values() {
       lv_arc_set_value(home_arc, 0);
     if (home_progress)
       lv_bar_set_value(home_progress, 0, LV_ANIM_OFF);
-    for (auto *band : glass_bands) {
-      if (band)
-        lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (keg_fill)
-      lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
+    vessel_artwork::update(home_artwork, false, 0);
     return;
   }
 
@@ -1671,32 +1452,8 @@ void update_home_values() {
                               LV_PART_INDICATOR);
   }
 
-  if (home_view == HomeView::Glass) {
-    const int visible_bands =
-        percent == 0 ? 0 : (percent * GLASS_BAND_COUNT + 99) / 100;
-    for (int i = 0; i < GLASS_BAND_COUNT; ++i) {
-      if (!glass_bands[i])
-        continue;
-      lv_obj_set_style_bg_color(glass_bands[i], lv_color_hex(level_color), 0);
-      if (i >= GLASS_BAND_COUNT - visible_bands)
-        lv_obj_remove_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
-      else
-        lv_obj_add_flag(glass_bands[i], LV_OBJ_FLAG_HIDDEN);
-    }
-  }
+  vessel_artwork::update(home_artwork, true, latest_state.percent);
 
-  if (home_view == HomeView::KegLevel && keg_fill) {
-    lv_obj_set_style_bg_color(keg_fill, lv_color_hex(level_color), 0);
-    if (percent <= 0) {
-      lv_obj_add_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      const int fill_height =
-          std::max(1, (percent * KEG_INNER_HEIGHT + 99) / 100);
-      lv_obj_set_pos(keg_fill, 0, KEG_INNER_HEIGHT - fill_height);
-      lv_obj_set_size(keg_fill, KEG_INNER_WIDTH, fill_height);
-      lv_obj_remove_flag(keg_fill, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
 }
 
 void nav_observer(lv_event_t *event) {
@@ -1820,3 +1577,4 @@ void touchscreen_ui_state_dispatch(const State &state) {
     update_home_values();
   bsp_display_unlock();
 }
+

@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "app_task.cpp" "connection_transport.cpp" "connection_session.cpp" "controller_setup_client.cpp" "setup_discovery.cpp" "ui.cpp" "ui_text.cpp" "home_layout.cpp" "touchscreen_ota.cpp" "ota_signature.c" "pairing_overlay.cpp" "pairing_guard.cpp" INCLUDE_DIRS "."
+idf_component_register(SRCS "main.cpp" "app_task.cpp" "connection_transport.cpp" "connection_session.cpp" "controller_setup_client.cpp" "setup_discovery.cpp" "ui.cpp" "ui_text.cpp" "home_layout.cpp" "vessel_artwork.cpp" "touchscreen_ota.cpp" "ota_signature.c" "pairing_overlay.cpp" "pairing_guard.cpp" INCLUDE_DIRS "."
     REQUIRES esp_lcd_touch esp_lvgl_port controller_link ble_client esp_wifi esp_netif esp_event nvs_flash esp_timer app_update esp_https_ota esp_http_client esp_websocket_client cjson mbedtls mdns esp32_s3_touch_lcd_4b lvgl)
 
 # main.cpp now owns live settings, pairing synchronization, discovery and OTA
@@ -10,3 +10,21 @@ set_source_files_properties("main.cpp" PROPERTIES COMPILE_DEFINITIONS
 
 # ui.cpp and ui_text.cpp are compiled directly. Touch UI behavior must not rely
 # on source inclusion or LVGL macro interception.
+
+
+# Expand losslessly packed, checked-in artwork using only Python's standard
+# library. The generated C++ stays in the build directory; no downloads, image
+# decoders, browser tools or new LVGL Kconfig settings are needed to build.
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    idf_build_get_property(python PYTHON)
+    set(vessel_images "${CMAKE_CURRENT_BINARY_DIR}/vessel_images.cpp")
+    add_custom_command(
+        OUTPUT "${vessel_images}"
+        COMMAND "${python}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate_vessel_artwork.py"
+                "${CMAKE_CURRENT_LIST_DIR}/artwork/web_vessels.json" "${vessel_images}"
+        DEPENDS "${CMAKE_CURRENT_LIST_DIR}/artwork/web_vessels.json"
+                "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate_vessel_artwork.py"
+        VERBATIM
+    )
+    target_sources(${COMPONENT_LIB} PRIVATE "${vessel_images}")
+endif()
