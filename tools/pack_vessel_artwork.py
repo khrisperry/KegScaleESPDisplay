@@ -13,16 +13,18 @@ from PIL import Image
 folder, destination = map(Path, sys.argv[1:3])
 geometry = json.loads((folder / 'geometry.json').read_text())
 result = {'source_repository': 'khrisperry/KegScaleESP',
-          'source_commit': '1e9553931d8d9dde991d32ee82f9656ff7dd2b30',
+          'source_commit': '74776c1002724f8640c5baf8296c013482ae4550',
           'format': 'RGB565A8 little endian RGB plane followed by alpha plane', 'assets': {}}
 raw_total = 0
-for kind in ['Can', 'Pint', 'Cup', 'Crowler', 'Growler', 'Keg']:
+for kind in ['Can', 'Pint', 'Cup', 'Crowler', 'Growler', 'Keg', 'Sixth', 'Quarter', 'Corny', 'Half']:
     asset = dict(geometry[kind], layers={})
     for name in ['base', 'liquid', 'foam', 'front']:
         image = Image.open(folder / f'{kind}-{name}.png').convert('RGBA')
         box = image.getchannel('A').getbbox()
         if box is None:
-            raise ValueError(f'{kind}-{name}: empty artwork layer')
+            box = (0, 0, 1, 1) if name == 'front' else None
+            if box is None:
+                raise ValueError(f'{kind}-{name}: empty artwork layer')
         cropped = image.crop(box)
         rgb = bytearray()
         alpha = bytearray()

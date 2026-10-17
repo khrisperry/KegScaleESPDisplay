@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace vessel_artwork {
-enum class Kind : uint8_t { Can, Pint, Cup, Crowler, Growler, Keg };
+enum class Kind : uint8_t { Can, Pint, Cup, Crowler, Growler, Keg, Sixth, Quarter, Corny, Half };
 struct Layer {
   const lv_image_dsc_t *image;
   int16_t x, y;

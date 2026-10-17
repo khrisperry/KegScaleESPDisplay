@@ -120,6 +120,16 @@ lv_obj_t *home_progress = nullptr;
 lv_obj_t *home_capacity = nullptr;
 lv_obj_t *service_values[11] = {};
 vessel_artwork::View home_artwork;
+vessel_artwork::Kind keg_for_capacity(float gallons) {
+  using vessel_artwork::Kind;
+  if (!std::isfinite(gallons)) return Kind::Keg;
+  if (std::fabs(gallons - 5.17f) <= .02f) return Kind::Sixth;
+  if (std::fabs(gallons - 7.75f) <= .02f) return Kind::Quarter;
+  if (std::fabs(gallons - 5.0f) <= .02f) return Kind::Corny;
+  if (std::fabs(gallons - 15.5f) <= .02f) return Kind::Half;
+  return Kind::Keg;
+}
+vessel_artwork::Kind rendered_keg = vessel_artwork::Kind::Keg;
 ServingVessel rendered_vessel = ServingVessel::Generic;
 lv_obj_t *view_button = nullptr;
 lv_obj_t *view_button_label = nullptr;
@@ -960,7 +970,8 @@ void build_keg_level(lv_obj_t *overlay) {
   home_disconnected = false;
   build_home_header(overlay);
 
-  home_artwork = vessel_artwork::create(overlay, vessel_artwork::Kind::Keg, -2, 60);
+  rendered_keg = keg_for_capacity(latest_state.capacity);
+  home_artwork = vessel_artwork::create(overlay, rendered_keg, -2, 60);
 
   home_percent =
       make_label(overlay, "--", 44, 350, 130, &lv_font_montserrat_28,
@@ -1314,7 +1325,8 @@ void update_home_values() {
   if (home_disconnected || !home_name)
     rebuild_home_for_selected_view();
 
-  if (vessel_for_serving(latest_state.serving) != rendered_vessel)
+  if (vessel_for_serving(latest_state.serving) != rendered_vessel ||
+      (home_view == HomeView::KegLevel && keg_for_capacity(latest_state.capacity) != rendered_keg))
     rebuild_home_for_selected_view();
 
   char name[48];

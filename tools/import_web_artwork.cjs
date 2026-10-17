@@ -52,6 +52,18 @@ const { chromium } = require('playwright');
       await page.locator('svg').screenshot({ path:path.join(output,kind+'-'+layer+'.png'),omitBackground:true });
     }
   }
+  const kegAssets = JSON.parse(fs.readFileSync(path.join(scale,'components/device_web/keg_artwork.json'),'utf8'));
+  const kegStart = shell.indexOf('function webKegArtwork('), kegEnd = shell.indexOf('let webRenderedKeg',kegStart);
+  const kegArtwork = new Function('webKegAssets',shell.slice(kegStart,kegEnd)+';return webKegArtwork;')(kegAssets);
+  for (const kind of ['Sixth','Quarter','Corny','Half']) {
+    const key=kind.toLowerCase(), a=kegAssets[key];
+    geometries[kind]={width:220,height:290,top:a.top,bottom:a.bottom,foam:a.foam};
+    for(const layer of ['base','liquid','foam','front']) {
+      await page.setContent('<style>html,body{margin:0;background:transparent}svg{display:block;width:220px;height:290px}</style>'+kegArtwork(key,'import',100,layer));
+      await page.evaluate(async()=>{await Promise.all([...document.querySelectorAll('image')].map(el=>new Promise((resolve,reject)=>{const img=new Image();img.onload=resolve;img.onerror=reject;img.src=el.getAttribute('href');})));});
+      await page.locator('svg').screenshot({path:path.join(output,kind+'-'+layer+'.png'),omitBackground:true});
+    }
+  }
   fs.writeFileSync(path.join(output,'geometry.json'),JSON.stringify(geometries,null,2)+'\n');
   await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

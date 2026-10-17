@@ -13,10 +13,10 @@ import zlib
 
 def generate(source: Path, output: Path) -> None:
     document = json.loads(source.read_text(encoding="utf-8"))
-    names = ('Can', 'Pint', 'Cup', 'Crowler', 'Growler', 'Keg')
+    names = ('Can', 'Pint', 'Cup', 'Crowler', 'Growler', 'Keg', 'Sixth', 'Quarter', 'Corny', 'Half')
     layers = ('base', 'liquid', 'foam', 'front')
     if set(document['assets']) != set(names):
-        raise ValueError('Artwork must contain exactly the six supported image sets')
+        raise ValueError('Artwork must contain exactly the ten supported image sets')
     lines = ['// Generated from web artwork; do not edit.', '#include "vessel_artwork.h"',
              'namespace vessel_artwork {', 'namespace {',
              'constexpr lv_image_dsc_t image(const uint8_t *pixels, uint16_t w, uint16_t h, uint32_t size) {',
