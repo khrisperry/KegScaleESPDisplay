@@ -1054,17 +1054,23 @@ void build_service(lv_obj_t *overlay) {
 lv_obj_t *glass_metric_card(lv_obj_t *overlay, int y, const char *title,
                             uint32_t accent = COLOR_HEADER_ACCENT,
                             MetricGlyph glyph = MetricGlyph::None) {
+  constexpr int card_height = 68;
+  constexpr int border_width = 1;
+  constexpr int accent_inset = 12;
   lv_obj_t *card = lv_obj_create(overlay);
   lv_obj_set_pos(card, 214, y);
-  lv_obj_set_size(card, 230, 68);
+  lv_obj_set_size(card, 230, card_height);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_METRIC_CARD), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_METRIC_BORDER), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_border_width(card, border_width, 0);
   lv_obj_set_style_radius(card, 12, 0);
   lv_obj_set_style_pad_all(card, 0, 0);
-  shape(card, 0, 15, 4, 52, accent, 2);
+  // Child coordinates start inside the border. Keep equal clear space above
+  // and below the accent, including at the card's rounded bottom corner.
+  shape(card, 0, accent_inset, 4,
+        card_height - 2 * border_width - 2 * accent_inset, accent, 2);
   const int title_x = glyph == MetricGlyph::None ? 14 : 40;
   if (glyph != MetricGlyph::None)
     draw_metric_icon(card, glyph, 14, 8, accent);
