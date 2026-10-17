@@ -1,4 +1,4 @@
-# Touchscreen web artwork (V1.4.21)
+# Touchscreen web artwork (V1.4.22)
 
 The Glass screen and generic Keg Level fallback use the vessel artwork from
 KegScaleESP commit `1e9553931d8d9dde991d32ee82f9656ff7dd2b30`.
@@ -43,6 +43,11 @@ preserves the source steel shading instead of tinting the band amber. The
 body, moving surface and upper bands retain their V1.4.20 pixels. Web and
 native pixel comparisons confirm the lower bands stay silver across levels.
 
+V1.4.22 uses Scale V1.4.14 (commit `ff35afc935421e9a10b0feb7c5a58e550e95d698`).
+It matches only the half-barrel lower seam and silver band to the
+quarter-barrel curve profile. Its top surface and upper bands are unchanged;
+all other kegs retain their prior image layers.
+
 Each illustration has transparent base, liquid, foam, and foreground layers.
 The liquid and foam are cropped within the original alpha silhouette; they are
 not stretched. Empty/unready readings hide both fill layers. Reflections,
@@ -69,7 +74,7 @@ The normal ESP-IDF app-size check still applies to the existing 6 MB OTA slots.
 
 Run from the display repository root with Playwright/Chromium and Pillow
 available. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` may select an existing Chromium.
-Use the V1.4.13 Scale revision above; update the provenance in the packer when
+Use the V1.4.14 Scale revision above; update the provenance in the packer when
 intentionally importing a different source revision.
 
 ```text
