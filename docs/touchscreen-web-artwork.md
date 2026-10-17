@@ -1,4 +1,4 @@
-# Touchscreen web artwork (V1.4.18)
+# Touchscreen web artwork (V1.4.19)
 
 The Glass screen and generic Keg Level fallback use the vessel artwork from
 KegScaleESP commit `1e9553931d8d9dde991d32ee82f9656ff7dd2b30`.
@@ -23,6 +23,14 @@ and full surfaces are clipped to the same body silhouette. LVGL reuses the
 liquid layer's existing alpha plane as an A8 mask; no extra mask pixel data,
 frame sequences, or runtime image conversion is needed.
 
+V1.4.19 refines only the commercial barrels to match the approved cutaway
+reference, using Scale V1.4.11 (commit `1bd1f8ded70a8d4a5ef89bc557c4cd2475acb5bf`). The original raised steel bands and narrow outer walls cross in
+front of the amber fill. The complete lower chime, including hand holes,
+remains silver. A soft cream surface is inset inside the barrel silhouette.
+Corny, serving vessels, and the generic keg keep their previous pixels.
+Web and native pixel checks cover preserved steel bands and lower chimes at
+empty, near-empty, partial, and full readings.
+
 Each illustration has transparent base, liquid, foam, and foreground layers.
 The liquid and foam are cropped within the original alpha silhouette; they are
 not stretched. Empty/unready readings hide both fill layers. Reflections,
@@ -42,14 +50,14 @@ The regular build expands `main/artwork/web_vessels.json` into a generated C++
 file in the build directory using Python's standard library. No Python image
 packages, browser, filesystem partition, SD card, decoder, or new LVGL Kconfig
 settings are needed. The checked-in data is losslessly packed RGB565+A8; the
-40 cropped image layers use 3,422,166 bytes of read-only image data in firmware.
+40 cropped image layers use 3,396,078 bytes of read-only image data in firmware.
 The normal ESP-IDF app-size check still applies to the existing 6 MB OTA slots.
 
 ## Re-importing changed web artwork (authoring only)
 
 Run from the display repository root with Playwright/Chromium and Pillow
 available. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` may select an existing Chromium.
-Use the V1.4.10 Scale revision above; update the provenance in the packer when
+Use the V1.4.11 Scale revision above; update the provenance in the packer when
 intentionally importing a different source revision.
 
 ```text

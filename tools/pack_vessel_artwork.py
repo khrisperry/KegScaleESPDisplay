@@ -13,7 +13,7 @@ from PIL import Image
 folder, destination = map(Path, sys.argv[1:3])
 geometry = json.loads((folder / 'geometry.json').read_text())
 result = {'source_repository': 'khrisperry/KegScaleESP',
-          'source_commit': 'e09712d31d2c52734b9b98f910c2f2ea8863e10e',
+          'source_commit': '1bd1f8ded70a8d4a5ef89bc557c4cd2475acb5bf',
           'format': 'RGB565A8 little endian RGB plane followed by alpha plane', 'assets': {}}
 raw_total = 0
 for kind in ['Can', 'Pint', 'Cup', 'Crowler', 'Growler', 'Keg', 'Sixth', 'Quarter', 'Corny', 'Half']:
