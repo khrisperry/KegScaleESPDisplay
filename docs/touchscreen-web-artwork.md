@@ -1,4 +1,4 @@
-# Touchscreen web artwork (V1.4.17)
+# Touchscreen web artwork (V1.4.18)
 
 The Glass screen and generic Keg Level fallback use the vessel artwork from
 KegScaleESP commit `1e9553931d8d9dde991d32ee82f9656ff7dd2b30`.
@@ -13,6 +13,15 @@ follows the received capacity, with a 0.02 gal tolerance. Custom capacities
 keep the generic keg. Capacity changes refresh the image immediately.
 The web WebP sources are rasterized into the same native transparent layers;
 brushed-steel shading is preserved under the moving amber fill.
+
+V1.4.18 follows Scale V1.4.10's curved fill treatment
+(commit `e09712d31d2c52734b9b98f910c2f2ea8863e10e`). A shaded elliptical
+surface with a fine rim moves with the measured level. The lower amber edge
+follows the curved seam: Corny leaves its black rubber boot exposed, while
+commercial barrels leave only their lowest silver chime unfilled. Near-empty
+and full surfaces are clipped to the same body silhouette. LVGL reuses the
+liquid layer's existing alpha plane as an A8 mask; no extra mask pixel data,
+frame sequences, or runtime image conversion is needed.
 
 Each illustration has transparent base, liquid, foam, and foreground layers.
 The liquid and foam are cropped within the original alpha silhouette; they are
@@ -33,14 +42,14 @@ The regular build expands `main/artwork/web_vessels.json` into a generated C++
 file in the build directory using Python's standard library. No Python image
 packages, browser, filesystem partition, SD card, decoder, or new LVGL Kconfig
 settings are needed. The checked-in data is losslessly packed RGB565+A8; the
-40 cropped image layers use 3,226,098 bytes of read-only image data in firmware.
+40 cropped image layers use 3,422,166 bytes of read-only image data in firmware.
 The normal ESP-IDF app-size check still applies to the existing 6 MB OTA slots.
 
 ## Re-importing changed web artwork (authoring only)
 
 Run from the display repository root with Playwright/Chromium and Pillow
 available. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` may select an existing Chromium.
-Use the V1.4.9 Scale revision above; update the provenance in the packer when
+Use the V1.4.10 Scale revision above; update the provenance in the packer when
 intentionally importing a different source revision.
 
 ```text
@@ -60,3 +69,6 @@ Checked capacity changes with unchanged serving size, including saved 5.16 gal. 
 clamping, invalid/unready states, foam bounds, complete-serving counts and
 repeated creation/deletion across all six home views. Physical-device rendering,
 ESP-IDF linking/size and flashing remain part of the local hardware test.
+Curved-surface validation includes 0/1/22/50/99/100%, invalid/unready states,
+capacity/view switching, and pixel comparisons confirming the protective bases
+remain unchanged in both web and native renderers.

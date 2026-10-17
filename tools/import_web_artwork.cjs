@@ -57,7 +57,7 @@ const { chromium } = require('playwright');
   const kegArtwork = new Function('webKegAssets',shell.slice(kegStart,kegEnd)+';return webKegArtwork;')(kegAssets);
   for (const kind of ['Sixth','Quarter','Corny','Half']) {
     const key=kind.toLowerCase(), a=kegAssets[key];
-    geometries[kind]={width:220,height:290,top:a.top,bottom:a.bottom,foam:a.foam};
+    geometries[kind]={width:220,height:290,top:a.top,bottom:a.bottom,foam:a.foam,curved_surface:true};
     for(const layer of ['base','liquid','foam','front']) {
       await page.setContent('<style>html,body{margin:0;background:transparent}svg{display:block;width:220px;height:290px}</style>'+kegArtwork(key,'import',100,layer));
       await page.evaluate(async()=>{await Promise.all([...document.querySelectorAll('image')].map(el=>new Promise((resolve,reject)=>{const img=new Image();img.onload=resolve;img.onerror=reject;img.src=el.getAttribute('href');})));});

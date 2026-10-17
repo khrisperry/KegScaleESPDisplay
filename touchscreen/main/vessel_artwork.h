@@ -11,6 +11,8 @@ struct Layer {
 struct Asset {
   Layer base, liquid, foam, front;
   int16_t width, height, top, bottom, foam_height;
+  bool curved_surface;
+  const lv_image_dsc_t *surface_mask;
 };
 extern const Asset assets[];
 // LVGL owns every object. Reset this non-owning handle when its home tree is

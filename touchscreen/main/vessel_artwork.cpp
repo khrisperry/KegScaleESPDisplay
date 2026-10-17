@@ -38,6 +38,8 @@ View create(lv_obj_t *parent, Kind kind, int x, int y) {
   view.liquid_image = image(view.liquid_clip, asset.liquid);
   view.foam_clip = container(view.root, 0, 0, asset.width, asset.height);
   view.foam_image = image(view.foam_clip, asset.foam);
+  if (asset.curved_surface)
+    lv_obj_set_style_bitmap_mask_src(view.foam_clip, asset.surface_mask, 0);
   image(view.root, asset.front);
   update(view, false, 0);
   return view;
@@ -61,9 +63,21 @@ void update(View &view, bool ready, float percent) {
   lv_obj_set_pos(view.liquid_clip, 0, top);
   lv_obj_set_size(view.liquid_clip, asset.width, height);
   lv_obj_set_pos(view.liquid_image, asset.liquid.x, asset.liquid.y - top);
-  lv_obj_set_pos(view.foam_clip, 0, top);
-  lv_obj_set_size(view.foam_clip, asset.width, std::min<int>(height, asset.foam_height));
-  lv_obj_set_pos(view.foam_image, asset.foam.x, asset.foam.y - top);
+  if (asset.curved_surface) {
+    // The ellipse is a small fixed image that moves with the reading. Its rear
+    // half rises above the body's rectangular crop; the curved foreground
+    // seam masks its lower half at near-empty levels and preserves the base.
+    // Reuse the liquid image's A8 plane as a fixed body mask. This also clips
+    // the moving surface at nearly empty/full levels and antialiased edges.
+    lv_obj_set_pos(view.foam_clip, asset.liquid.x, asset.liquid.y);
+    lv_obj_set_size(view.foam_clip, asset.liquid.image->header.w, asset.liquid.image->header.h);
+    lv_obj_set_pos(view.foam_image, asset.foam.x - asset.liquid.x,
+                   asset.foam.y + top - asset.top - asset.liquid.y);
+  } else {
+    lv_obj_set_pos(view.foam_clip, 0, top);
+    lv_obj_set_size(view.foam_clip, asset.width, std::min<int>(height, asset.foam_height));
+    lv_obj_set_pos(view.foam_image, asset.foam.x, asset.foam.y - top);
+  }
   lv_obj_remove_flag(view.liquid_clip, LV_OBJ_FLAG_HIDDEN);
   lv_obj_remove_flag(view.foam_clip, LV_OBJ_FLAG_HIDDEN);
 }

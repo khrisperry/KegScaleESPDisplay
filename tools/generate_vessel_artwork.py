@@ -25,6 +25,9 @@ def generate(source: Path, output: Path) -> None:
              '  result.header.cf = LV_COLOR_FORMAT_RGB565A8;',
              '  result.header.w = w; result.header.h = h; result.header.stride = w * 2;',
              '  result.data_size = size; result.data = pixels; return result;', '}',
+             'constexpr lv_image_dsc_t alpha_mask(const uint8_t *pixels, uint16_t w, uint16_t h) {',
+             '  auto result = image(pixels + w * h * 2, w, h, w * h);',
+             '  result.header.cf = LV_COLOR_FORMAT_A8; result.header.stride = w; return result;', '}',
              ]
     for name in names:
         asset = document['assets'][name]
@@ -41,6 +44,9 @@ def generate(source: Path, output: Path) -> None:
             for offset in range(0, len(data), 24):
                 lines.append('  ' + ','.join(f'0x{x:02x}' for x in data[offset:offset+24]) + ',')
             lines += ['};', f'const lv_image_dsc_t {symbol} = image({symbol}_pixels, {layer["width"]}, {layer["height"]}, sizeof({symbol}_pixels));']
+        if asset.get('curved_surface', False):
+            layer = asset['layers']['liquid']
+            lines.append(f'const lv_image_dsc_t {name.lower()}_mask = alpha_mask({name.lower()}_liquid_pixels, {layer["width"]}, {layer["height"]});')
     lines += ['} // namespace', 'const Asset assets[] = {']
     for name in names:
         asset = document['assets'][name]
@@ -48,7 +54,8 @@ def generate(source: Path, output: Path) -> None:
         for layer_name in layers:
             layer = asset['layers'][layer_name]
             entries.append('{&' + name.lower() + '_' + layer_name + f', {layer["x"]}, {layer["y"]}' + '}')
-        lines.append('  {' + ', '.join(entries) + f', {asset["width"]}, {asset["height"]}, {asset["top"]}, {asset["bottom"]}, {asset["foam"]}' + '},')
+        mask = '&' + name.lower() + '_mask' if asset.get('curved_surface', False) else 'nullptr'
+        lines.append('  {' + ', '.join(entries) + f', {asset["width"]}, {asset["height"]}, {asset["top"]}, {asset["bottom"]}, {asset["foam"]}, {str(asset.get("curved_surface", False)).lower()}, {mask}' + '},')
     lines += ['};', '} // namespace vessel_artwork', '']
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text('\n'.join(lines), encoding='utf-8')
