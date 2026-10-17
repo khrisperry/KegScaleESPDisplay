@@ -1,4 +1,4 @@
-# Touchscreen web artwork (V1.4.19)
+# Touchscreen web artwork (V1.4.20)
 
 The Glass screen and generic Keg Level fallback use the vessel artwork from
 KegScaleESP commit `1e9553931d8d9dde991d32ee82f9656ff7dd2b30`.
@@ -31,6 +31,11 @@ Corny, serving vessels, and the generic keg keep their previous pixels.
 Web and native pixel checks cover preserved steel bands and lower chimes at
 empty, near-empty, partial, and full readings.
 
+V1.4.20 uses Scale V1.4.12 (commit `b1d34101391bbb714076bbe14b87c6e03332cefa`).
+It adjusts only the 1/4 and 1/2 barrel surface ellipse depth to match
+the perspective of their wider steel bands. The 1/6 barrel and Corny pixels,
+all steel bands, body fill masks and lower chimes are unchanged.
+
 Each illustration has transparent base, liquid, foam, and foreground layers.
 The liquid and foam are cropped within the original alpha silhouette; they are
 not stretched. Empty/unready readings hide both fill layers. Reflections,
@@ -50,14 +55,14 @@ The regular build expands `main/artwork/web_vessels.json` into a generated C++
 file in the build directory using Python's standard library. No Python image
 packages, browser, filesystem partition, SD card, decoder, or new LVGL Kconfig
 settings are needed. The checked-in data is losslessly packed RGB565+A8; the
-40 cropped image layers use 3,396,078 bytes of read-only image data in firmware.
+40 cropped image layers use 3,406,278 bytes of read-only image data in firmware.
 The normal ESP-IDF app-size check still applies to the existing 6 MB OTA slots.
 
 ## Re-importing changed web artwork (authoring only)
 
 Run from the display repository root with Playwright/Chromium and Pillow
 available. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` may select an existing Chromium.
-Use the V1.4.11 Scale revision above; update the provenance in the packer when
+Use the V1.4.12 Scale revision above; update the provenance in the packer when
 intentionally importing a different source revision.
 
 ```text
