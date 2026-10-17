@@ -1,4 +1,4 @@
-# Touchscreen web artwork (V1.4.22)
+# Touchscreen web artwork (V1.4.23)
 
 The Glass screen and generic Keg Level fallback use the vessel artwork from
 KegScaleESP commit `1e9553931d8d9dde991d32ee82f9656ff7dd2b30`.
@@ -53,6 +53,21 @@ The liquid and foam are cropped within the original alpha silhouette; they are
 not stretched. Empty/unready readings hide both fill layers. Reflections,
 handles, rims, seams and shadows stay in place as the level changes. The Glass
 view puts the serving count in the right column so it does not cover the image.
+
+V1.4.23 retains every artwork pixel and changes LVGL allocation to standard
+system malloc so large transient masked-image layers can use the board's PSRAM.
+The previous fixed 64 KiB non-expanding LVGL pool could exhaust and halt in
+LVGL's default malloc assertion. CMake migrates existing builtin-pool choices
+in local sdkconfig before Kconfig is loaded; fresh builds select CLIB malloc
+from sdkconfig.defaults. No Wi-Fi, pairing, calibration, or other local build
+settings are changed. Startup logs identify the active allocator.
+
+The native rendering stress check held 24 KiB of additional LVGL allocations
+to represent retained shell/UI state. The fixed 64 KiB pool hit its allocation
+assertion when rendering a capacity-specific keg. System malloc passed the
+same test across all vessels, fill bounds, capacities and view lifecycles.
+This establishes the allocation failure mechanism; hardware soak testing is
+still required for the reported intermittent reboot/lockup.
 
 ## Local build
 

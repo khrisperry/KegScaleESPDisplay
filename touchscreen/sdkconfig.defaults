@@ -20,6 +20,11 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
+# Use ESP-IDF's PSRAM-capable heap for LVGL objects and transient image layers.
+# A fixed 64 KiB pool can exhaust and halt inside LVGL's malloc assertion.
+# CONFIG_LV_USE_BUILTIN_MALLOC is not set
+CONFIG_LV_USE_CLIB_MALLOC=y
+
 # ESP-IDF requires 64-byte D-cache lines when an ESP32-S3 RGB panel uses
 # PSRAM-backed framebuffers with a bounce buffer. Without this the RGB stream
 # can drift/corrupt under PSRAM contention (for example Wi-Fi/flash activity).
@@ -94,3 +99,4 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 # client's receive lock while preserving ESP-IDF's built-in control frames.
 CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
 CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000
+

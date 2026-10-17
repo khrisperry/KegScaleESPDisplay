@@ -8,6 +8,7 @@ repo_root="$(cd "$root/.." && pwd)"
 source "$repo_root/tests/test_output.sh"
 
 run_test "Display/Touch test output contract" python3 "$repo_root/tests/test_output_contract_test.py"
+run_test "Touch LVGL memory configuration" python3 "$root/tests/lvgl_memory_config_test.py"
 run_test "Touch UI text guard" python3 "$root/tests/ui_text_guard_test.py"
 run_test "Touch UI lifetime guard" python3 "$root/tests/ui_lifetime_guard_test.py"
 run_test "Touch main architecture guard" python3 "$root/tests/main_architecture_guard_test.py"
@@ -33,3 +34,4 @@ run_test "Touch controller_link failure compile" cc -std=c11 -Wall -Wextra -Werr
 run_test "Touch controller_link failure injection" "$test_binary"
 
 pass_line "Touch host suite complete"
+

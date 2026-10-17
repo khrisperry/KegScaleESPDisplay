@@ -1570,6 +1570,10 @@ void touchscreen_home_set_keyboard_open(bool open) {
 }
 
 void touchscreen_ui_start_dispatch(const Settings &settings) {
+  ESP_LOGI(TAG, "LVGL allocator: %s",
+           LV_USE_STDLIB_MALLOC == LV_STDLIB_CLIB
+               ? "system malloc (PSRAM eligible)"
+               : "fixed/custom allocator");
   load_preference();
   active_page = settings.ssid[0] && settings.host[0] ? 0 : 3;
   ui_start(settings);
