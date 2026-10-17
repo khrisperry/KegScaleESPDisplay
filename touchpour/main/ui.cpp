@@ -3,6 +3,7 @@
 #include "tap_control.h"
 #include "pour_history.h"
 #include "serving_vessel.h"
+#include "pour_button.h"
 #include "audio.h"
 #include "idle_status.h"
 #include "servings_format.h"
@@ -19,7 +20,9 @@
 namespace {
 Settings saved{};
 State reading{};
-lv_obj_t *content, *title, *notice, *auto_btn, *auto_text, *auto_caption, *footer, *vessel;
+lv_obj_t *content, *title, *notice, *auto_btn, *auto_text, *auto_caption, *footer;
+vessel_artwork::View vessel;
+serving_vessel::Kind vessel_kind=serving_vessel::Kind::Pint;
 lv_obj_t *value, *units, *network_list, *scale_list;
 lv_obj_t *ssid, *password, *host, *keyboard;
 int view = 0, page = 0;
@@ -56,9 +59,13 @@ void home_value() {
   if(page || !value)return;
   char b[96];
   lv_label_set_text(title,reading.name[0]?reading.name:"TouchPour");
-  if(vessel)lv_obj_delete(vessel);
-  vessel=serving_vessel::create(content,serving_vessel::for_serving(reading.serving),reading.valid,reading.percent);
-  lv_obj_set_pos(vessel,22,0);
+  const auto kind=serving_vessel::for_serving(reading.serving);
+  if(!vessel.root || kind!=vessel_kind) {
+    if(vessel.root)lv_obj_delete(vessel.root);
+    vessel_kind=kind;
+    vessel=vessel_artwork::create(content,serving_vessel::artwork_kind(kind),18,0);
+  }
+  vessel_artwork::update(vessel,reading.valid,reading.percent);
   if(!reading.valid) {
     lv_label_set_text(value,"--"); lv_label_set_text(units,"Waiting for scale");
     return;
@@ -78,7 +85,7 @@ void change_view(lv_event_t *e) {
 void clear_page() {
   ++generation;
   if(keyboard) { lv_obj_delete(keyboard); keyboard=nullptr; }
-  lv_obj_clean(content); vessel=value=units=network_list=scale_list=ssid=password=host=nullptr;
+  lv_obj_clean(content); vessel={}; value=units=network_list=scale_list=ssid=password=host=nullptr;
 }
 void show_home() {
   clear_page(); page=0; tap::setup_mode=false;
@@ -195,7 +202,7 @@ void poll(lv_timer_t *) {
   lv_obj_set_style_text_font(auto_text,active?&lv_font_montserrat_20:&lv_font_montserrat_28,0);
   lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
   if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_bg_color(auto_btn,lv_color_hex(active?0xcb3546:0x267de5),0);
+  pour_button::update(auto_btn,active);
   char distance[48];
   if(measurement.valid && measurement.filtered_valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.stable_distance());
   else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid&&!fresh?"stale":"no reading");
@@ -219,8 +226,7 @@ void ui_start(const Settings &s) {
   notice=label(root,"");lv_obj_set_pos(notice,8,243);lv_obj_set_size(notice,224,18);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(notice,LV_TEXT_ALIGN_CENTER,0);
   auto_btn=button(root,"POUR",auto_action);lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);auto_text=lv_obj_get_child(auto_btn,0);
-  lv_obj_set_style_radius(auto_btn,LV_RADIUS_CIRCLE,0);lv_obj_set_style_pad_all(auto_btn,0,0);
-  lv_obj_set_style_shadow_width(auto_btn,0,0);
+  pour_button::style(auto_btn);
   lv_obj_set_style_text_font(auto_text,&lv_font_montserrat_28,0);
   lv_obj_set_style_text_color(auto_text,lv_color_hex(TEXT),0);
   lv_obj_set_style_text_align(auto_text,LV_TEXT_ALIGN_CENTER,0);

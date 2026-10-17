@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.11
+# TouchPour Display — V0.1.12
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -8,11 +8,18 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Swipe left/right above the controls to cycle beers remaining, keg percentage, and minimal gallons views. Changing views is blocked during a pour.
 - Beers remaining shows **complete** servings (rounded down), matching the Keg Scale website: 24.56 servings is shown as 24, not 25.
 - POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the status reads **Touch anywhere to stop**. The footer shows the live **LiDAR: <distance> mm** at idle and during pouring, or indicates stale/invalid readings.
-- Serving artwork follows the paired scale's serving size: 12 oz can, 16 oz pint, or 20 oz Solo cup. The compact drawings reuse the touch display's tapered outline, amber fill, gray rim/seam and Solo base styling. Other serving sizes use the pint silhouette; no crowler/growler artwork is included. The fill tracks keg percentage.
+- Serving artwork follows the paired scale's serving size: 12 oz can, 16 oz pint, or 20 oz Solo cup. The compact images reuse the updated touchscreen artwork: reflective glass, burgundy Solo cup with ribs, brushed silver can, amber liquid and cream foam. Other serving sizes use the pint silhouette; no crowler/growler artwork is included. The fill tracks keg percentage.
 - **Touch anywhere on the screen to emergency stop an active pour.** A new touch is processed before LVGL widget dispatch, so there is no need to locate the button. Multi-touch also stops. The whole contact is consumed until all fingers are released; it cannot navigate or restart pouring. A touchscreen read failure while pouring also requests a close.
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.12 display depth and color
+
+- The round Pour control now has a blue vertical gradient, bright beveled rim, dark inset edge and drop shadow. Pressing it lowers the face and shortens the shadow. During pouring it uses the same finish in red; unavailable pours have a muted blue finish.
+- Pint, Solo cup and can use compact 48×64 versions of the approved scale/touchscreen artwork. Fill and foam still follow keg percentage. Layers stay allocated between readings to avoid repeated object creation.
+- Source artwork comes from `touchscreen/main/artwork/web_vessels.json` on the recorded display commit in `main/artwork/serving_vessels.json`. The compact pixels are checked in with checksums; the build generator uses only Python's standard library. No browser, Pillow, downloads or runtime image decoder are needed to build/render them.
+- Controls, layout, whole-screen emergency stop, LiDAR smoothing and pouring sounds retain their existing behavior. Local validation only; `[skip ci]` skips GitHub Actions. Verify the new finish and text at actual screen size, disabled/pressed states and touch-anywhere stop on COM20.
 
 ## V0.1.10 web layout and idle status
 
