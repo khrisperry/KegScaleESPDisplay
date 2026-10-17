@@ -28,10 +28,14 @@ lv_obj_t *ssid, *password, *host, *keyboard;
 int view = 0, page = 0;
 uint32_t generation = 1;
 bool pairing = false;
+bool pour_state_known=false, displayed_pouring=false;
 const uint32_t BG=0x101c26, CARD=0x203441, TEXT=0xf2f6f8;
 void show_home();
 void show_setup();
-void message(const char *s) { lv_label_set_text(notice, s ? s : ""); }
+void text_if_changed(lv_obj_t *object,const char *text) {
+  if(std::strcmp(lv_label_get_text(object),text)!=0)lv_label_set_text(object,text);
+}
+void message(const char *s) { text_if_changed(notice,s ? s : ""); }
 bool submit(const char *kind, cJSON *json=nullptr) {
   Action a{}; a.ui_generation=generation;
   snprintf(a.kind,sizeof(a.kind),"%s",kind);
@@ -58,7 +62,7 @@ lv_obj_t *button(lv_obj_t *parent,const char *text,lv_event_cb_t cb=nullptr) {
 void home_value() {
   if(page || !value)return;
   char b[96];
-  lv_label_set_text(title,reading.name[0]?reading.name:"TouchPour");
+  text_if_changed(title,reading.name[0]?reading.name:"TouchPour");
   const auto kind=serving_vessel::for_serving(reading.serving);
   if(!vessel.root || kind!=vessel_kind) {
     if(vessel.root)lv_obj_delete(vessel.root);
@@ -67,12 +71,12 @@ void home_value() {
   }
   vessel_artwork::update(vessel,reading.valid,reading.percent);
   if(!reading.valid) {
-    lv_label_set_text(value,"--"); lv_label_set_text(units,"Waiting for scale");
+    text_if_changed(value,"--"); text_if_changed(units,"Waiting for scale");
     return;
   }
-  if(view==0) { snprintf(b,sizeof(b),"%u",touchpour_complete_servings(reading.servings)); lv_label_set_text(value,b); lv_label_set_text(units,"beers remaining"); }
-  else if(view==1) { snprintf(b,sizeof(b),"%.0f%%",reading.percent); lv_label_set_text(value,b); lv_label_set_text(units,"keg remaining"); }
-  else { snprintf(b,sizeof(b),"%.1f",reading.gallons); lv_label_set_text(value,b); lv_label_set_text(units,"gallons remaining"); }
+  if(view==0) { snprintf(b,sizeof(b),"%u",touchpour_complete_servings(reading.servings)); text_if_changed(value,b); text_if_changed(units,"beers remaining"); }
+  else if(view==1) { snprintf(b,sizeof(b),"%.0f%%",reading.percent); text_if_changed(value,b); text_if_changed(units,"keg remaining"); }
+  else { snprintf(b,sizeof(b),"%.1f",reading.gallons); text_if_changed(value,b); text_if_changed(units,"gallons remaining"); }
 }
 void change_view(lv_event_t *e) {
   if(page || pairing || tap::busy())return;
@@ -198,15 +202,20 @@ void poll(lv_timer_t *) {
   const char *idle=tap::idle_status(config,measurement,uint32_t(esp_timer_get_time()/1000),ready,tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
   if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
-  lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"POUR");
-  lv_obj_set_style_text_font(auto_text,active?&lv_font_montserrat_20:&lv_font_montserrat_28,0);
-  lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
-  if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
-  pour_button::update(auto_btn,active);
+  // Fonts, alignment and visibility invalidate the button even when unchanged.
+  // Keep the 50 ms safety/status poll, but repaint the face only on transitions.
+  if(!pour_state_known || active!=displayed_pouring) {
+    lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"POUR");
+    lv_obj_set_style_text_font(auto_text,active?&lv_font_montserrat_20:&lv_font_montserrat_28,0);
+    lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
+    if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
+    pour_button::update(auto_btn,active);
+    displayed_pouring=active;pour_state_known=true;
+  }
   char distance[48];
   if(measurement.valid && measurement.filtered_valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.stable_distance());
   else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid&&!fresh?"stale":"no reading");
-  lv_label_set_text(footer,distance);
+  text_if_changed(footer,distance);
   if(!page && !pairing) {
     if(active)message("Touch anywhere to stop");
     else message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);

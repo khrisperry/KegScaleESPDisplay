@@ -49,14 +49,14 @@ int xQueueReceive(void*,void* value,int){if(!pending)return 0;memcpy(value,&queu
 void xQueueOverwrite(void*,const void* value){memcpy(&queued,value,sizeof(queued));pending=true;}
 void* xQueueCreate(int count,size_t size){assert(count==1&&size==sizeof(tap::SoundCue));return &pending;}
 void vQueueDelete(void*){}
-int xTaskCreate(void(*fn)(void*),const char*,int,void*,int priority,void*){assert(priority<8);worker=fn;return pdPASS;}
+int xTaskCreate(void(*fn)(void*),const char*,int,void*,int priority,void*){assert(priority>5&&priority<8);worker=fn;return pdPASS;}
 void vTaskDelete(void*){}
 int nvs_open(const char*,int,int* h){*h=1;return ESP_OK;}
 int nvs_get_u8(int,const char*,uint8_t* value){*value=saved_enabled;return ESP_OK;}
 int nvs_set_u8(int,const char*,uint8_t value){saved_enabled=value;return ESP_OK;}
 int nvs_commit(int){return ESP_OK;}
 void nvs_close(int){}
-int i2s_new_channel(const i2s_chan_config_t*,void** output,void*){*output=&pending;return ESP_OK;}
+int i2s_new_channel(const i2s_chan_config_t* config,void** output,void*){assert(config->dma_desc_num==8&&config->dma_frame_num==128);*output=&pending;return ESP_OK;}
 int i2s_channel_init_std_mode(void*,const i2s_std_config_t* config){configured=*config;return ESP_OK;}
 int i2s_channel_enable(void*){return ESP_OK;}
 int i2s_channel_disable(void*){return ESP_OK;}
@@ -97,7 +97,7 @@ int main(){
   tap::audio_notify(tap::SoundCue::Start);run(1000);
   assert(last_nonzero<370);interrupt_at=0;
  }
- puts("PASS: real speaker clock/pins, stereo PCM generation, test cue, mute/save/unmute, low-priority worker");
+ puts("PASS: real speaker clock/pins, stereo PCM generation, test cue, mute/save/unmute, audio worker above display and below control, buffered DMA");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

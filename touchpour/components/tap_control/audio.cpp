@@ -63,7 +63,7 @@ void audio_task(void *) {
       pcm[2*f]=pcm[2*f+1]=sample;
     }
     size_t written=0;
-    // Only this low-priority worker waits on DMA. Both stereo channels carry
+    // Only this worker waits on DMA; it never takes the controller/UI mutex. Both stereo channels carry
     // the cue; no SD card, network access, codec control bus, or PWM needed.
     esp_err_t error=i2s_channel_write(output,pcm,sizeof(pcm),&written,50);
     if(error!=ESP_OK || written!=sizeof(pcm)) {
@@ -102,7 +102,8 @@ bool audio_set_enabled(bool value) {
 }
 void audio_notify(SoundCue cue) {
   // Latest event replaces pending audio: STOP cannot sit behind an old
-  // detection/start chime. Active sound is replaced within one chunk.
+  // detection/start chime. Select the replacement at the next chunk;
+  // samples already queued in DMA finish independently of servo closure.
   if(cues && (enabled.load() || cue==SoundCue::None)) xQueueOverwrite(cues,&cue);
 }
 void audio_start() {
@@ -111,7 +112,9 @@ void audio_start() {
     uint8_t value=1;nvs_get_u8(handle,"enabled",&value);enabled=value!=0;nvs_close(handle);
   }
   i2s_chan_config_t channel=I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0,I2S_ROLE_MASTER);
-  channel.dma_desc_num=4;channel.dma_frame_num=frames;channel.auto_clear=true;
+  // Eight 128-frame descriptors give about 23 ms of scheduling headroom.
+  // Servo closure stays immediate; queued audio may trail it by this amount.
+  channel.dma_desc_num=8;channel.dma_frame_num=frames;channel.auto_clear=true;
   esp_err_t error=i2s_new_channel(&channel,&output,nullptr);
   if(error==ESP_OK) {
     i2s_std_config_t config{};
@@ -125,7 +128,8 @@ void audio_start() {
   if(error==ESP_OK)error=i2s_channel_enable(output);
   if(error==ESP_OK) {
     cues=xQueueCreate(1,sizeof(SoundCue));
-    if(!cues || xTaskCreate(audio_task,"tap_audio",4096,nullptr,2,nullptr)!=pdPASS)error=ESP_ERR_NO_MEM;
+    // Audio (6) can preempt rendering (5); pour control (8) still preempts both.
+    if(!cues || xTaskCreate(audio_task,"tap_audio",4096,nullptr,6,nullptr)!=pdPASS)error=ESP_ERR_NO_MEM;
   }
   if(error!=ESP_OK) {
     ESP_LOGW(tag,"Audio unavailable: %s; pour control continues",esp_err_to_name(error));

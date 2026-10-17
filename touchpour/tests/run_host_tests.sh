@@ -10,3 +10,5 @@ done
 python3 tests/controller_test.py
 python3 tests/audio_driver_test.py
 python3 tests/pour_history_test.py
+
+python3 tests/ui_poll_test.py
