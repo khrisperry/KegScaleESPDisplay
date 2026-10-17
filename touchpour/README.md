@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.13
+# TouchPour Display — V0.1.14
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -13,6 +13,13 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.14 button state crash fix
+
+- Fix the V0.1.13 reboot when the rendered Pour button first changes enabled/disabled state. LVGL 9.5 dereferences explicitly assigned null transition descriptors. The face now owns its styles without inheriting theme animations; no null descriptor is installed.
+- Reproduced the crash with actual LVGL 9.5 on the host, then verified repeated enabled/disabled, pressed/released and blue/red state changes after rendering. The audio scheduling and redraw reductions from V0.1.13 remain.
+- Full ESP-IDF build and hardware validation remain local. No erase/reset of calibration or settings is required. `[skip ci]` skips Actions.
+- Optional host LVGL regression (requires CMake, a C/C++ compiler and a local LVGL 9.5.0 checkout): `cmake -S tests/lvgl -B build-host-lvgl -DLVGL_SOURCE_DIR=/path/to/lvgl`, then `cmake --build build-host-lvgl` and `ctest --test-dir build-host-lvgl --output-on-failure`.
 
 ## V0.1.13 audio scheduling and display redraws
 

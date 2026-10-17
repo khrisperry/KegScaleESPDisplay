@@ -11,12 +11,10 @@ inline void palette(lv_obj_t *button, bool pouring) {
   lv_obj_set_style_bg_grad_color(button,lv_color_hex(pouring?0x850013:0x002e78),LV_STATE_PRESSED);
 }
 inline void style(lv_obj_t *button) {
-  // Theme transitions animate several whole-face redraws on this SPI panel.
-  // Apply state changes together; retain the pressed inset without that sweep.
-  lv_obj_set_style_transition(button,nullptr,0);
-  lv_obj_set_style_transition(button,nullptr,LV_STATE_PRESSED);
-  lv_obj_set_style_transform_width(button,0,LV_STATE_PRESSED);
-  lv_obj_set_style_transform_height(button,0,LV_STATE_PRESSED);
+  // Own the face styles instead of inheriting animated theme styles.
+  // LVGL 9.5 dereferences transition descriptors on state changes: never
+  // disable a transition by assigning nullptr to LV_STYLE_TRANSITION.
+  lv_obj_remove_style_all(button);
   lv_obj_set_style_radius(button,LV_RADIUS_CIRCLE,0);
   lv_obj_set_style_pad_all(button,0,0);
   lv_obj_set_style_bg_opa(button,LV_OPA_COVER,0);
