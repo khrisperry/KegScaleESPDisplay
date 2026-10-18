@@ -34,10 +34,15 @@ struct Sample {
 };
 struct Control {
   bool pouring = false;
+  // One no-return sentinel may occur as the opening servo starts moving.
+  static constexpr uint32_t startup_dropout_window_ms = 250;
+  static constexpr uint32_t startup_recovery_ms = 350;
+  bool startup_dropout_used = false, startup_dropout_pending = false;
   const char *reason = "Boot: tap closed";
   uint32_t seen = 0, last_valid = 0, started = 0;
   int previous = 0, count = 0, low = 0, high = 0;
   void reset_ready() {
+    startup_dropout_used = startup_dropout_pending = false;
     count = 0;
     previous = 0;
     last_valid = 0;
@@ -60,17 +65,32 @@ struct Control {
       stop("LiDAR measurement stale");
       return;
     }
+    if (pouring && startup_dropout_pending &&
+        uint32_t(now - started) >= startup_recovery_ms) {
+      stop("LiDAR startup recovery timeout");
+      return;
+    }
     if (s.sequence == seen)
       return;
     seen = s.sequence;
     if (!s.valid || (uint32_t)(now - s.at) > (uint32_t)c.stale_ms) {
-      if (pouring)
+      if (pouring) {
+        // Do not treat an invalid 65535 sentinel as a real distance/jump.
+        // Never renew last_valid or extend the existing stale-data deadline.
+        // A second invalid, a late fault or an old sample still closes at once.
+        if (!startup_dropout_used && !s.valid && s.mm == 65535 &&
+            uint32_t(now - started) < startup_dropout_window_ms &&
+            uint32_t(now - s.at) <= uint32_t(c.stale_ms)) {
+          startup_dropout_used = startup_dropout_pending = true;
+          return;
+        }
         stop("LiDAR measurement invalid");
-      else
+      } else
         reset_ready();
       return;
     }
     if (pouring) {
+      startup_dropout_pending = false;
       // A close-range sample must never be filtered away as an outlier.
       if (s.mm <= c.stop_mm) {
         stop("Fill target reached");
@@ -118,6 +138,7 @@ struct Control {
       reason = "Start rejected: calibration or stable cup reading required";
       return false;
     }
+    startup_dropout_used = startup_dropout_pending = false;
     pouring = true;
     started = now;
     reason = "Pouring";

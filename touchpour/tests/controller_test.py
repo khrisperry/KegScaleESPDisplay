@@ -53,6 +53,14 @@ void vTaskDelay(int ms){
   clock_ms+=ms;
   if(clock_ms>=limit)throw Done{};
   if(clock_ms%100==0 && !(scenario==8&&clock_ms>500)){int mm=scenario==12?600:scenario>=10?200:scenario==0?(clock_ms>=1800?75:200):scenario==7?(clock_ms%200==0?20:1900):60;bool valid=!(scenario==2&&clock_ms>=3300)&&scenario!=6;sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};}
+  if(scenario>=13 && clock_ms%100==0) {
+    int mm=clock_ms>=1800?75:200;bool valid=true;
+    if(clock_ms==1300 || (scenario==14&&clock_ms==1400)){mm=65535;valid=false;}
+    if(scenario==15&&clock_ms==1400)mm=600;
+    if(scenario==16&&clock_ms==1400)mm=75;
+    sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};
+  }
+  if(scenario==17&&clock_ms==1320){assert(touch_stop_armed);stop_requested=true;}
   if(scenario==3&&clock_ms==3200)stop_requested=true;
   if(scenario==12&&clock_ms==1000)stop_requested=true;
   if((scenario==10||scenario==11)&&clock_ms==1500){assert(touch_stop_armed);stop_requested=true;}
@@ -86,7 +94,14 @@ int main(){
   run(11,3500);assert(opens==2&&opened==2630&&closed==1500&&pouring_active()&&touch_stop_armed);
   run(12,1300);assert(opens==0&&!pouring_active()&&!touch_stop_armed&&played.empty());
   assert(!strcmp(control.reason,"Tap closed")); // idle close is not an emergency
-  puts("PASS: emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
+  run(13,2200);assert(opens==1&&opened==1130&&closed==1800&&!pouring_active());
+  assert(!strcmp(control.reason,"Fill target reached")); // startup dropout must not cut off the pour
+  assert(played.size()==3&&played[1]==SoundCue::Start&&played[2]==SoundCue::Complete);
+  run(14,1700);assert(opens==1&&closed==1400&&!pouring_active()); // second invalid closes servo
+  run(15,1700);assert(opens==1&&closed==1400&&!pouring_active()); // real removal remains immediate
+  run(16,1700);assert(opens==1&&closed==1400&&!pouring_active()); // real cutoff remains immediate
+  run(17,1700);assert(opens==1&&closed==1320&&!pouring_active()); // touch stop during dropout
+  puts("PASS: startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

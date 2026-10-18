@@ -127,7 +127,11 @@ static void controller_task(void *) {
       button.cancelUntilRelease();
       button_event = "HOLD RELEASED / CLOSE";
     }
+    const bool startup_dropout_was=control.startup_dropout_used;
     if (!manual_hold.pouring) control.update(settings, sample, now);
+    if(!startup_dropout_was && control.startup_dropout_used)
+      ESP_LOGI(TAG,"One startup LiDAR no-return ignored: sequence=%lu; recovery required before %lu ms from opening",
+               (unsigned long)sample.sequence,(unsigned long)Control::startup_recovery_ms);
     bool cup_ready=control.ready(settings,now);
     bool cup_absent=sample.valid && uint32_t(now-sample.at)<=uint32_t(settings.stale_ms) &&
                     (sample.stable_distance()>settings.max_mm || sample.mm>=settings.tray_mm-20);

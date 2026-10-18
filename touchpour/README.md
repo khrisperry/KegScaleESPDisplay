@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.15
+# TouchPour Display — V0.1.16
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -13,6 +13,13 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.16 brief opening-time LiDAR no-return
+
+- Ignore at most one fresh invalid `65535` no-return sample in the first 250 ms after an automatic pour starts. It does not overwrite the last valid distance/time. The next valid reading must arrive before 350 ms from opening and within the existing stale-data limit; otherwise the tap closes. The allowance resets only for a new explicit pour.
+- A second invalid sample, any invalid sample outside that startup window, other invalid readings and stale samples still stop immediately. Valid raw cutoff, cup removal, erratic-distance detection, maximum time and touch-anywhere stop remain active throughout the allowance. Manual-hold operation is unchanged.
+- Logs announce the one ignored startup sentinel, including its sequence and recovery deadline. Raw invalid readings remain available to history/foam diagnostics. This handles a brief reading dropout; it does not establish or repair an electrical cause.
+- Host tests exercise recovery, repeated/late faults, both timeout limits, raw cutoff/removal, emergency stop, per-pour rearm and clock wrap. Actual controller-loop tests verify the servo stays open across one dropout and closes on repeated faults or STOP. Full ESP-IDF build/hardware testing remain local. `[skip ci]` skips Actions.
 
 ## V0.1.15 partially full cup top-ups
 
