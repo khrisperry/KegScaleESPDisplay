@@ -13,8 +13,8 @@ inline const char *idle_status(const Settings &config,const Sample &sample,
     return "LiDAR reading unavailable";
   if(sample.mm>=config.tray_mm-20 || sample.stable_distance()>config.max_mm)
     return "No cup detected";
-  if(sample.mm<=config.stop_mm)return "Cup at fill level";
-  if(sample.stable_distance()<config.min_mm)return "Cup outside start range";
+  if(sample.mm<=config.stop_mm || sample.stable_distance()<=config.stop_mm)
+    return "Cup at fill level";
   return ready?"Cup detected - Ready":"Hold cup steady";
 }
 } // namespace tap

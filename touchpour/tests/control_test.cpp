@@ -181,5 +181,42 @@ int main() {
     assert(!valid_settings(bad));
     ++tests;
   }
+  // Real empty-cup calibration: partial cups lie below min_mm, above cutoff.
+  Settings topup=c;topup.min_mm=237;topup.max_mm=267;topup.tray_mm=299;
+  for(int distance:{81,100,150,200,237,267}) {
+    Control x;
+    for(uint32_t i=1;i<=4;++i)x.update(topup,{distance,11,true,i*100,i,float(distance),true},i*100);
+    assert(!x.start(topup,400));
+    x.update(topup,{distance,11,true,500,5,float(distance),true},500);
+    assert(x.ready(topup,500));assert(!x.pouring); // requires an explicit start
+    assert(x.start(topup,500));
+    // Descending raw readings reach the exact cutoff without a large jump.
+    uint32_t sequence=6,now=600;
+    for(int mm=distance;mm>80;mm-=10) {
+      x.update(topup,{mm,11,true,now,sequence,float(distance),true},now);
+      assert(x.pouring);now+=50;++sequence;
+    }
+    x.update(topup,{80,11,true,now,sequence,float(distance),true},now);
+    assert(!x.pouring&&x.reason==std::string_view("Fill target reached"));
+    ++tests;
+  }
+  for(auto sample:{Sample{80,11,true,0,0,150,true}, // raw full / smoothed lag
+                   Sample{150,11,true,0,0,80,true}, // smoothed full
+                   Sample{268,11,true,0,0,268,true}, // outside cup distance
+                   Sample{299,11,true,0,0,150,true}, // tray / filter lag
+                   Sample{150,0,false,0,0,150,true}}) {
+    Control x;
+    for(uint32_t i=1;i<=5;++i){sample.at=i*100;sample.sequence=i;x.update(topup,sample,i*100);}
+    assert(!x.start(topup,500));++tests;
+  }
+  {
+    Control x;
+    for(uint32_t i=1;i<=5;++i)x.update(topup,{150,11,true,i*100,i,150,true},i*100);
+    Control stale=x;assert(!stale.start(topup,851)); // stale top-up is rejected
+    assert(x.start(topup,500));
+    x.update(topup,{299,11,true,600,6,150,true},600);
+    assert(!x.pouring); // removal still closes immediately on the raw sample
+    ++tests;
+  }
   printf("PASS: %d control scenarios\n", tests);
 }

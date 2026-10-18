@@ -15,6 +15,13 @@ int main(){
  assert(!strcmp(idle_status(c,s,1000,false),"Hold cup steady"));
  assert(!strcmp(idle_status(c,s,1000,true),"Cup detected - Ready"));
  assert(!strcmp(idle_status(c,s,1500,false),"LiDAR reading unavailable"));
+ // A partial cup below the old empty-cup range is eligible for a top-up.
+ c.min_mm=237;c.max_mm=267;c.tray_mm=299;
+ s={150,11,true,1000,4,150,true};
+ assert(!strcmp(idle_status(c,s,1000,false),"Hold cup steady"));
+ assert(!strcmp(idle_status(c,s,1000,true),"Cup detected - Ready"));
+ s={150,11,true,1000,5,80,true};
+ assert(!strcmp(idle_status(c,s,1000,false),"Cup at fill level"));
  s.valid=false;assert(!strcmp(idle_status(c,s,1000,false),"LiDAR reading unavailable"));
  c.distance_calibrated=false;assert(!strcmp(idle_status(c,s,1000,false),"Calibrate fill level on website"));
  c.servo_calibrated=false;assert(!strcmp(idle_status(c,s,1000,false),"Calibrate servo on website"));

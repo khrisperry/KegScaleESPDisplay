@@ -88,7 +88,10 @@ struct Control {
       last_valid = s.at;
       return;
     }
-    if (s.stable_distance() < c.min_mm || s.stable_distance() > c.max_mm ||
+    // A partial cup is closer than the empty-cup calibration reference.
+    // Allow top-ups throughout the usable fill range, but require both raw
+    // and smoothed distance above the cutoff before collecting readiness.
+    if (s.stable_distance() <= c.stop_mm || s.stable_distance() > c.max_mm ||
         s.mm <= c.stop_mm || s.mm >= c.tray_mm - 20) {
       reset_ready();
       return;

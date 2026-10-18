@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.14
+# TouchPour Display — V0.1.15
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -13,6 +13,13 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.15 partially full cup top-ups
+
+- A partially full cup can now become ready anywhere above the saved fill cutoff and up to the maximum cup distance. The former empty-cup minimum no longer rejects a half-full cup. Five fresh, stable readings and servo/distance calibration are still required, followed by an explicit Pour press.
+- Both raw and smoothed readings must be above the cutoff to authorize a start. Raw fill cutoff, removal/jump detection, invalid/stale readings, maximum time and touch-anywhere stop retain their immediate-close behavior during pouring. No automatic refill/restart is introduced.
+- Existing calibration is retained. The website labels `min_mm` as the empty-cup lower reference; it remains saved for calibration compatibility. No new settings or recalibration are needed. The screen reports Ready/Hold cup steady for an eligible partial cup and Cup at fill level for a full one.
+- Host tests cover partial levels below the former minimum, exact cutoff, filtered lag, tray, stability, stale start, removal and target stop. Hardware verification remains local; `[skip ci]` skips Actions.
 
 ## V0.1.14 button state crash fix
 
