@@ -32,13 +32,30 @@ jobs:
           esp_idf_version: v6.0.1
           target: esp32s3
           path: touchpour
+      - name: Package firmware identity
+        id: firmware
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import hashlib, os, pathlib, re
+          project = pathlib.Path('touchpour/CMakeLists.txt').read_text()
+          version = re.search(r'set\(PROJECT_VER "([0-9.]+)"\)', project).group(1)
+          binary = pathlib.Path('touchpour/build/touchpour_display.bin')
+          checksum = hashlib.sha256(binary.read_bytes()).hexdigest()
+          pathlib.Path('touchpour/build/SHA256SUMS.txt').write_text(f'{checksum}  touchpour_display.bin\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'TouchPour **V{version}**\n\nSource: `{os.environ["GITHUB_SHA"]}`\n\nSHA-256: `{checksum}`\n')
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
           retention-days: 14
-          name: touchpour-esp32s3-v0.1.0
+          name: touchpour-esp32s3-v${{ steps.firmware.outputs.version }}
           if-no-files-found: error
           path: |
             touchpour/build/touchpour_display.bin
+            touchpour/build/SHA256SUMS.txt
             touchpour/build/bootloader/bootloader.bin
             touchpour/build/partition_table/partition-table.bin
             touchpour/build/ota_data_initial.bin
