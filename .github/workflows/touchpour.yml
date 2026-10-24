@@ -37,12 +37,18 @@ jobs:
         shell: bash
         run: |
           python - <<'PYTHON'
-          import hashlib, os, pathlib, re
+          import hashlib, os, pathlib, re, shutil
           project = pathlib.Path('touchpour/CMakeLists.txt').read_text()
           version = re.search(r'set\(PROJECT_VER "([0-9.]+)"\)', project).group(1)
           binary = pathlib.Path('touchpour/build/touchpour_display.bin')
           checksum = hashlib.sha256(binary.read_bytes()).hexdigest()
-          pathlib.Path('touchpour/build/SHA256SUMS.txt').write_text(f'{checksum}  touchpour_display.bin\n')
+          package = pathlib.Path(os.environ['RUNNER_TEMP']) / 'touchpour-firmware'
+          package.mkdir(parents=True, exist_ok=True)
+          for name in ('touchpour_display.bin', 'bootloader/bootloader.bin', 'partition_table/partition-table.bin', 'ota_data_initial.bin', 'flasher_args.json'):
+              destination = package / name
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(pathlib.Path('touchpour/build') / name, destination)
+          (package / 'SHA256SUMS.txt').write_text(f'{checksum}  touchpour_display.bin\n')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'version={version}\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
@@ -53,10 +59,4 @@ jobs:
           retention-days: 14
           name: touchpour-esp32s3-v${{ steps.firmware.outputs.version }}
           if-no-files-found: error
-          path: |
-            touchpour/build/touchpour_display.bin
-            touchpour/build/SHA256SUMS.txt
-            touchpour/build/bootloader/bootloader.bin
-            touchpour/build/partition_table/partition-table.bin
-            touchpour/build/ota_data_initial.bin
-            touchpour/build/flasher_args.json
+          path: ${{ runner.temp }}/touchpour-firmware/
