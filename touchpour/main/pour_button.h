@@ -105,6 +105,10 @@ inline Split add_half(lv_obj_t *button,lv_event_cb_t action){
   lv_obj_set_pos(result.half,0,107);lv_obj_set_size(result.half,140,33);
   lv_obj_remove_flag(result.half,LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(result.half,draw_cap,LV_EVENT_DRAW_MAIN,nullptr);
+  // Colors are drawn by the callback, so state changes need an explicit redraw.
+  lv_obj_add_event_cb(result.half,[](lv_event_t *event){
+    lv_obj_invalidate(static_cast<lv_obj_t *>(lv_event_get_target(event)));
+  },LV_EVENT_STATE_CHANGED,nullptr);
   lv_obj_add_event_cb(result.half,action,LV_EVENT_CLICKED,nullptr);
   auto caption=lv_label_create(result.half);lv_label_set_text(caption,"1/2 POUR");
   lv_obj_set_style_text_font(caption,&lv_font_montserrat_14,0);

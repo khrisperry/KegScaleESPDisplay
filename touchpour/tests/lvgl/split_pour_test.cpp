@@ -22,7 +22,9 @@ int main(){
  click(165);assert(full_count==1&&half_count==0);
  click(235);assert(full_count==1&&half_count==1);
  click(255);assert(full_count==1&&half_count==2); // bottom rim belongs to half, never full
- lv_obj_add_state(split.half,LV_STATE_DISABLED);click(235);assert(full_count==1); // no full fallback
+ const int before_disable=flush_count;
+ lv_obj_add_state(split.half,LV_STATE_DISABLED);lv_refr_now(display);assert(flush_count>before_disable);
+ click(235);assert(full_count==1); // no full fallback
  pour_button::split_state(split,true);pour_button::update(button,true);lv_refr_now(display);
  assert(lv_obj_has_flag(split.half,LV_OBJ_FLAG_HIDDEN)&&lv_obj_has_flag(split.divider,LV_OBJ_FLAG_HIDDEN));
  pour_button::split_state(split,false);pour_button::update(button,false);lv_obj_remove_state(split.half,LV_STATE_DISABLED);lv_refr_now(display);
