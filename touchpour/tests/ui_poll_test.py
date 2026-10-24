@@ -28,6 +28,7 @@ void lv_obj_add_state(lv_obj_t*o,int f){if(!(o->state&f))++mutations;o->state|=f
 void lv_obj_remove_state(lv_obj_t*o,int f){if(o->state&f)++mutations;o->state&=~f;}
 namespace pour_button {void update(lv_obj_t*,bool){++styles;}}
 namespace tap {
+namespace pin_lock{bool locked(){return false;}uint32_t retry_seconds(){return 0;}}
 struct Settings{int stale_ms=350;}settings;
 struct Sample{bool valid=true,filtered_valid=true;uint32_t at=1000;int mm=229;int stable_distance()const{return mm;}}sample;
 bool active=false,ready=true,manual_test_active=false,setup_mode=false,firmware_updating=false,history_saving=false;
@@ -40,6 +41,9 @@ int xSemaphoreTake(int,int){return pdTRUE;}void xSemaphoreGive(int){}
 int64_t esp_timer_get_time(){return 1000000;}
 lv_obj_t btn,text,caption,foot,status;
 lv_obj_t *auto_btn=&btn,*auto_text=&text,*auto_caption=&caption,*footer=&foot,*notice=&status;
+struct {lv_obj_t*root=nullptr,*message=nullptr;}pin_view;
+enum class PinMode{Unlock};
+void clear_pin_secrets(){}void show_pin(PinMode){}
 int page=0;bool pairing=false,pour_state_known=false,displayed_pouring=false;
 struct {bool valid=true,online=true;}reading;
 '''+helpers+poll+r'''

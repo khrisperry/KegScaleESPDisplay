@@ -1,4 +1,4 @@
-# TouchPour Display — V0.1.16
+# TouchPour Display — V0.1.17
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
@@ -13,6 +13,15 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.17 physical tap PIN lock
+
+- In the touch display's Setup menu, choose **Set lock PIN** and enter/confirm four digits. The tap locks immediately. After unlocking, Setup offers **Lock screen**, **Change PIN**, and **Remove PIN**; changing/removing requires the current PIN. A configured tap starts locked after every reboot. With no PIN configured, behavior is unchanged.
+- The opaque full-screen lock has ten digit keys, masked entry and backspace. The fourth digit submits automatically; there is no Settings/back/swipe escape. Five incorrect attempts cause a 30-second cooldown. Unlocking returns to the normal display and never requests a pour; a physical contact held during locking/unlocking must be released before a new pour can start.
+- Locking blocks touchscreen and physical-button automatic/manual starts, plus locally queued servo tests. An active physical pour/test closes when locked. **Web pour and calibration controls intentionally remain available**, including while the screen is locked; locking does not close an already active web pour. Touch-anywhere/physical-button STOP remains available during a web pour even with the keypad visible.
+- PIN storage is separate from Wi-Fi/calibration, stores a random salt and SHA-256 verifier rather than the digits, and survives normal flashing/updates. Changing Wi-Fi or calibration does not remove the PIN. There is no default/master PIN or hidden unlock bypass; keep your chosen PIN available. Storage read/format failures leave physical operation locked, while web access remains available as requested.
+- Removed **Test speaker** and **Test pour tune** from display Setup. The sound mute toggle and normal cup/pouring/completion audio remain.
+- Host tests cover PIN save/change/remove, reboot locking, rate limiting, persistence failures, physical versus web control, held-contact rearming, numeric keypad entry and page deletion in actual LVGL. Full ESP-IDF build and device checks remain local. `[skip ci]` skips Actions.
 
 ## V0.1.16 brief opening-time LiDAR no-return
 

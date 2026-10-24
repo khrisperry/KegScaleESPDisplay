@@ -1,4 +1,5 @@
 #include "tap_app.h"
+#include "pin_lock.h"
 #include "foam_capture.h"
 #include "pour_history.h"
 #include "cJSON.h"
@@ -171,6 +172,7 @@ static esp_err_t status(httpd_req_t *r) {
                             now - sample.at <= (uint32_t)settings.stale_ms);
   cJSON_AddNumberToObject(j, "stable_samples", manual_hold.pouring ? manual_hold.count : control.count);
   cJSON_AddNumberToObject(j, "servo_us", servo_us);
+  cJSON_AddBoolToObject(j, "physical_locked", pin_lock::locked());
   cJSON_AddBoolToObject(j, "setup_mode", setup_mode.load());
   const auto recording = foam_status(now);
   auto *f = cJSON_AddObjectToObject(j, "foam_test");
@@ -387,7 +389,7 @@ static esp_err_t action(httpd_req_t *r) {
     ok = true;
   } else {
     xSemaphoreTake(state_mutex, portMAX_DELAY);
-    Action a{};
+    Action a{};a.from_web=true;
     if (!strcmp(v->valuestring, "start")) {
       a.kind = Action::START;
       ok = !setup_mode && !pouring_active() && !manual_test_active &&

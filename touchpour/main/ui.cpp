@@ -5,6 +5,8 @@
 #include "serving_vessel.h"
 #include "pour_button.h"
 #include "audio.h"
+#include "pin_lock.h"
+#include "pin_pad.h"
 #include "idle_status.h"
 #include "servings_format.h"
 #include "esp_lvgl_port.h"
@@ -32,6 +34,52 @@ bool pour_state_known=false, displayed_pouring=false;
 const uint32_t BG=0x101c26, CARD=0x203441, TEXT=0xf2f6f8;
 void show_home();
 void show_setup();
+void message(const char *s);
+enum class PinMode { Unlock, VerifyChange, New, Confirm, Remove };
+PinMode pin_mode=PinMode::Unlock;
+pin_pad::View pin_view;
+char current_pin[5]{},new_pin[5]{};
+void show_pin(PinMode mode);
+void begin_pin(PinMode mode);
+void clear_pin_secrets(){std::memset(current_pin,0,sizeof(current_pin));std::memset(new_pin,0,sizeof(new_pin));}
+void pin_cancel(){pin_pad::destroy(pin_view);clear_pin_secrets();show_setup();}
+void pin_submit(const char *pin){
+  using tap::pin_lock::Result;
+  Result result=Result::Ok;
+  if(pin_mode==PinMode::Unlock){
+    result=tap::pin_lock::unlock(pin);
+    if(result==Result::Ok){pin_pad::destroy(pin_view);clear_pin_secrets();show_home();return;}
+  }else if(pin_mode==PinMode::VerifyChange){
+    result=tap::pin_lock::check(pin);
+    if(result==Result::Ok){std::memcpy(current_pin,pin,5);show_pin(PinMode::New);return;}
+  }else if(pin_mode==PinMode::New){
+    std::memcpy(new_pin,pin,5);show_pin(PinMode::Confirm);return;
+  }else if(pin_mode==PinMode::Confirm){
+    if(std::strcmp(new_pin,pin)!=0){
+      std::memset(new_pin,0,sizeof(new_pin));show_pin(PinMode::New);
+      lv_label_set_text(pin_view.message,"PINs differ - try again");return;
+    }
+    result=tap::pin_lock::change(current_pin,new_pin);
+    if(result==Result::Ok){clear_pin_secrets();tap::setup_mode=false;show_pin(PinMode::Unlock);return;}
+  }else if(pin_mode==PinMode::Remove){
+    result=tap::pin_lock::remove(pin);
+    if(result==Result::Ok){pin_pad::destroy(pin_view);clear_pin_secrets();show_setup();return;}
+  }
+  lv_label_set_text(pin_view.message,result==Result::Wait?"Too many tries - wait":
+      result==Result::StorageError?"Could not read/save PIN":"Incorrect PIN");
+}
+void show_pin(PinMode mode){
+  pin_mode=mode;
+  const char *heading=mode==PinMode::Unlock?"Enter PIN to unlock":
+      mode==PinMode::New?"Choose a 4-digit PIN":mode==PinMode::Confirm?"Confirm new PIN":
+      mode==PinMode::Remove?"PIN to remove lock":"Enter current PIN";
+  pin_pad::create(pin_view,lv_screen_active(),heading,pin_submit,
+                  mode==PinMode::Unlock?nullptr:pin_cancel);
+}
+void begin_pin(PinMode mode){
+  if(tap::busy()){message("Stop pouring before PIN setup");return;}
+  clear_pin_secrets();show_pin(mode);
+}
 void text_if_changed(lv_obj_t *object,const char *text) {
   if(std::strcmp(lv_label_get_text(object),text)!=0)lv_label_set_text(object,text);
 }
@@ -79,7 +127,7 @@ void home_value() {
   else { snprintf(b,sizeof(b),"%.1f",reading.gallons); text_if_changed(value,b); text_if_changed(units,"gallons remaining"); }
 }
 void change_view(lv_event_t *e) {
-  if(page || pairing || tap::busy())return;
+  if(page || pairing || tap::pin_lock::locked() || pin_view.root || tap::busy())return;
   auto dir=lv_indev_get_gesture_dir(lv_indev_active());
   if(dir!=LV_DIR_LEFT && dir!=LV_DIR_RIGHT)return;
   view=(view+(dir==LV_DIR_LEFT?1:2))%3; show_home();
@@ -92,6 +140,7 @@ void clear_page() {
   lv_obj_clean(content); vessel={}; value=units=network_list=scale_list=ssid=password=host=nullptr;
 }
 void show_home() {
+  if(tap::pin_lock::locked()){tap::setup_mode=false;show_pin(PinMode::Unlock);return;}
   clear_page(); page=0; tap::setup_mode=false;
   // Restore the dedicated home screen controls after leaving Setup.
   lv_obj_remove_flag(auto_btn,LV_OBJ_FLAG_HIDDEN);
@@ -128,6 +177,7 @@ lv_obj_t *field(const char *caption,const char *text,bool secret=false) {
   lv_textarea_set_text(f,text);lv_obj_add_event_cb(f,focus,LV_EVENT_FOCUSED,nullptr);return f;
 }
 void show_setup() {
+  if(tap::pin_lock::locked()){show_pin(PinMode::Unlock);return;}
   if(tap::busy()) { message("Stop pouring before Setup"); return; }
   clear_page(); page=1; tap::setup_mode=true;
   // Setup cannot pour: use the space normally reserved for Auto Pour
@@ -145,6 +195,13 @@ void show_setup() {
   lv_obj_set_flex_flow(content,LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_START);
   button(content,"Back to display",[](lv_event_t *){show_home();});
+  if(tap::pin_lock::configured()){
+    button(content,"Lock screen",[](lv_event_t *){
+      if(tap::pin_lock::lock()){clear_pin_secrets();tap::setup_mode=false;show_pin(PinMode::Unlock);}
+    });
+    button(content,"Change PIN",[](lv_event_t *){begin_pin(PinMode::VerifyChange);});
+    button(content,"Remove PIN",[](lv_event_t *){begin_pin(PinMode::Remove);});
+  }else button(content,"Set lock PIN",[](lv_event_t *){begin_pin(PinMode::New);});
   ssid=field("Wi-Fi network",saved.ssid);lv_textarea_set_max_length(ssid,32);
   button(content,"Scan Wi-Fi",[](lv_event_t *){submit("scan_wifi");});
   network_list=lv_dropdown_create(content);lv_obj_set_width(network_list,LV_PCT(100));lv_dropdown_set_options(network_list,"Scan to list networks");
@@ -167,14 +224,6 @@ void show_setup() {
     auto b=static_cast<lv_obj_t *>(lv_event_get_target(event));
     lv_label_set_text(lv_obj_get_child(b,0),enabled?"Sounds: On (tap to mute)":"Sounds: Muted (tap to enable)");
   });
-  button(content,"Test speaker",[](lv_event_t *){
-    bool played=tap::audio_test();
-    message(played?"Speaker test playing":tap::audio_enabled()?"Audio unavailable - see serial":"Enable sounds to test speaker");
-  });
-  button(content,"Test pour tune",[](lv_event_t *){
-    bool played=tap::audio_preview();
-    message(played?"Playing 99 Bottles preview":tap::audio_enabled()?"Audio unavailable - see serial":"Enable sounds to test tune");
-  });
   label(content,"Use Add touchscreen on the scale to pair. Pour calibration, servo tests and last five pours are on this device's website.",&lv_font_montserrat_14);
   auto netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};char b[96];
   if(netif && esp_netif_get_ip_info(netif,&ip)==ESP_OK) {
@@ -185,12 +234,20 @@ void show_setup() {
   message("Pouring disabled while Setup is open");
 }
 void auto_action(lv_event_t *) {
-  if(page || pairing)return;
+  if(page || pairing || tap::pin_lock::locked() || pin_view.root)return;
   if(tap::busy()) {tap::stop_requested=true;return;}
   tap::Action a{tap::Action::START,0};
   if(xQueueSend(tap::actions,&a,0)!=pdTRUE)message("Busy; try again");
 }
 void poll(lv_timer_t *) {
+  if(tap::pin_lock::locked()){
+    if(!pin_view.root){clear_pin_secrets();tap::setup_mode=false;show_pin(PinMode::Unlock);}
+    uint32_t seconds=tap::pin_lock::retry_seconds();
+    if(seconds){char text[40];snprintf(text,sizeof(text),"Try again in %lu s",(unsigned long)seconds);text_if_changed(pin_view.message,text);}
+    else if(std::strncmp(lv_label_get_text(pin_view.message),"Try again",9)==0)text_if_changed(pin_view.message,"Enter PIN");
+    return;
+  }
+  if(pin_view.root)return;
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
   bool active=tap::pouring_active() || tap::manual_test_active;
   bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
@@ -249,11 +306,11 @@ void ui_state(const State &s) {if(lvgl_port_lock(1000)){reading=s;home_value();l
 void ui_message(const char *s) {if(!notice)return;if(lvgl_port_lock(1000)){message(s);lvgl_port_unlock();}}
 void ui_message_for_generation(const char *s,uint32_t g){if(lvgl_port_lock(1000)){if(g==generation)message(s);lvgl_port_unlock();}}
 void ui_result(bool ok,const char *op,const char *err){char b[128];snprintf(b,sizeof(b),"%s: %s",op,ok?"Done":err);ui_message(b);}
-void ui_pair_code(const char *code){if(lvgl_port_lock(1000)){pairing=true;tap::setup_mode=true;char b[80];snprintf(b,sizeof(b),"Pairing code: %s",code);message(b);lvgl_port_unlock();}}
-void ui_paired(){if(lvgl_port_lock(1000)){pairing=false;tap::setup_mode=page!=0;message("Scale paired");lvgl_port_unlock();}}
+void ui_pair_code(const char *code){if(lvgl_port_lock(1000)){pairing=true;if(!tap::pin_lock::locked())tap::setup_mode=true;char b[80];snprintf(b,sizeof(b),"Pairing code: %s",code);message(b);lvgl_port_unlock();}}
+void ui_paired(){if(lvgl_port_lock(1000)){pairing=false;tap::setup_mode=!tap::pin_lock::locked()&&page!=0;message("Scale paired");lvgl_port_unlock();}}
 bool touchscreen_pairing_overlay_visible(){return pairing;}
 void touchscreen_pairing_window(uint32_t seconds){char b[80];snprintf(b,sizeof(b),"Pairing: %lu seconds remaining",(unsigned long)seconds);ui_message(b);}
-void touchscreen_pairing_ended(){if(lvgl_port_lock(1000)){pairing=false;tap::setup_mode=page!=0;message("Pairing ended");lvgl_port_unlock();}}
+void touchscreen_pairing_ended(){if(lvgl_port_lock(1000)){pairing=false;tap::setup_mode=!tap::pin_lock::locked()&&page!=0;message("Pairing ended");lvgl_port_unlock();}}
 void ui_settings_applied(const Settings &s){if(lvgl_port_lock(1000)){saved=s;touchpour_brightness(s.brightness);lvgl_port_unlock();}}
 void ui_scale_profiles(const char *,bool,const char *,bool,uint8_t){}
 void ui_discovered(const char *h){if(lvgl_port_lock(1000)){if(page && host)lv_textarea_set_text(host,h);lvgl_port_unlock();}}

@@ -5,3 +5,6 @@
 #define LV_USE_LOG 0
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
+
+#define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_28 1

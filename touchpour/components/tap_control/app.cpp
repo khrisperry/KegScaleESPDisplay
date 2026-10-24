@@ -3,6 +3,7 @@
 #include "button_gesture.h"
 #include "pour_history.h"
 #include "audio.h"
+#include "pin_lock.h"
 #include "distance_filter.h"
 #include "VL53L0X.h"
 #include "driver/gpio.h"
@@ -107,6 +108,7 @@ static void controller_task(void *) {
   ButtonGesture button(initial_high, now_ms());
   SoundEvents sounds;
   uint32_t manual_deadline = 0;
+  bool web_operation = false;
 
   ESP_LOGI(TAG, "Button GPIO%d: active-low, debounce=30 ms, tap starts on release, "
                "hold=2000 ms for manual fill; initial=%s", CONFIG_TAP_BUTTON,
@@ -116,7 +118,7 @@ static void controller_task(void *) {
     xSemaphoreTake(state_mutex, portMAX_DELAY);
     uint32_t now = now_ms();
     bool was = pouring_active(), held_was = manual_hold.pouring;
-    auto event = button.update(raw_high, now, was || manual_deadline || setup_mode || firmware_updating || history_saving);
+    auto event = button.update(raw_high, now, was || manual_deadline || setup_mode || firmware_updating || history_saving || pin_lock::locked());
     const char *button_event = event.pressed ? "PRESSED (release to start; hold for manual fill)"
                              : event.released ? "RELEASED" : nullptr;
     // Release of an active manual hold is acted on immediately, without waiting
@@ -163,10 +165,12 @@ static void controller_task(void *) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
-    bool stop = stop_requested.exchange(false) || (event.pressed && (was || manual_deadline));
+    const bool lock_stop=pin_lock::locked() && !web_operation && (was || manual_deadline);
+    if(pin_lock::locked())button.cancelUntilRelease();
+    bool stop = stop_requested.exchange(false) || (event.pressed && (was || manual_deadline)) || lock_stop;
     if (stop) {
       button.cancelUntilRelease();
-      control.stop(was || manual_deadline ? "Emergency stop" : "Tap closed");
+      control.stop(lock_stop ? "Tap locked" : was || manual_deadline ? "Emergency stop" : "Tap closed");
       manual_hold.stop(control.reason);
       manual_deadline = 0;
       xQueueReset(actions);
@@ -182,7 +186,7 @@ static void controller_task(void *) {
     Action a{};
     bool got = xQueueReceive(actions, &a, 0) == pdTRUE;
     if (event.short_press && !was && !stop) { a = {Action::START, 0}; got = true; }
-    if (got && !stop) {
+    if (got && !stop && (!pin_lock::locked() || a.from_web || a.kind==Action::CLOSE)) {
       if (a.kind == Action::CLOSE) {
         button.cancelUntilRelease();
         control.stop("Manual close"); manual_hold.stop(control.reason);
@@ -190,17 +194,19 @@ static void controller_task(void *) {
       } else if (a.kind == Action::TEST && !pouring_active() && !history_saving) {
         button.cancelUntilRelease();
         control.reset_ready(); manual_hold.reset_ready();
+        web_operation=a.from_web;
         set_servo(a.pulse); manual_deadline = now + 2000;
         control.reason = "Servo test: closes after two seconds";
       } else if (a.kind == Action::START && !setup_mode && !manual_deadline && !history_saving &&
                  !pouring_active() && control.start(settings, now)) {
         button.cancelUntilRelease(); manual_hold.reset_ready();
+        web_operation=a.from_web;
         set_servo(settings.open_us);
       }
       if (event.short_press) button_event = control.pouring ? "SHORT PRESS STARTED" : "SHORT PRESS REJECTED";
     }
     if (event.long_press && !stop && !got) {
-      bool accepted = !setup_mode && !manual_deadline && !history_saving && !pouring_active() &&
+      bool accepted = !pin_lock::locked() && !setup_mode && !manual_deadline && !history_saving && !pouring_active() &&
                       settings.servo_calibrated;
       if (accepted) {
         manual_hold.pouring = true;
@@ -217,6 +223,7 @@ static void controller_task(void *) {
     }
     if (settings.servo_calibrated && !pouring_active() && !manual_deadline)
       set_servo(settings.closed_us);
+    if(!pouring_active() && !manual_deadline)web_operation=false;
     manual_test_active = manual_deadline != 0;
     touch_stop_armed = pouring_active() || manual_test_active;
     foam_observe(sample, settings, now_ms(), servo_us, pouring_active(),
@@ -228,7 +235,7 @@ static void controller_task(void *) {
     history_observe(sample, settings, now_ms(), servo_us, pouring_active(),
                     manual_hold.pouring, event.pressed || event.short_press || event.long_press, reason);
     bool stopped = was && !pouring_active();
-    auto cue=sounds.update(cup_ready && !setup_mode && !manual_test_active,
+    auto cue=sounds.update(cup_ready && !setup_mode && !manual_test_active && !pin_lock::locked(),
                            pouring_active(),cup_absent,
                            strcmp(reason,"Fill target reached")==0,now);
     int mm = sample.mm, pulse = servo_us, cutoff = settings.stop_mm;
@@ -247,6 +254,7 @@ static void controller_task(void *) {
 }
 void start() {
   ESP_ERROR_CHECK(nvs_flash_init());
+  pin_lock::init();
   foam_init();
   state_mutex = xSemaphoreCreateMutex();
   actions = xQueueCreate(4, sizeof(Action));

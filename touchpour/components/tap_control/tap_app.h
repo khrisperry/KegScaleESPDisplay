@@ -23,6 +23,7 @@ extern int servo_us;
 struct Action {
   enum Kind { START, TEST, CLOSE } kind;
   int pulse;
+  bool from_web = false; // Web control intentionally remains available when the physical tap is locked.
 };
 void network_start();
 void start();
