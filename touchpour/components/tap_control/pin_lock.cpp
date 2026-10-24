@@ -3,7 +3,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_log.h"
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 #include <atomic>
 #include <cstring>
 
@@ -24,8 +24,11 @@ bool valid(const char *pin){
 }
 bool digest(const Record &record,const char *pin,uint8_t *out){
   uint8_t input[20];std::memcpy(input,record.salt,16);std::memcpy(input+16,pin,4);
-  const int result=mbedtls_sha256(input,sizeof(input),out,0);
-  std::memset(input,0,sizeof(input));return result==0;
+  size_t length=0;
+  const psa_status_t initialized=psa_crypto_init();
+  const psa_status_t result=initialized==PSA_SUCCESS?
+      psa_hash_compute(PSA_ALG_SHA_256,input,sizeof(input),out,32,&length):initialized;
+  std::memset(input,0,sizeof(input));return result==PSA_SUCCESS&&length==32;
 }
 bool persist(const Record *record){
   nvs_handle_t handle;

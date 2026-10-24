@@ -20,9 +20,11 @@ std::vector<uint8_t> stored,pending;
 uint32_t clock_ms=0;unsigned random_seed=0;
 int64_t esp_timer_get_time(){return int64_t(clock_ms)*1000;}
 void esp_fill_random(void*out,size_t size){auto p=static_cast<uint8_t*>(out);while(size--)*p++=uint8_t(++random_seed);}
-// Hashing primitive is supplied by mbedTLS on-device; verify its adapter inputs.
-int mbedtls_sha256(const uint8_t*data,size_t size,uint8_t*out,int is224){
- assert(size==20&&is224==0);uint32_t hash=2166136261u;
+// Hashing primitive is supplied by IDF's PSA backend; verify adapter inputs.
+using psa_status_t=int;constexpr int PSA_SUCCESS=0,PSA_ALG_SHA_256=256;
+int psa_crypto_init(){return PSA_SUCCESS;}
+int psa_hash_compute(int algorithm,const uint8_t*data,size_t size,uint8_t*out,size_t capacity,size_t*length){
+ assert(size==20&&algorithm==PSA_ALG_SHA_256&&capacity==32);*length=32;uint32_t hash=2166136261u;
  for(size_t i=0;i<size;++i)hash=(hash^data[i])*16777619u;
  for(int i=0;i<32;++i){hash=hash*1664525u+1013904223u;out[i]=uint8_t(hash>>24);}return 0;
 }
