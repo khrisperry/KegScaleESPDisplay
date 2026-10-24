@@ -8,6 +8,7 @@ controller=source[source.index('static void controller_task('):source.index('\nv
 harness=r'''
 #include "button_gesture.h"
 #include "audio_events.h"
+#include "pour_target.h"
 using namespace tap;
 #include <atomic>
 #include <cassert>
@@ -20,14 +21,14 @@ Control control,manual_hold;
 bool pouring_active(){return control.pouring||manual_hold.pouring;}
 std::atomic<bool> stop_requested{false},setup_mode{false},history_saving{false},touch_stop_armed{false};
 bool manual_test_active=false,firmware_updating=false,update_closed=false;
-int servo_us=1000,state_mutex=1,actions=1;
+int servo_us=1000,state_mutex=1,actions=1,half_stop_mm=0,active_stop_mm=80;
 constexpr int portMAX_DELAY=0,pdTRUE=1,CONFIG_TAP_BUTTON=7;
 const char *TAG="tap";
-struct Action{enum Kind{START,CLOSE,TEST}kind;int pulse;bool from_web=false;};
+struct Action{enum Kind{START,CLOSE,TEST,START_HALF}kind;int pulse;bool from_web=false;};
 namespace pin_lock {bool value=false;bool locked(){return value;}}
 using gpio_num_t=int;
 uint32_t clock_ms=0,limit=0;
-int scenario=0,opens=0,closes=0;
+int scenario=0,opens=0,closes=0,recorded_cutoff=0;
 std::vector<SoundCue> played;
 void audio_notify(SoundCue cue){played.push_back(cue);if(cue==SoundCue::Complete||cue==SoundCue::Stop)assert(servo_us==settings.closed_us);}
 uint32_t opened=0,closed=0;
@@ -46,13 +47,13 @@ void xSemaphoreTake(int,int){}
 void xSemaphoreGive(int){}
 void xQueueReset(int){}
 int xQueueReceive(int,Action*a,int){
- if(((scenario>=18&&scenario<=21)||scenario==26)&&clock_ms==1000){*a={Action::START,0,scenario!=18&&scenario!=26};return pdTRUE;}
+ if(((scenario>=18&&scenario<=21)||scenario==26||scenario>=27)&&clock_ms==1000){*a={scenario>=27?Action::START_HALF:Action::START,0,scenario!=18&&scenario!=26&&scenario!=31};return pdTRUE;}
  if((scenario==22||scenario==23)&&clock_ms==1000){*a={Action::TEST,2000,scenario==23};return pdTRUE;}
  return 0;
 }
 void set_servo(int us){if(us==servo_us)return;servo_us=us;if(us==2500){++opens;opened=clock_ms;}else{++closes;closed=clock_ms;}}
 void foam_observe(const Sample&,const Settings&,uint32_t,int,bool,bool,bool,bool,int,const char*,bool){}
-void history_observe(const Sample&,const Settings&,uint32_t,int,bool,bool,bool,const char*){}
+void history_observe(const Sample&,const Settings& c,uint32_t,int,bool pouring,bool,bool,const char*){if(pouring)recorded_cutoff=c.stop_mm;}
 template<class... T> void log(const char*,const char*,T...){}
 #define ESP_LOGI(...) log(__VA_ARGS__)
 #define pdMS_TO_TICKS(x) (x)
@@ -69,7 +70,11 @@ void vTaskDelay(int ms){
     sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};
   }
   if(scenario==17&&clock_ms==1320){assert(touch_stop_armed);stop_requested=true;}
-  if(scenario>=18){
+  if(scenario>=27 && clock_ms%100==0){
+    int mm=(scenario==29?150:(clock_ms>=1400?160:200));
+    sample={mm,11,true,clock_ms,clock_ms/100+1, float(mm),true};
+  }
+  if(scenario>=18 && scenario<27){
     if(clock_ms%100==0)sample={200,11,true,clock_ms,clock_ms/100+1};
     if((scenario==20||scenario==21||scenario==26)&&clock_ms==1200)pin_lock::value=true;
     if(scenario==21&&clock_ms==1500)stop_requested=true;
@@ -82,7 +87,8 @@ void vTaskDelay(int ms){
 '''+controller+r'''
 void run(int which,uint32_t until){
   scenario=which;clock_ms=0;limit=until;opens=closes=0;opened=closed=0;
-  played.clear();pin_lock::value=which==18||which==19||(which>=22&&which<=25);
+  half_stop_mm=(which>=27&&which!=28)?160:0;recorded_cutoff=0;
+  played.clear();pin_lock::value=which==18||which==19||(which>=22&&which<=25)||which==30||which==31;
   settings={};settings.servo_calibrated=settings.distance_calibrated=true;settings.closed_us=1000;settings.open_us=2500;
   control={};manual_hold={};sample={};servo_us=1000;stop_requested=false;
   if(which==5)settings.max_pour_ms=1000;
@@ -124,7 +130,12 @@ int main(){
   run(24,2200);assert(opens==0&&!pouring_active()); // unlock does not replay held/released start
   run(25,5000);assert(opens==0&&!pouring_active()); // physical manual-hold blocked too
   run(26,2200);assert(opens==1&&closed==1200&&!pouring_active()); // locking closes an active local pour
-  puts("PASS: PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
+  run(27,2000);assert(opens==1&&closed==1400&&!pouring_active()&&recorded_cutoff==160); // half target selected and logged
+  run(28,2000);assert(opens==0); // missing half calibration
+  run(29,2000);assert(opens==0); // cup already above half target
+  run(30,2000);assert(opens==1&&closed==1400); // locked physical tap still allows web half pour
+  run(31,2000);assert(opens==0); // locked local half pour rejected
+  puts("PASS: separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

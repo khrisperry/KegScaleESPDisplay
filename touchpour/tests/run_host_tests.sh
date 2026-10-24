@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
-for test in emergency_touch control button foam_capture audio_events distance_filter idle_status servings_format startup_dropout; do
+for test in emergency_touch control button foam_capture audio_events distance_filter idle_status servings_format startup_dropout pour_target; do
   g++ -std=c++17 -Wall -Wextra -Werror "tests/${test}_test.cpp" -o "$test_dir/$test"
   "$test_dir/$test"
 done
@@ -14,3 +14,5 @@ python3 tests/pour_history_test.py
 python3 tests/ui_poll_test.py
 
 python3 tests/pin_lock_test.py
+
+python3 tests/calibration_store_test.py

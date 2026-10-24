@@ -22,7 +22,8 @@
 namespace {
 Settings saved{};
 State reading{};
-lv_obj_t *content, *title, *notice, *auto_btn, *auto_text, *auto_caption, *footer;
+lv_obj_t *content, *title, *notice, *auto_btn, *auto_text, *footer;
+pour_button::Split split_button;
 vessel_artwork::View vessel;
 serving_vessel::Kind vessel_kind=serving_vessel::Kind::Pint;
 lv_obj_t *value, *units, *network_list, *scale_list;
@@ -224,7 +225,7 @@ void show_setup() {
     auto b=static_cast<lv_obj_t *>(lv_event_get_target(event));
     lv_label_set_text(lv_obj_get_child(b,0),enabled?"Sounds: On (tap to mute)":"Sounds: Muted (tap to enable)");
   });
-  label(content,"Use Add touchscreen on the scale to pair. Pour calibration, servo tests and last five pours are on this device's website.",&lv_font_montserrat_14);
+  label(content,"Use Add touchscreen on the scale to pair. Full/half fill calibration, servo tests and last five pours are on this device's website.",&lv_font_montserrat_14);
   auto netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};char b[96];
   if(netif && esp_netif_get_ip_info(netif,&ip)==ESP_OK) {
     snprintf(b,sizeof(b),"http://" IPSTR,IP2STR(&ip.ip));label(content,b);
@@ -233,12 +234,30 @@ void show_setup() {
   snprintf(b,sizeof(b),"TouchPour %s",esp_app_get_description()->version);label(content,b);
   message("Pouring disabled while Setup is open");
 }
-void auto_action(lv_event_t *) {
+void request_pour(bool half){
   if(page || pairing || tap::pin_lock::locked() || pin_view.root)return;
-  if(tap::busy()) {tap::stop_requested=true;return;}
-  tap::Action a{tap::Action::START,0};
-  if(xQueueSend(tap::actions,&a,0)!=pdTRUE)message("Busy; try again");
+  if(tap::busy()){tap::stop_requested=true;return;}
+  if(half){
+    if(xSemaphoreTake(tap::state_mutex,pdMS_TO_TICKS(20))!=pdTRUE){message("Busy; try again");return;}
+    const bool ready=tap::half_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::half_stop_mm);
+    const bool calibrated=tap::half_stop_mm!=0;
+    xSemaphoreGive(tap::state_mutex);
+    if(!ready){message(calibrated?"Half target reached or cup not ready":"Calibrate half pour on website");return;}
+  }
+  tap::Action action{half?tap::Action::START_HALF:tap::Action::START,0};
+  if(xQueueSend(tap::actions,&action,0)!=pdTRUE)message("Busy; try again");
 }
+void auto_action(lv_event_t *){
+  // Include the lower rim in the half-pour hit region, even if LVGL dispatches
+  // a tap on a disabled half child to its parent. Never fall back to full pour.
+  bool half=false;
+  if(auto input=lv_indev_active()){
+    lv_point_t point;lv_indev_get_point(input,&point);
+    lv_area_t area;lv_obj_get_coords(auto_btn,&area);half=pour_button::half_at(area.y1,point.y);
+  }
+  request_pour(half);
+}
+void half_action(lv_event_t *){request_pour(true);}
 void poll(lv_timer_t *) {
   if(tap::pin_lock::locked()){
     if(!pin_view.root){clear_pin_secrets();tap::setup_mode=false;show_pin(PinMode::Unlock);}
@@ -251,6 +270,7 @@ void poll(lv_timer_t *) {
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
   bool active=tap::pouring_active() || tap::manual_test_active;
   bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
+  bool half_ready=tap::half_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::half_stop_mm);
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
   const tap::Settings config=tap::settings;
   const tap::Sample measurement=tap::sample;
@@ -259,13 +279,14 @@ void poll(lv_timer_t *) {
   const char *idle=tap::idle_status(config,measurement,uint32_t(esp_timer_get_time()/1000),ready,tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
   if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
+  if(active || (!blocked && half_ready))lv_obj_remove_state(split_button.half,LV_STATE_DISABLED);else lv_obj_add_state(split_button.half,LV_STATE_DISABLED);
   // Fonts, alignment and visibility invalidate the button even when unchanged.
   // Keep the 50 ms safety/status poll, but repaint the face only on transitions.
   if(!pour_state_known || active!=displayed_pouring) {
-    lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"POUR");
+    lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"FULL\nPOUR");
     lv_obj_set_style_text_font(auto_text,active?&lv_font_montserrat_20:&lv_font_montserrat_28,0);
-    lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-10);
-    if(active)lv_obj_add_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);else lv_obj_remove_flag(auto_caption,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-15);
+    pour_button::split_state(split_button,active);
     pour_button::update(auto_btn,active);
     displayed_pouring=active;pour_state_known=true;
   }
@@ -291,13 +312,12 @@ void ui_start(const Settings &s) {
   lv_obj_add_event_cb(content,change_view,LV_EVENT_GESTURE,nullptr);
   notice=label(root,"");lv_obj_set_pos(notice,8,243);lv_obj_set_size(notice,224,18);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(notice,LV_TEXT_ALIGN_CENTER,0);
-  auto_btn=button(root,"POUR",auto_action);lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);auto_text=lv_obj_get_child(auto_btn,0);
+  auto_btn=button(root,"FULL\nPOUR",auto_action);lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);auto_text=lv_obj_get_child(auto_btn,0);
   pour_button::style(auto_btn);
   lv_obj_set_style_text_font(auto_text,&lv_font_montserrat_28,0);
   lv_obj_set_style_text_color(auto_text,lv_color_hex(TEXT),0);
   lv_obj_set_style_text_align(auto_text,LV_TEXT_ALIGN_CENTER,0);
-  auto_caption=label(auto_btn,"Auto fill",&lv_font_montserrat_14);
-  lv_obj_set_style_text_align(auto_caption,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(auto_caption,LV_ALIGN_CENTER,0,24);
+  split_button=pour_button::add_half(auto_btn,half_action);
   footer=label(root,"LiDAR: waiting",&lv_font_montserrat_14);
   lv_obj_set_pos(footer,8,296);lv_obj_set_size(footer,224,18);lv_obj_set_style_text_align(footer,LV_TEXT_ALIGN_CENTER,0);
   if(saved.ssid[0])show_home();else show_setup();lv_timer_create(poll,50,nullptr);lvgl_port_unlock();

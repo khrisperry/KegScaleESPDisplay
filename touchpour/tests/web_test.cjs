@@ -3,7 +3,7 @@
 const fs=require('fs'),http=require('http'),path=require('path'),assert=require('assert');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const html=path.join(__dirname,'../components/tap_control/index.html');
-const settings={closed_us:1000,open_us:2000,stop_mm:80,min_mm:237,max_mm:267,tray_mm:299,stable_mm:15,jump_mm:80,stale_ms:350,max_pour_ms:30000,servo_calibrated:true,distance_calibrated:true};
+const settings={closed_us:1000,open_us:2000,stop_mm:80,half_stop_mm:0,min_mm:237,max_mm:267,tray_mm:299,stable_mm:15,jump_mm:80,stale_ms:350,max_pour_ms:30000,servo_calibrated:true,distance_calibrated:true};
 const state={version:'0.1.10',build:'ESP-IDF v6.0.1',state:'IDLE',reason:'Emergency stop',pouring:false,ready:false,distance_mm:299,raw_distance_mm:299,filtered_distance_mm:299,filtered_valid:true,measurement_valid:true,sensor_status:11,age_ms:15,stable_samples:0,servo_us:1000,setup_mode:false,updating:false,history_saving:false,history_available:true,ota_max_bytes:6291456,ip:'192.168.91.20',settings,foam_test:{recording:false,samples:0,elapsed_ms:0},pours:[{id:7,duration_ms:4200,samples:11,manual_hold:false,reason:'Fill target reached <test>'}]};
 const requests=[];
 const server=http.createServer((q,r)=>{
@@ -46,7 +46,15 @@ const server=http.createServer((q,r)=>{
   await page.locator('[data-group=distance]').click();
   const boxes=await page.locator('[data-panel=distance] input').evaluateAll(inputs=>inputs.map(i=>i.getBoundingClientRect().top));
   assert.equal(boxes[0],boxes[1]);assert.equal(boxes[2],boxes[3]);
+  assert.equal(await page.locator('[name=half_stop_mm]').inputValue(),'0');
   await page.locator('#captureTray').click();assert.equal(await page.locator('[name=tray_mm]').inputValue(),'299');
+  state.filtered_distance_mm=state.distance_mm=160;
+  await page.waitForFunction(()=>document.getElementById('distance').textContent.includes('160'));
+  await page.locator('#captureHalf').click();
+  assert.equal(await page.locator('[name=half_stop_mm]').inputValue(),'160');
+  await page.locator('#save').click();
+  await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Settings saved'));
+  assert(requests.some(x=>x.url==='/api/settings'&&x.data.half_stop_mm===160&&x.data.stop_mm===80));
   await page.locator('[data-group=wifi]').click();await page.locator('#scan').click();
   await page.waitForFunction(()=>document.getElementById('networks').options.length===2);
   await page.locator('#networks').selectOption('Test <network>');assert.equal(await page.locator('#ssid').inputValue(),'Test <network>');

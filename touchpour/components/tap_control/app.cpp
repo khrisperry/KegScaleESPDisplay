@@ -27,6 +27,7 @@ bool manual_test_active = false;
 bool firmware_updating = false;
 bool update_closed = false;
 int servo_us = 0;
+int half_stop_mm = 0, active_stop_mm = 0;
 static_assert(CONFIG_TAP_SDA == 11 && CONFIG_TAP_SCL == 10 &&
               CONFIG_TAP_SERVO == 18 && CONFIG_TAP_BUTTON == 15,
               "TouchPour requires I2C 11/10, servo GPIO18, optional button GPIO15. Update menuconfig if using an older sdkconfig.");
@@ -40,11 +41,14 @@ bool busy() {
 }
 static const char *TAG = "tap";
 static uint32_t now_ms() { return esp_timer_get_time() / 1000; }
-bool save_settings(const Settings &c) {
+bool save_settings(const Settings &c,int half_target) {
+  if(half_target<0)half_target=half_stop_mm;
+  if(!valid_settings(c)||!valid_half_target(c,half_target))return false;
   nvs_handle_t h;
   if (nvs_open("tap", NVS_READWRITE, &h) != ESP_OK)
     return false;
   esp_err_t e = nvs_set_blob(h, "settings", &c, sizeof(c));
+  if (e == ESP_OK)e = nvs_set_i32(h,"half_stop_mm",half_target);
   if (e == ESP_OK)
     e = nvs_commit(h);
   nvs_close(h);
@@ -109,6 +113,7 @@ static void controller_task(void *) {
   SoundEvents sounds;
   uint32_t manual_deadline = 0;
   bool web_operation = false;
+  Settings selected_settings=settings;
 
   ESP_LOGI(TAG, "Button GPIO%d: active-low, debounce=30 ms, tap starts on release, "
                "hold=2000 ms for manual fill; initial=%s", CONFIG_TAP_BUTTON,
@@ -130,7 +135,7 @@ static void controller_task(void *) {
       button_event = "HOLD RELEASED / CLOSE";
     }
     const bool startup_dropout_was=control.startup_dropout_used;
-    if (!manual_hold.pouring) control.update(settings, sample, now);
+    if (!manual_hold.pouring) control.update(control.pouring?selected_settings:settings, sample, now);
     if(!startup_dropout_was && control.startup_dropout_used)
       ESP_LOGI(TAG,"One startup LiDAR no-return ignored: sequence=%lu; recovery required before %lu ms from opening",
                (unsigned long)sample.sequence,(unsigned long)Control::startup_recovery_ms);
@@ -197,11 +202,21 @@ static void controller_task(void *) {
         web_operation=a.from_web;
         set_servo(a.pulse); manual_deadline = now + 2000;
         control.reason = "Servo test: closes after two seconds";
-      } else if (a.kind == Action::START && !setup_mode && !manual_deadline && !history_saving &&
-                 !pouring_active() && control.start(settings, now)) {
-        button.cancelUntilRelease(); manual_hold.reset_ready();
-        web_operation=a.from_web;
-        set_servo(settings.open_us);
+      } else if ((a.kind == Action::START || a.kind == Action::START_HALF) &&
+                 !setup_mode && !manual_deadline && !history_saving && !pouring_active()) {
+        const bool half=a.kind==Action::START_HALF;
+        const int target=half?half_stop_mm:settings.stop_mm;
+        const bool eligible=half?half_ready(settings,control,sample,now,target):
+                                target_ready(settings,control,sample,now,target);
+        if(eligible){
+          selected_settings=for_target(settings,target);
+          if(control.start(selected_settings,now)){
+            if(half)control.reason="Half pour";
+            button.cancelUntilRelease();manual_hold.reset_ready();
+            web_operation=a.from_web;set_servo(settings.open_us);
+          }
+        }else control.reason=half?"Half pour unavailable: calibrate target or cup already at half level":
+                                  "Start rejected: calibration or stable cup reading required";
       }
       if (event.short_press) button_event = control.pouring ? "SHORT PRESS STARTED" : "SHORT PRESS REJECTED";
     }
@@ -209,6 +224,7 @@ static void controller_task(void *) {
       bool accepted = !pin_lock::locked() && !setup_mode && !manual_deadline && !history_saving && !pouring_active() &&
                       settings.servo_calibrated;
       if (accepted) {
+        selected_settings=settings;
         manual_hold.pouring = true;
         manual_hold.started = now;
         manual_hold.reason = "Manual fill: release button to close (all LiDAR checks bypassed)";
@@ -226,19 +242,21 @@ static void controller_task(void *) {
     if(!pouring_active() && !manual_deadline)web_operation=false;
     manual_test_active = manual_deadline != 0;
     touch_stop_armed = pouring_active() || manual_test_active;
-    foam_observe(sample, settings, now_ms(), servo_us, pouring_active(),
+    active_stop_mm=control.pouring?selected_settings.stop_mm:settings.stop_mm;
+    const Settings &observed=(!manual_hold.pouring && !held_was && (control.pouring||was))?selected_settings:settings;
+    foam_observe(sample, observed, now_ms(), servo_us, pouring_active(),
                  control.ready(settings, now) && !pouring_active() && !setup_mode && !manual_test_active,
                  manual_test_active, event.pressed || event.short_press || event.long_press,
                  manual_hold.pouring ? manual_hold.count : control.count,
                  manual_hold.pouring ? manual_hold.reason : control.reason, manual_hold.pouring);
     const char *reason = manual_hold.pouring ? manual_hold.reason : control.reason;
-    history_observe(sample, settings, now_ms(), servo_us, pouring_active(),
+    history_observe(sample, observed, now_ms(), servo_us, pouring_active(),
                     manual_hold.pouring, event.pressed || event.short_press || event.long_press, reason);
     bool stopped = was && !pouring_active();
     auto cue=sounds.update(cup_ready && !setup_mode && !manual_test_active && !pin_lock::locked(),
                            pouring_active(),cup_absent,
                            strcmp(reason,"Fill target reached")==0,now);
-    int mm = sample.mm, pulse = servo_us, cutoff = settings.stop_mm;
+    int mm = sample.mm, pulse = servo_us, cutoff = observed.stop_mm;
     uint32_t age = now - sample.at, sequence = sample.sequence;
     xSemaphoreGive(state_mutex);
     if(cue!=SoundCue::None)audio_notify(cue);
@@ -266,8 +284,11 @@ void start() {
     if (nvs_get_blob(h, "settings", &loaded, &n) == ESP_OK &&
         n == sizeof(loaded) && valid_settings(loaded))
       settings = loaded;
+    int32_t half=0;
+    if(nvs_get_i32(h,"half_stop_mm",&half)==ESP_OK && valid_half_target(settings,half))half_stop_mm=half;
     nvs_close(h);
   }
+  active_stop_mm=settings.stop_mm;
   ledc_timer_config_t t = {};
   t.speed_mode = LEDC_LOW_SPEED_MODE;
   t.duty_resolution = LEDC_TIMER_14_BIT;

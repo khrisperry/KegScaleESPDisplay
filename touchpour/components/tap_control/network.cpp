@@ -128,6 +128,7 @@ static void add_config(cJSON *j, const Settings &c) {
   FIELD(closed_us);
   FIELD(open_us);
   FIELD(stop_mm);
+  cJSON_AddNumberToObject(j,"half_stop_mm",half_stop_mm);
   FIELD(min_mm);
   FIELD(max_mm);
   FIELD(tray_mm);
@@ -172,6 +173,9 @@ static esp_err_t status(httpd_req_t *r) {
                             now - sample.at <= (uint32_t)settings.stale_ms);
   cJSON_AddNumberToObject(j, "stable_samples", manual_hold.pouring ? manual_hold.count : control.count);
   cJSON_AddNumberToObject(j, "servo_us", servo_us);
+  cJSON_AddNumberToObject(j,"active_cutoff_mm",active_stop_mm);
+  cJSON_AddBoolToObject(j,"half_ready",half_ready(settings,control,sample,now,half_stop_mm) &&
+      !setup_mode && !manual_test_active && !firmware_updating && !history_saving && !pouring_active());
   cJSON_AddBoolToObject(j, "physical_locked", pin_lock::locked());
   cJSON_AddBoolToObject(j, "setup_mode", setup_mode.load());
   const auto recording = foam_status(now);
@@ -326,6 +330,7 @@ static esp_err_t configure(httpd_req_t *r) {
   }
   xSemaphoreTake(state_mutex, portMAX_DELAY);
   Settings next = settings;
+  int next_half=half_stop_mm;
   bool ok = !pouring_active() && !manual_test_active && !firmware_updating && !history_saving;
 #define FIELD(n)                                                               \
   {                                                                            \
@@ -360,11 +365,16 @@ static esp_err_t configure(httpd_req_t *r) {
         next.distance_calibrated = cJSON_IsTrue(v);
     }
   }
-  ok &= valid_settings(next);
+  auto *half=cJSON_GetObjectItemCaseSensitive(j,"half_stop_mm");
+  if(half){
+    if(!cJSON_IsNumber(half)||!std::isfinite(half->valuedouble)||half->valuedouble!=half->valueint)ok=false;
+    else next_half=half->valueint;
+  }
+  ok &= valid_settings(next) && valid_half_target(next,next_half);
   if (ok)
-    ok = save_settings(next);
+    ok = save_settings(next,next_half);
   if (ok) {
-    settings = next;
+    settings = next;half_stop_mm=next_half;active_stop_mm=settings.stop_mm;
     control.stop("Settings saved: rechecking cup");
     xQueueReset(actions);
   }
@@ -390,10 +400,13 @@ static esp_err_t action(httpd_req_t *r) {
   } else {
     xSemaphoreTake(state_mutex, portMAX_DELAY);
     Action a{};a.from_web=true;
-    if (!strcmp(v->valuestring, "start")) {
-      a.kind = Action::START;
+    if (!strcmp(v->valuestring, "start") || !strcmp(v->valuestring,"start_half")) {
+      const bool half=!strcmp(v->valuestring,"start_half");
+      a.kind = half?Action::START_HALF:Action::START;
+      const uint32_t now=esp_timer_get_time()/1000;
       ok = !setup_mode && !pouring_active() && !manual_test_active &&
-           control.ready(settings, esp_timer_get_time() / 1000);
+           (half?half_ready(settings,control,sample,now,half_stop_mm):
+                 target_ready(settings,control,sample,now,settings.stop_mm));
     } else if (!strcmp(v->valuestring, "close")) {
       a.kind = Action::CLOSE;
       ok = !pouring_active();

@@ -1,10 +1,10 @@
-# TouchPour Display — V0.1.17
+# TouchPour Display — V0.1.18
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 
 ## Controls and layout
 
-- A large round **POUR** button sits at the center (150 px diameter, y=108–257). Beers remaining and the serving vessel sit above it; status (y=272–289) and instructions (y=296–313) have separate rows below. There is no on-screen manual button because the display moves with the tap handle.
+- A large round split **FULL POUR / 1/2 POUR** button sits at the center (150 px diameter, y=108–257). Beers remaining and the serving vessel sit above it; status (y=272–289) and instructions (y=296–313) have separate rows below. There is no on-screen manual button because the display moves with the tap handle.
 - Swipe left/right above the controls to cycle beers remaining, keg percentage, and minimal gallons views. Changing views is blocked during a pour.
 - Beers remaining shows **complete** servings (rounded down), matching the Keg Scale website: 24.56 servings is shown as 24, not 25.
 - POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the status reads **Touch anywhere to stop**. The footer shows the live **LiDAR: <distance> mm** at idle and during pouring, or indicates stale/invalid readings.
@@ -13,6 +13,15 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 - Optional physical button: short press starts/stops automatic pouring; two-second hold starts manual fill until release.
 - Pour control runs locally, independently of scale/Wi-Fi availability. Keg readings use the existing scale's encrypted Wi-Fi controller connection and pairing protocol.
 - Setup disables pouring. The device website retains calibration, bounded servo tests, foam recordings, on-demand diagnostics and persistent history for the last five pours. The repeating 500 ms `tap_measure` serial messages have been removed.
+
+## V0.1.18 full and half pours
+
+- The round control uses the top 112 of 150 pixels for **FULL POUR**, and a teal lower cap for **1/2 POUR**. The whole face becomes one red Emergency Stop control during either pour; touch-anywhere stop remains active. A disabled half target cannot fall through to starting a full pour, including taps on the lower rim.
+- Configure the new target on the device website under **Setup → Fill level**: fill the intended cup to the desired half-full level, hold it under the sensor, select **Capture half-pour level**, then **Save settings**. You can also enter **Half-pour cutoff** directly in millimeters. Its distance must be greater than the full-pour cutoff and less than maximum cup distance. `0` disables Half Pour, and it stays disabled after upgrading until explicitly calibrated. Do not infer half volume by halving the height of a tapered cup.
+- Half Pour fills to that saved level; it does not dispense an additional half cup. Raw and smoothed readings must both be below the selected fill level (farther from the sensor) before starting. Cups already at/above the half-full level cannot start Half Pour. Full Pour still tops up partly filled cups to the full target.
+- The selected cutoff is copied when the pour starts, used throughout the controller, and stored as that pour's cutoff in history/CSV. The saved full-pour calibration stays unchanged. Both modes retain fresh/stable readings, startup-dropout handling, raw cutoff/removal/jump checks, timeout, sounds and PIN behavior. The physical button's short press remains Full Pour; manual hold is unchanged. Web Start remains Full Pour, with `start_half` additionally accepted by the action API.
+- The half target uses a separate NVS key. The existing Settings structure and history format remain unchanged, preserving full calibration, PIN and prior history. Clearing the half target leaves Full Pour available.
+- Host tests cover target selection, full/half stop levels, refusal above target, stale/invalid input, persistence/migration, selected-cutoff history, and physical-lock/web behavior. Actual LVGL pointer tests cover both regions, disabled-half handling, the lower rim and the unified emergency face.
 
 ## V0.1.17 physical tap PIN lock
 

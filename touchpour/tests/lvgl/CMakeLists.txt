@@ -29,3 +29,8 @@ add_executable(pin_flow_test pin_flow_test.cpp)
 target_include_directories(pin_flow_test PRIVATE "../../main" "../../components/tap_control" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(pin_flow_test PRIVATE lvgl m)
 add_test(NAME pin_configuration_unlock_flow COMMAND pin_flow_test)
+
+add_executable(split_pour_test split_pour_test.cpp)
+target_include_directories(split_pour_test PRIVATE "../../main")
+target_link_libraries(split_pour_test PRIVATE lvgl m)
+add_test(NAME split_pour_hit_targets COMMAND split_pour_test)
