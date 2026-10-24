@@ -1,6 +1,7 @@
 #pragma once
 #include "lvgl.h"
 #include <initializer_list>
+#include <cmath>
 
 // Native LVGL gradients/bevels: no large button bitmaps or image decoder.
 namespace pour_button {
@@ -67,34 +68,50 @@ inline void style(lv_obj_t *button) {
 }
 struct Split {lv_obj_t *half=nullptr,*divider=nullptr;};
 inline bool half_at(int button_top,int touch_y){return touch_y>=button_top+112;}
+// Draw the small circular cap directly into the display's current strip.
+// Rounded child clipping creates nested ARGB layers; on the ESP32 these can
+// exhaust the DMA draw-buffer heap and leave LVGL retrying forever.
+inline void draw_cap(lv_event_t *event) {
+  auto object=static_cast<lv_obj_t *>(lv_event_get_target(event));
+  const bool divider=lv_event_get_user_data(event)!=nullptr;
+  const int first_row=divider?105:107;
+  const bool disabled=lv_obj_has_state(object,LV_STATE_DISABLED);
+  const bool pressed=lv_obj_has_state(object,LV_STATE_PRESSED);
+  const auto top=lv_color_hex(divider?0x07243a:disabled?0x284352:pressed?0x074569:0x176e91);
+  const auto bottom=lv_color_hex(divider?0x07243a:disabled?0x172c39:0x07354d);
+  lv_area_t coords;lv_obj_get_coords(object,&coords);
+  auto layer=lv_event_get_layer(event);
+  lv_draw_rect_dsc_t rect;lv_draw_rect_dsc_init(&rect);
+  rect.bg_opa=LV_OPA_COVER;
+  const int height=lv_area_get_height(&coords);
+  for(int row=0;row<height;++row) {
+    const float dy=first_row+row-69.5f;
+    const float extent=std::sqrt(70.0f*70.0f-dy*dy);
+    const int inset=int(std::ceil(69.5f-extent));
+    lv_area_t line{coords.x1+inset,coords.y1+row,coords.x1+139-inset,coords.y1+row};
+    rect.bg_color=lv_color_mix(bottom,top,height>1?row*255/(height-1):0);
+    lv_draw_rect(layer,&rect,&line);
+  }
+}
 inline Split add_half(lv_obj_t *button,lv_event_cb_t action){
-  lv_obj_set_style_clip_corner(button,true,0);
   lv_obj_remove_flag(button,LV_OBJ_FLAG_SCROLLABLE);
   Split result;
-  // Clip the lower face to the INNER circle so it cannot paint over the rim.
+  // Transparent carriers provide hit targets only. No corner masks/layers.
   auto face=lv_obj_create(button);lv_obj_remove_style_all(face);
   lv_obj_set_pos(face,0,0);lv_obj_set_size(face,140,140);
-  lv_obj_set_style_radius(face,LV_RADIUS_CIRCLE,0);lv_obj_set_style_clip_corner(face,true,0);
   lv_obj_remove_flag(face,LV_OBJ_FLAG_CLICKABLE);lv_obj_remove_flag(face,LV_OBJ_FLAG_SCROLLABLE);
   result.half=lv_button_create(face);lv_obj_remove_style_all(result.half);
   // Parent border is 5 px: 107 inside + 5 = 112 of the 150 px outer height.
   lv_obj_set_pos(result.half,0,107);lv_obj_set_size(result.half,140,33);
-  lv_obj_set_style_bg_opa(result.half,LV_OPA_COVER,0);
-  lv_obj_set_style_bg_color(result.half,lv_color_hex(0x176e91),0);
-  lv_obj_set_style_bg_grad_color(result.half,lv_color_hex(0x07354d),0);
-  lv_obj_set_style_bg_grad_dir(result.half,LV_GRAD_DIR_VER,0);
-  lv_obj_set_style_bg_color(result.half,lv_color_hex(0x074569),LV_STATE_PRESSED);
-  lv_obj_set_style_bg_color(result.half,lv_color_hex(0x284352),LV_STATE_DISABLED);
-  lv_obj_set_style_bg_grad_color(result.half,lv_color_hex(0x172c39),LV_STATE_DISABLED);
   lv_obj_remove_flag(result.half,LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(result.half,draw_cap,LV_EVENT_DRAW_MAIN,nullptr);
   lv_obj_add_event_cb(result.half,action,LV_EVENT_CLICKED,nullptr);
   auto caption=lv_label_create(result.half);lv_label_set_text(caption,"1/2 POUR");
   lv_obj_set_style_text_font(caption,&lv_font_montserrat_14,0);
   lv_obj_set_style_text_color(caption,lv_color_hex(0xf2f6f8),0);lv_obj_center(caption);
   result.divider=lv_obj_create(face);lv_obj_remove_style_all(result.divider);
   lv_obj_set_pos(result.divider,0,105);lv_obj_set_size(result.divider,140,3);
-  lv_obj_set_style_bg_color(result.divider,lv_color_hex(0x07243a),0);
-  lv_obj_set_style_bg_opa(result.divider,LV_OPA_COVER,0);
+  lv_obj_add_event_cb(result.divider,draw_cap,LV_EVENT_DRAW_MAIN,result.divider);
   lv_obj_remove_flag(result.divider,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(result.divider,LV_OBJ_FLAG_SCROLLABLE);
   return result;

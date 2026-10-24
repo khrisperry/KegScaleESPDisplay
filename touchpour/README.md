@@ -1,4 +1,11 @@
-# TouchPour Display — V0.1.18
+# TouchPour Display — V0.1.19
+
+## V0.1.19 display stall correction
+
+Replaces the split pour button's nested rounded clipping layers with direct circular-cap drawing. This avoids offscreen ARGB layer allocations that could stall LVGL on the device, leaving the footer at “LiDAR: waiting” while the web page continued receiving measurements. Full/half selection, the unified emergency-stop face and saved settings are unchanged.
+
+The native split-button regression now uses the device's RGB565 partial rendering (240 × 40 pixels) and a constrained 18 KB offscreen-layer budget. The previous implementation stalls under this budget; the direct-draw implementation completes the full/half touch and state-transition checks. CTest enforces a timeout.
+
 
 One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×320 portrait, 16 MB flash / 8 MB PSRAM. Not the 2.8B or 2.8C board.
 

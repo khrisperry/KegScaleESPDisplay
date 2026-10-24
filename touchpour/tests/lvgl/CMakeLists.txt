@@ -34,3 +34,5 @@ add_executable(split_pour_test split_pour_test.cpp)
 target_include_directories(split_pour_test PRIVATE "../../main")
 target_link_libraries(split_pour_test PRIVATE lvgl m)
 add_test(NAME split_pour_hit_targets COMMAND split_pour_test)
+
+set_tests_properties(split_pour_hit_targets PROPERTIES TIMEOUT 10)

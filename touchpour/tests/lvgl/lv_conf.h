@@ -8,3 +8,6 @@
 
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_28 1
+
+// Catch nested clipping layers exceeding the device draw-buffer budget.
+#define LV_DRAW_LAYER_MAX_MEMORY 18000
