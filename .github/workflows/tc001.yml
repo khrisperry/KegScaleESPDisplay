@@ -2,9 +2,9 @@ name: TC001 pixel display
 on:
   workflow_dispatch:
   push:
-    paths: ['tc001/**', 'touchscreen/components/controller_link/**', '.github/workflows/tc001.yml']
+    paths: ['tc001/**', '.github/workflows/tc001.yml']
   pull_request:
-    paths: ['tc001/**', 'touchscreen/components/controller_link/**', '.github/workflows/tc001.yml']
+    paths: ['tc001/**', '.github/workflows/tc001.yml']
 permissions:
   contents: read
 jobs:
@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libcjson-dev
       - run: tc001/tests/run.sh
   firmware:
     runs-on: ubuntu-latest

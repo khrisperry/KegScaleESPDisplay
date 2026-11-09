@@ -19,9 +19,9 @@ static const char *TAG="tc001";
 static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 
 void app_main(void) {
-    // Do not silently erase pairing data on an NVS error.
+    // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.1-tc001-dev / Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.2-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     led_strip_rmt_config_t rmt={.clk_src=RMT_CLK_SRC_DEFAULT,.resolution_hz=10000000};
@@ -76,7 +76,7 @@ void app_main(void) {
             }
             pixel_message(frame,prompt,elapsed%8000,0x48baff);
         } else if(view.message[0]) pixel_message(frame,view.message,(uint32_t)(now-view.message_start_ms),0xffb52e);
-        else if(!view.online || tc001_state_stale(now,view.last_state_ms)) pixel_message(frame,"NO LINK",0,0xff3838);
+        else if(!view.online || tc001_state_stale(now,view.last_state_ms)) pixel_message(frame,"NO DATA",0,0xff3838);
         else pixel_render(frame,&view.state,page,(uint32_t)(now-page_start));
 #endif
         // Manual brightness is capped at 25% for the first hardware bring-up.

@@ -17,7 +17,7 @@ image=Image.new('RGB',(1040,780),'#10151d')
 d=ImageDraw.Draw(image)
 d.text((35,22),'Keg TC001 · 32 × 8 pixel firmware preview',font=large,fill='#edf3fb')
 d.text((35,65),'Sample data · 42 servings · 68% full · 3.40 gallons',font=font,fill='#aebace')
-labels=['Servings remaining','Keg percentage','Gallons remaining','Beer name (scrolls)','Pairing code','Connection lost']
+labels=['Servings remaining','Keg percentage','Gallons remaining','Beer name (scrolls)','MQTT connection','No fresh data']
 for panel,(page,tick) in enumerate([(0,20),(1,20),(2,20),(3,22),(4,0),(6,0)]):
  x=35+(panel%2)*500;y=115+(panel//2)*215
  d.text((x,y),labels[panel],font=font,fill='#aebace')

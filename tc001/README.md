@@ -1,6 +1,8 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.1-tc001-dev** connects over **Wi-Fi**, using the same authenticated protocol-1 WebSocket and shared `controller_link` crypto component as the Wi-Fi touchscreen. This is a separate ESP-IDF project; the existing e-paper and touchscreen targets are unchanged.
+Development firmware **1.0.2-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+
+This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
 ## What it shows
 
@@ -11,35 +13,63 @@ The 32×8 RGB matrix rotates every 8 seconds:
 3. **US gallons remaining**, with `G` suffix.
 4. Scrolling **beer name**.
 
-The bottom fill bar is green above 25%, amber at 11–25%, red at 10% or below. `SETUP` replaces invalid/not-ready readings; `SETTLE` replaces unstable readings. Readings older than 12 seconds become `NO LINK` and trigger reconnect. `WIFI WAIT` indicates Wi-Fi has disconnected.
+The bottom fill bar is green above 25%, amber at 11–25%, red at 10% or below. `SETUP` replaces unconfigured/uncalibrated scale readings; `SETTLE` replaces unstable readings. An empty but configured keg correctly displays zero.
 
-Open [preview/index.html](preview/index.html) in a modern browser for the standalone interactive preview. [preview/screens.png](preview/screens.png) is the contact sheet. They use the actual C renderer with sample data. Keg temperature is not shown because it is not in the current scale snapshot.
+Open [preview/index.html](preview/index.html) in a modern browser for the standalone interactive preview. [preview/screens.png](preview/screens.png) shows example screens. Both use the actual C renderer with sample data.
 
-## First Wi-Fi setup
+## Gather the cottage MQTT settings
+
+Open the **scale's webpage → Settings → Home Assistant** and note:
+
+| Setting | TC001 field |
+| --- | --- |
+| MQTT broker URI, e.g. `mqtt://192.168.90.10:1883` | Broker `192.168.90.10`, port `1883`, TLS off |
+| MQTT username and password | MQTT username and password; re-enter the password you originally configured |
+| Base topic, e.g. `kegscale/ab8070` | Scale MQTT base topic, copied exactly |
+
+Examples above are placeholders, not your actual cottage addresses or topic. The base topic uses **six** final MAC digits; do not infer it from the four digits in the scale's hostname. Do not enter a Home Assistant entity ID, discovery prefix (`homeassistant`), wildcard, or trailing `/state`.
+
+You may use the existing MQTT login, or a separate broker account with permission to **read** the scale's `<base>/state` and `<base>/availability` topics. The clock never publishes readings, commands, or Home Assistant discovery. It uses its own `KegPixel-XXXX` client ID, distinct from the scale and Home Assistant.
+
+## First setup
 
 1. Flash the clock through USB. First boot opens a WPA2-protected setup network named **KegPixel-XXXX**.
-2. The clock cycles through its setup network name, **eight-character password**, `192.168.4.1`, and `WIFI SETUP`. The password is the eight-character screen without a label, and can contain letters and digits.
+2. The clock cycles through the network name, an **eight-character password**, `192.168.4.1`, and `WIFI SETUP`. The password is the eight-character screen without a label, and can contain letters and digits.
 3. Join that network from your phone/computer. Stay connected if it says “No Internet,” and open **http://192.168.4.1/**.
-4. Scan/select a **2.4 GHz Wi-Fi** network, enter its password, and optionally unmask it. Enter the scale's IP or hostname, for example `192.168.91.25` or `KegScale-1234.local`.
-5. Save; the clock restarts and joins your network. No BLE, MQTT broker, Home Assistant, or cloud service is required.
+4. Scan/select your cottage's **2.4 GHz Wi-Fi** and enter its Wi-Fi password.
+5. Enter the cottage **MQTT broker hostname/IP, port, MQTT username/password, and scale base topic**. The broker address is not necessarily the scale or Home Assistant address; use the broker URI from the scale settings.
+6. Save. The clock restarts, connects to Wi-Fi and MQTT, subscribes to the chosen scale, and waits for a fresh reading. Normally this takes up to 10–20 seconds after connecting.
 
-For discovery rather than manual IP entry, first save Wi-Fi with the scale address blank. Rejoin the same setup network after restart and select **Find scales**; the clock queries the same `_kegscale._tcp` mDNS service as the touchscreen through its Wi-Fi station connection. Save the chosen scale address to restart into live mode. A manual IP works when mDNS is unavailable across VLANs. The devices need network access to each other on TCP port 80.
+**Do not remove TouchPour, open Add touchscreen, or change e-Ink pairing.** There is no verification code for this MQTT connection. Home Assistant itself does not need to forward the data. The MQTT broker must remain running and the scale must continue publishing to it.
 
-Wi-Fi credentials and the authorized scale key persist in NVS. A blank password preserves the existing password only for the same SSID; explicitly select **Open network** to clear it. Passwords and keys are not logged or returned by the setup API.
+The clock and scale need network access to the broker (normally TCP 1883); they do not need a direct connection to each other. Wi-Fi power saving is disabled for continuous USB-powered use. Broker reconnect is automatic with a 10-second retry interval; subscriptions are renewed on every connection.
 
-## Authorize the scale connection
+### Transport and saved settings
 
-1. Reconnect your phone/computer to your normal network and open the scale's webpage.
-2. Open **Settings → Displays → Wi-Fi touchscreen** (or `/controller`). Log in there if web administrator authentication is enabled.
-3. Choose **Add touchscreen**. The clock retries its connection automatically.
-4. Enter the clock's **six-character hexadecimal code**, including any letters A–F, in the scale's authorization prompt.
-5. After approval, the clock saves the shared key and receives live encrypted snapshots. On restart it proves possession of the saved key and reconnects automatically.
+Standard local `mqtt://` uses TCP with TLS off, generally port 1883. As with the scale's plain MQTT configuration, credentials and messages travel without transport encryption on that LAN connection.
 
-The scale currently supports **one authenticated Wi-Fi controller per scale**. The TC001 uses that existing slot, so it replaces a Wi-Fi touchscreen on the same scale; both cannot be connected concurrently. The independently paired BLE e-paper display can remain connected. This change does not alter scale-side display capacity or rename its existing touchscreen management page.
+For `mqtts://`, select TLS and enter the matching hostname/port (usually 8883). Server certificates are verified against the ESP public CA bundle, including hostname and validity checks. TLS requires network time via `pool.ntp.org`; the clock shows `TIME WAIT` until time is available. Private/self-signed CA certificates and MQTT over WebSockets are not supported in this version. Do not disable certificate verification to work around a certificate error.
 
-The scale pushes cached readings at roughly 2 Hz. The TC001 sends encrypted application heartbeats every 3 seconds, retries connections at 10-second intervals, and drops sessions with readings older than 12 seconds. Wi-Fi power saving is disabled for continuous USB-powered use. Unauthenticated plaintext cannot supply readings; messages are authenticated with AES-256-GCM and replay protection from the shared touchscreen component. The displayed verification code is never sent over the WebSocket or exposed in the setup API.
+Credentials persist in NVS and are never logged or returned by the setup API. Blank Wi-Fi password preserves it only for the same SSID; select **Open network** to clear it. Blank MQTT password preserves it for the same broker and username; changing either discards it unless a new password is supplied. Select **Clear saved MQTT password** to explicitly remove it.
 
-Removing the pairing on the scale while connected sends an encrypted `unpair` notice, which clears the clock's saved key. If removal happened while the clock was offline, use its setup page to clear its local pairing too. Before changing scales, remove the old pairing on that scale and select the local clear-pairing checkbox. Changing an already-paired host is rejected unless local pairing is explicitly cleared.
+When upgrading from the previous TC001 controller firmware, saved Wi-Fi and the clock's setup AP password are preserved. Broker settings must be entered. Its former scale address/key are unused. If the old TC001 was paired to a scale, remove that old registration only if needed to free the slot; do not remove a current TouchPour registration.
+
+## Freshness and status screens
+
+The current scale publishes retained JSON snapshots every **10 seconds** to `<base>/state`, with `servings_remaining`, `remaining_percent`, `remaining_gallons`, `keg_name`, `calibrated`, and `stable`. The clock also subscribes to `<base>/availability` for `online`/`offline` notices.
+
+The broker may deliver an old retained snapshot immediately after subscribing. Since that payload has no trustworthy timestamp, the clock **does not treat it as a live reading**. It waits for the next non-retained delivery of a new publication. Normal live subscribers receive new retained publications with the MQTT retained-delivery flag clear.
+
+| Clock message | Meaning |
+| --- | --- |
+| `WIFI WAIT` | No Wi-Fi connection |
+| `MQTT WAIT` | Waiting for the broker; check address, port, login, and broker permissions |
+| `TIME WAIT` | TLS selected; waiting for network time |
+| `NO DATA` | No live reading yet, scale reported offline, or last valid update is over 35 seconds old |
+| `SETUP` | Fresh scale telemetry, but no usable configured/calibrated keg reading |
+| `SETTLE` | Fresh scale telemetry, but weight is unstable |
+
+An offline notice immediately clears the live-reading status. An `online` notice or retained state alone cannot revive it; a new valid snapshot is required. Broker/Wi-Fi disconnects also invalidate the previous reading. Malformed, oversized, out-of-range, and incomplete payloads never refresh the timeout. The 35-second window allows three normal telemetry intervals; this is a status display, not the rapid feedback source used by TouchPour.
 
 ## Buttons and recovery
 
@@ -48,15 +78,15 @@ Removing the pairing on the scale while connected sends an encrypted `unpair` no
 | Left | Previous keg page; pause automatic rotation for 20 seconds |
 | Right | Next keg page; pause automatic rotation for 20 seconds |
 | Middle, short press | Cycle brightness: 6%, 13%, 25% |
-| Middle, hold 5 seconds | Open the protected Wi-Fi setup network; preserve current pairing and credentials |
+| Middle, hold 5 seconds | Open the protected setup network; preserve saved settings |
 
-The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup mode closes automatically after 10 minutes. With missing Wi-Fi or scale settings it remains available. Saving settings restarts the clock; reopening setup does not automatically delete the pairing. The eight-character AP password is stored once and remains the same across restarts.
+The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup closes automatically after 10 minutes. With missing Wi-Fi or broker/topic settings it remains available. Saving settings restarts the clock. The eight-character AP password remains the same across restarts.
 
-Brightness resets to 13% after restart. Battery sleep, battery telemetry, buzzer, and auto brightness are not implemented; this version is designed for continuous USB power.
+Brightness resets to 13% after restart. Battery sleep, battery telemetry, buzzer, auto brightness, and OTA are not implemented; this version is designed for continuous USB power and USB updates.
 
-## Build and flash on Windows
+## Build and flash on Windows / VS Code
 
-Use an **ESP-IDF 6.0.1 terminal**, matching the touchscreen and this project's CI toolchain. The TC001 target is classic `esp32`, not ESP32-S3/C3.
+Open **ESP-IDF: Open ESP-IDF Terminal** in VS Code and use **ESP-IDF 6.0.1**. The TC001 target is classic `esp32`, not ESP32-S3/C3.
 
 ```powershell
 cd C:\Users\kperry\Documents\GitHub\KegScaleESPDisplay
@@ -64,35 +94,36 @@ git fetch origin
 git switch feature/tc001-pixel-display
 git pull --ff-only
 cd tc001
-# Needed only if an older TC001 build folder/config still targets IDF 5.5.2:
-idf.py fullclean
 idf.py set-target esp32
 idf.py build
 ```
 
-Connect a USB-C **data cable**. Save the original 4 MiB flash before replacing it:
+Connect a USB-C **data cable**. Before replacing stock firmware, back up its original 4 MiB flash. Replace COM5 with the actual port and stop any serial monitor first:
 
 ```powershell
-# Replace COM5 with the actual port; stop any serial monitor first.
-python -m esptool --chip esp32 --port COM5 read-flash 0x0 0x400000 tc001-original.bin
+python -m esptool --chip esp32 --port COM5 read-flash 0x0 0x400000 "$env:USERPROFILE\Documents\tc001-original.bin"
 idf.py -p COM5 flash monitor
 ```
 
-If it does not enter flashing mode automatically, follow the TC001/AWTRIX flashing instructions for the actual unit. Confirm successful backup before an erase is needed. `idf.py flash` writes this project's bootloader, partition table, and application; do not flash the e-paper/touchscreen binaries on the clock. Replacing stock firmware replaces its stock app functions.
+If you already flashed a previous TC001 build and made a backup, keep that original backup; do not overwrite it with the development image. `Ctrl+]` exits the monitor.
 
-The firmware does not silently erase NVS on startup errors. If stock/old NVS causes `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, back up as needed and run `idf.py -p COM5 erase-flash`, then flash again. This erases saved Wi-Fi and pairings too. Old TC001 BLE pairing data is not used by this Wi-Fi version; remove its old BLE registration separately on the scale if you had paired the earlier firmware.
+If it does not enter flashing mode automatically, follow the TC001/AWTRIX flashing instructions for the actual unit. `idf.py flash` writes this project's bootloader, partition table, and application; do not flash e-paper/touchscreen/TouchPour binaries on the clock.
+
+The firmware does not silently erase NVS on startup errors. If stock/old NVS causes `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, back up as needed and run `idf.py -p COM5 erase-flash`, then flash again. This erases saved settings. A dedicated TC001 OTA hardware/channel entry would be needed before implementing OTA.
 
 ## Demo, hardware, and validation
 
 `idf.py menuconfig` → **Keg TC001** → enable demonstration, then build/flash. It shows `DEMO` for the first 1.5 seconds of each page and does not start networking. Disable it and rebuild for live use.
 
-Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. **Physical hardware is not yet tested.** Verify orientation/color order, button levels, setup AP, station reconnect, pairing/removal, and sustained encrypted state updates when the clock arrives.
-
-USB firmware updates only for now. A dedicated TC001 OTA hardware/channel entry and matching scale-side support are needed before adding signed OTA; it does not install e-paper/touchscreen OTA images.
+Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. **Physical validation is still pending.** Verify orientation, color order, buttons, setup, broker authentication, live cottage updates, and Wi-Fi/broker/scale restarts on the actual unit.
 
 ```bash
+# Host tests require gcc, Node, and libcjson-dev/pkg-config, or CJSON_DIR pointing
+# to cJSON 1.7.19 sources (e.g. the managed component or an upstream checkout).
 ./tc001/tests/run.sh
 python3 tc001/tools/build_preview.py  # Pillow required
 ```
 
-Host tests cover pixel mapping, gauges/statuses, scrolling, allowed host strings, stale timeout, plaintext handshake gating, and bounded WebSocket frame assembly/generation checks. The shared crypto has its existing actual-source tests in `touchscreen/tests/controller_link_test.c`. CI builds live and demo firmware and runs host checks. Build/test success does not establish operation on physical hardware.
+Tests execute the actual MQTT JSON parser, freshness state and bounded fragmented-message assembler, plus the renderer and setup-page JavaScript. They cover retained-state rejection, offline/online transitions, reconnect, stale timeouts, invalid/uncalibrated readings, empty kegs, payload bounds, topic validation, settings submission and password privacy. CI builds live/demo firmware for ESP32 with ESP-IDF 6.0.1 and runs these host checks. Successful builds/tests do not establish physical operation or cottage connectivity.
+
+Validation for this change: ESP-IDF 6.0.1 live and demo builds pass; live binary is about 1.03 MiB and fits the 2 MiB application partition. Host C tests pass with AddressSanitizer/UndefinedBehaviorSanitizer, and setup-page JavaScript tests pass. Actual TC001 and cottage-network testing remain pending.
