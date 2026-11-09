@@ -17,3 +17,6 @@ unsigned pixel_wire_index(unsigned x, unsigned y, unsigned layout);
 
 // Long beer names remain on screen until their last character has been shown.
 uint32_t pixel_page_duration_ms(const pixel_state_t *s, unsigned page);
+
+// Split at a balanced word boundary; use two compact rows on the name page.
+unsigned pixel_name_lines(const char *name, char lines[2][33]);

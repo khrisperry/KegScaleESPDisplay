@@ -137,9 +137,112 @@ static void large_text(pixel_t *f,const char *s,int left,unsigned width,uint32_t
         x+=(int)w+1;
     }
 }
+// The name page trades the level bar for two four-pixel-high text rows.
+// Narrow I/L glyphs let "YUENGLING" fit across the 32-pixel width exactly.
+typedef struct { char c; unsigned width; uint8_t rows[4]; } compact_glyph_t;
+static const compact_glyph_t compact_font[] = {
+    {'A', 3, {2,5,7,5}},
+    {'B', 3, {6,7,5,7}},
+    {'C', 3, {7,4,4,7}},
+    {'D', 3, {6,5,5,6}},
+    {'E', 3, {7,6,4,7}},
+    {'F', 3, {7,6,4,4}},
+    {'G', 3, {7,4,5,7}},
+    {'H', 3, {5,7,5,5}},
+    {'I', 1, {1,1,1,1}},
+    {'J', 3, {1,1,5,7}},
+    {'K', 3, {5,6,6,5}},
+    {'L', 2, {2,2,2,3}},
+    {'M', 5, {17,27,21,17}},
+    {'N', 3, {5,7,7,5}},
+    {'O', 3, {7,5,5,7}},
+    {'P', 3, {6,5,6,4}},
+    {'Q', 3, {7,5,7,1}},
+    {'R', 3, {6,5,6,5}},
+    {'S', 3, {3,4,1,6}},
+    {'T', 3, {7,2,2,2}},
+    {'U', 3, {5,5,5,7}},
+    {'V', 3, {5,5,5,2}},
+    {'W', 5, {17,21,27,17}},
+    {'X', 3, {5,2,2,5}},
+    {'Y', 3, {5,2,2,2}},
+    {'Z', 3, {7,1,4,7}},
+    {'0', 3, {7,5,5,7}},
+    {'1', 1, {1,1,1,1}},
+    {'2', 3, {6,1,2,7}},
+    {'3', 3, {6,3,1,6}},
+    {'4', 3, {5,7,1,1}},
+    {'5', 3, {7,6,1,6}},
+    {'6', 3, {4,6,5,7}},
+    {'7', 3, {7,1,2,2}},
+    {'8', 3, {7,7,5,7}},
+    {'9', 3, {7,5,3,1}},
+    {' ', 2, {0,0,0,0}},
+    {'-', 3, {0,0,7,0}},
+    {'.', 1, {0,0,0,1}},
+    {'\'', 1, {1,1,0,0}},
+    {'&', 3, {2,4,3,7}},
+    {'/', 3, {1,2,2,4}},
+    {'?', 3, {7,1,2,2}},
+};
+static const compact_glyph_t *compact_glyph(char c) {
+    c=(char)toupper((unsigned char)c);
+    for(unsigned i=0;i<sizeof(compact_font)/sizeof(compact_font[0]);i++)
+        if(compact_font[i].c==c) return &compact_font[i];
+    return &compact_font[sizeof(compact_font)/sizeof(compact_font[0])-1];
+}
+static unsigned compact_length(const char *s) {
+    unsigned length=0;
+    for(;*s;s++) length+=compact_glyph(*s)->width+1;
+    return length?length-1:0;
+}
+unsigned pixel_name_lines(const char *name,char lines[2][33]) {
+    char clean[33]={0};unsigned n=0;bool space=false;
+    memset(lines,0,2*33);
+    if(name) for(unsigned i=0;i<32 && name[i];i++) {
+        if(isspace((unsigned char)name[i])) { space=n>0;continue; }
+        if(space && n<32) clean[n++]=' ';
+        if(n<32) clean[n++]=name[i];
+        space=false;
+    }
+    if(!n) { memcpy(lines[0],"KEG",4);return 1; }
+    if(compact_length(clean)<=32) { memcpy(lines[0],clean,n+1);return 1; }
+    // Choose the word boundary with the smallest maximum line width.
+    unsigned split=0,best=~0u,best_balance=~0u;
+    for(unsigned i=1;i<n;i++) if(clean[i]==' ') {
+        char first[33]={0};memcpy(first,clean,i);
+        unsigned left=compact_length(first),right=compact_length(clean+i+1);
+        unsigned maximum=left>right?left:right;
+        unsigned balance=left>right?left-right:right-left;
+        if(maximum<best || (maximum==best && balance<best_balance)) {
+            split=i;best=maximum;best_balance=balance;
+        }
+    }
+    if(!split) split=n/2; // Single long word: wrap without dropping characters.
+    memcpy(lines[0],clean,split);
+    unsigned second=split+(clean[split]==' ');
+    memcpy(lines[1],clean+second,n-second);
+    return 2;
+}
+static void compact_text(pixel_t *f,const char *s,int top,uint32_t ms,uint32_t color) {
+    int x=text_left(compact_length(s),32,ms,0);
+    for(;*s;s++) {
+        const compact_glyph_t *g=compact_glyph(*s);
+        for(unsigned y=0;y<4;y++) for(unsigned col=0;col<g->width;col++)
+            if((g->rows[y]>>(g->width-1-col))&1) dot(f,x+(int)col,top+(int)y,color);
+        x+=(int)g->width+1;
+    }
+}
+static void name_page(pixel_t *f,const char *name,uint32_t ms) {
+    char lines[2][33];unsigned count=pixel_name_lines(name,lines);
+    compact_text(f,lines[0],count==1?2:0,ms,0xffecca);
+    if(count==2) compact_text(f,lines[1],4,ms,0xffbf00);
+}
 uint32_t pixel_page_duration_ms(const pixel_state_t *s,unsigned page) {
     if(page%PIXEL_PAGES!=3) return 8000;
-    uint32_t duration=scroll_cycle(large_length(s->name),32);
+    char lines[2][33];pixel_name_lines(s->name,lines);
+    unsigned a=compact_length(lines[0]),b=compact_length(lines[1]);
+    uint32_t duration=scroll_cycle(a>b?a:b,32);
     return duration<8000?8000:duration;
 }
 static void text(pixel_t *f, const char *s, int left, int width, uint32_t ms, uint32_t color) {
@@ -195,7 +298,7 @@ void pixel_render(pixel_t f[PIXEL_COUNT],const pixel_state_t *s,unsigned page,ui
     case 2:
         snprintf(value,sizeof(value),"%.2fG",(double)(isfinite(s->gallons)&&s->gallons>0?s->gallons:0));
         large_text(f,value,0,32,ms,0x48baff);break;
-    default: large_text(f,s->name[0]?s->name:"KEG",0,32,ms,0xffecca);break;
+    default: name_page(f,s->name,ms);return; // Both rows are text; no gauge on this page.
     }
     int fill=(int)lroundf(pct*32/100);
     // Keep the bar quieter than the readout and make its empty section nearly off.

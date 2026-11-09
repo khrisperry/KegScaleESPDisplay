@@ -19,9 +19,16 @@ static const char *TAG="tc001";
 static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 
 void app_main(void) {
+    // The unused TC001 buzzer is on GPIO15. A floating input can pick up
+    // noise and whine after a power cycle; establish its quiet state first.
+    ESP_ERROR_CHECK(gpio_set_level(GPIO_NUM_15,0));
+    gpio_config_t buzzer={.pin_bit_mask=1ULL<<GPIO_NUM_15,.mode=GPIO_MODE_OUTPUT,
+        .pull_up_en=GPIO_PULLUP_DISABLE,.pull_down_en=GPIO_PULLDOWN_ENABLE,
+        .intr_type=GPIO_INTR_DISABLE};
+    ESP_ERROR_CHECK(gpio_config(&buzzer));
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.7-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.8-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     // Classic ESP32 has no RMT DMA. Wi-Fi can delay the RMT refill ISR and
