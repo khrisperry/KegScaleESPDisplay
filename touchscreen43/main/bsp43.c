@@ -12,7 +12,7 @@
 static const char *TAG = "touchscreen43";
 static i2c_master_bus_handle_t bus;
 static i2c_master_dev_handle_t mode_dev, output_dev;
-static uint8_t outputs = 0x2e; // TP_RST high, backlight high, USB_SEL low.
+static uint8_t outputs = 0x2e; // TP_RST/backlight high; CAN selected. UART connector is independent.
 
 static esp_err_t init_bus(void) {
     if (bus) return ESP_OK;

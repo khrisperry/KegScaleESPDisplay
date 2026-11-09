@@ -15,12 +15,15 @@ image, including manual installs; it is built for different hardware.
 
 Use the **UART** USB-C port. Download and extract the `touchscreen43-usb-test`
 artifact from the Temporary 4.3-inch connection test Actions run.
-From the extracted directory, using your actual COM port:
+From the extracted artifact directory, using your actual COM port:
 
 ```powershell
 py -m pip install esptool
-py -m esptool --chip esp32s3 --port COM13 write-flash 0x0 firmware-usb.bin
+py -m esptool --chip esp32s3 --port COM13 write-flash 0x0 build/firmware-usb.bin
 ```
+
+The packaged `KegTouch43-Connection-Test.zip` supplied in ChatGPT has the merged
+image at the top level instead: use `firmware-usb.bin` without `build/`.
 
 Press RESET after flashing. If connection fails, hold BOOT, press RESET,
 release BOOT, and retry. The merged image contains the bootloader,
