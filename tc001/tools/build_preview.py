@@ -17,8 +17,8 @@ image=Image.new('RGB',(1040,780),'#10151d')
 d=ImageDraw.Draw(image)
 d.text((35,22),'Keg TC001 · 32 × 8 pixel firmware preview',font=large,fill='#edf3fb')
 d.text((35,65),'Sample data · 29 servings · 30% full · 4.66 gallons',font=font,fill='#aebace')
-labels=['Servings remaining','Keg percentage','Gallons remaining','Beer name (two lines)','MQTT connection','No fresh data']
-for panel,(page,tick) in enumerate([(0,20),(1,20),(2,20),(3,22),(4,0),(6,0)]):
+labels=['Servings remaining','Keg percentage','Gallons remaining','Beer name (two lines)','Clock battery (estimate)','No fresh data']
+for panel,(page,tick) in enumerate([(0,20),(1,20),(2,20),(3,22),(4,0),(7,0)]):
  x=35+(panel%2)*500;y=115+(panel//2)*215
  d.text((x,y),labels[panel],font=font,fill='#aebace')
  d.rounded_rectangle((x,y+36,x+470,y+192),radius=20,fill='#222a35',outline='#424c5a',width=2)
@@ -33,5 +33,6 @@ d.text((35,753),'Renderer-accurate pixels; sample data; new screen polish awaits
 image.save(root/'preview/screens.png')
 image.crop((30,110,510,315)).save(root/'preview/stein.png')
 image.crop((530,325,1010,530)).save(root/'preview/name.png')
+image.crop((30,540,510,745)).save(root/'preview/battery.png')
 (root/'preview/frames.js').unlink()
 print('Created standalone preview and screen contact sheet')

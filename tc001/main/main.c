@@ -12,6 +12,7 @@
 #include "led_strip.h"
 #include "wifi_link.h"
 #include "wifi_policy.h"
+#include "battery.h"
 #include "pixel_ui.h"
 #include "sdkconfig.h"
 
@@ -28,7 +29,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(gpio_config(&buzzer));
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.8-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.9-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     // Classic ESP32 has no RMT DMA. Wi-Fi can delay the RMT refill ISR and
@@ -43,6 +44,8 @@ void app_main(void) {
         .mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};
     ESP_ERROR_CHECK(gpio_config(&buttons));
 #ifndef CONFIG_TC001_DEMO
+    esp_err_t battery_err=tc001_battery_start();
+    if(battery_err!=ESP_OK) ESP_LOGW(TAG,"Battery monitor unavailable: %s",esp_err_to_name(battery_err));
     ESP_ERROR_CHECK(tc001_wifi_start());
 #endif
     pixel_t frame[PIXEL_COUNT];
@@ -54,6 +57,10 @@ void app_main(void) {
     int64_t down_at[3]={0};
     while(true) {
         int64_t now=now_ms();
+#ifndef CONFIG_TC001_DEMO
+        tc001_battery_poll(now);
+        tc001_battery_t battery;tc001_battery_get(&battery);
+#endif
         for(int i=0;i<3;i++) {
             bool down=gpio_get_level(pins[i])==0;
             if(down!=pressed[i]) debounce[i]++;else debounce[i]=0;
@@ -81,7 +88,9 @@ void app_main(void) {
             page=(page+1)%PIXEL_PAGES;page_start=now;
         }
 #ifdef CONFIG_TC001_DEMO
-        pixel_render(frame,&state,page,(uint32_t)(now-page_start));
+        if(page==PIXEL_BATTERY_PAGE && now-page_start>=1500)
+            pixel_battery(frame,75,true,(uint32_t)(now-page_start));
+        else pixel_render(frame,&state,page,(uint32_t)(now-page_start));
 #else
         if(view.setup_active) {
             char prompt[96];
@@ -92,7 +101,8 @@ void app_main(void) {
             default: snprintf(prompt,sizeof(prompt),"WIFI SETUP");break;
             }
             pixel_message(frame,prompt,elapsed%8000,0x48baff);
-        } else if(view.message[0]) pixel_message(frame,view.message,(uint32_t)(now-view.message_start_ms),0xffb52e);
+        } else if(page==PIXEL_BATTERY_PAGE) pixel_battery(frame,battery.percent,battery.valid,(uint32_t)(now-page_start));
+        else if(view.message[0]) pixel_message(frame,view.message,(uint32_t)(now-view.message_start_ms),0xffb52e);
         else if(!view.online || tc001_state_stale(now,view.last_state_ms)) pixel_message(frame,"NO DATA",0,0xff3838);
         else pixel_render(frame,&view.state,page,(uint32_t)(now-page_start));
 #endif

@@ -1,6 +1,7 @@
 #include "wifi_link.h"
 #include "wifi_policy.h"
 #include "setup_access.h"
+#include "battery.h"
 #include "mqtt_feed.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -132,7 +133,30 @@ static esp_err_t status_handler(httpd_req_t *r) {
     cJSON_AddBoolToObject(o,"mqtt",mqtt_connected);
     xSemaphoreGive(guard);
     cJSON_AddBoolToObject(o,"wifi",wifi_ready);cJSON_AddStringToObject(o,"firmware",esp_app_get_description()->version);
+    tc001_battery_t battery;tc001_battery_get(&battery);
+    cJSON_AddBoolToObject(o,"battery_valid",battery.valid);
+    cJSON_AddNumberToObject(o,"battery_raw",battery.raw);
+    if(battery.valid)cJSON_AddNumberToObject(o,"battery_percent",battery.percent);
+    cJSON_AddNumberToObject(o,"battery_empty",battery.empty);
+    cJSON_AddNumberToObject(o,"battery_full",battery.full);
     return json_response(r,o);
+}
+static esp_err_t battery_handler(httpd_req_t *r) {
+    if(!setup_allowed(r,true))return error_response(r,"403 Forbidden","Setup access required");
+    if(r->content_len<=0 || r->content_len>=128)return error_response(r,"400 Bad Request","Calibration too large");
+    char body[128]={0};int used=0;
+    while(used<r->content_len) { int n=httpd_req_recv(r,body+used,r->content_len-used);if(n<=0)return ESP_FAIL;used+=n; }
+    cJSON *o=cJSON_Parse(body);if(!o)return error_response(r,"400 Bad Request","Invalid JSON");
+    const cJSON *empty=cJSON_GetObjectItemCaseSensitive(o,"empty"),*full=cJSON_GetObjectItemCaseSensitive(o,"full");
+    bool valid=cJSON_IsNumber(empty) && cJSON_IsNumber(full) && isfinite(empty->valuedouble) && isfinite(full->valuedouble) &&
+        empty->valuedouble>=100 && full->valuedouble<=1000 && full->valuedouble-empty->valuedouble>=20 &&
+        floor(empty->valuedouble)==empty->valuedouble && floor(full->valuedouble)==full->valuedouble;
+    esp_err_t err=valid?tc001_battery_calibrate((int)empty->valuedouble,(int)full->valuedouble):ESP_ERR_INVALID_ARG;
+    cJSON_Delete(o);
+    if(err==ESP_ERR_INVALID_ARG)return error_response(r,"400 Bad Request","Use raw values from 100 to 1000; full must be at least 20 above empty");
+    if(err!=ESP_OK)return error_response(r,"500 Internal Server Error","Could not save battery calibration");
+    cJSON *reply=cJSON_CreateObject();if(reply)cJSON_AddStringToObject(reply,"message","Battery calibration saved. No restart needed.");
+    return json_response(r,reply);
 }
 static bool wifi_password_valid(const char *p) {
     size_t n=strlen(p);
@@ -366,7 +390,8 @@ esp_err_t tc001_wifi_start(void) {
         {.uri="/",.method=HTTP_GET,.handler=setup_page},
         {.uri="/api/status",.method=HTTP_GET,.handler=status_handler},
         {.uri="/api/config",.method=HTTP_POST,.handler=config_handler},
-        {.uri="/api/wifi",.method=HTTP_GET,.handler=scan_wifi_handler}
+        {.uri="/api/wifi",.method=HTTP_GET,.handler=scan_wifi_handler},
+        {.uri="/api/battery",.method=HTTP_POST,.handler=battery_handler}
     };
     for(unsigned i=0;i<sizeof(endpoints)/sizeof(endpoints[0]);i++) ESP_ERROR_CHECK(httpd_register_uri_handler(http,&endpoints[i]));
     if(settings.tls) {

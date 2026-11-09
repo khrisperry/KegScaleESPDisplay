@@ -266,8 +266,24 @@ unsigned pixel_wire_index(unsigned x,unsigned y,unsigned layout) {
     if(layout==2) return x*8+((x&1)?7-y:y);
     return y*32+((y&1)?31-x:x);
 }
+void pixel_battery(pixel_t f[PIXEL_COUNT],int percent,bool valid,uint32_t ms) {
+    memset(f,0,sizeof(pixel_t)*PIXEL_COUNT);
+    if(percent<0) percent=0;
+    if(percent>100) percent=100;
+    uint32_t color=!valid?0x7f91a8:percent<=15?0xff3838:percent<=30?0xffa020:0x32d680;
+    for(int x=0;x<=6;x++) { dot(f,x,1,0x7f91a8);dot(f,x,5,0x7f91a8); }
+    for(int y=2;y<=4;y++) { dot(f,0,y,0x7f91a8);dot(f,6,y,0x7f91a8);dot(f,7,y,0x7f91a8); }
+    int fill=valid?(percent*5+99)/100:0;
+    for(int y=2;y<=4;y++) for(int x=1;x<=fill;x++) dot(f,x,y,color);
+    char value[12];if(valid)snprintf(value,sizeof(value),"%d%%",percent);else snprintf(value,sizeof(value),"--%%");
+    large_text(f,value,8,24,ms,color);
+    uint32_t bar=((((color>>16)&255)/3)<<16)|((((color>>8)&255)/3)<<8)|((color&255)/3);
+    int pixels=valid?(percent*32+50)/100:0;
+    for(int x=0;x<32;x++) dot(f,x,7,x<pixels?bar:0x010101);
+}
 void pixel_render(pixel_t f[PIXEL_COUNT],const pixel_state_t *s,unsigned page,uint32_t ms) {
     if(s->demo && ms<1500) { pixel_message(f,"DEMO",ms,0x00cfff); return; }
+    if(page%PIXEL_PAGES==PIXEL_BATTERY_PAGE) { pixel_battery(f,0,false,ms);return; }
     if(!s->ready) { pixel_message(f,"SETUP",ms,0xff9f26); return; }
     if(!s->stable) { pixel_message(f,"SETTLE",ms,0xff9f26); return; }
     memset(f,0,sizeof(pixel_t)*PIXEL_COUNT);

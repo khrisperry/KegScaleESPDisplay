@@ -2,7 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #define PIXEL_COUNT 256
-#define PIXEL_PAGES 4
+#define PIXEL_PAGES 5
+#define PIXEL_BATTERY_PAGE 4
 typedef struct { uint8_t r,g,b; } pixel_t;
 typedef struct {
     unsigned servings;
@@ -20,3 +21,6 @@ uint32_t pixel_page_duration_ms(const pixel_state_t *s, unsigned page);
 
 // Split at a balanced word boundary; use two compact rows on the name page.
 unsigned pixel_name_lines(const char *name, char lines[2][33]);
+
+// Local clock battery estimate, independent of scale readiness or MQTT state.
+void pixel_battery(pixel_t frame[PIXEL_COUNT], int percent, bool valid, uint32_t elapsed_ms);

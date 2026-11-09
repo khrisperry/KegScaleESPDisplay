@@ -59,14 +59,16 @@ int main(int argc,char **argv) {
         s=(pixel_state_t){.servings=29,.percent=30,.gallons=4.66,.ready=true,.stable=true,.name="YUENGLING FLIGHT"};
         fprintf(f,"const frames = [");
         const char *messages[]={"MQTT WAIT","WIFI WAIT","NO DATA","SETTLE","SETUP","DEMO"};
-        for(unsigned page=0;page<10;page++) {
+        for(unsigned page=0;page<11;page++) {
             if(page) fprintf(f,",");
             fprintf(f,"[");
             unsigned ticks=page<4?pixel_page_duration_ms(&s,page)/100:80;
             for(unsigned t=0;t<ticks;t++) {
                 if(t) fprintf(f,",");
                 fprintf(f,"[");
-                if(page<4) pixel_render(frame,&s,page,t*100);else pixel_message(frame,messages[page-4],t*100,page==6?0xff3838:0xffb52e);
+                if(page<4) pixel_render(frame,&s,page,t*100);
+                else if(page==4)pixel_battery(frame,75,true,t*100);
+                else pixel_message(frame,messages[page-5],t*100,page==7?0xff3838:0xffb52e);
                 for(unsigned i=0;i<256;i++) { if(i) fprintf(f,",");fprintf(f,"%u",(frame[i].r<<16)|(frame[i].g<<8)|frame[i].b); }
                 fprintf(f,"]");
             }
