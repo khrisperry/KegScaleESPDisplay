@@ -1,19 +1,19 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.4-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+Development firmware **1.0.5-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
 
 This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
 ## What it shows
 
-The 32×8 RGB matrix rotates every 8 seconds:
+The 32×8 RGB matrix uses larger 5×7 lettering and rotates every 8 seconds, extending the beer-name page when needed to show the full name:
 
 1. Beer mug + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
 2. Keg icon + **percent remaining**.
 3. **US gallons remaining**, with `G` suffix.
 4. Scrolling **beer name**.
 
-The bottom fill bar is green above 25%, amber at 11–25%, red at 10% or below. `SETUP` replaces unconfigured/uncalibrated scale readings; `SETTLE` replaces unstable readings. An empty but configured keg correctly displays zero.
+The quieter bottom fill bar is green above 25%, amber at 11–25%, red at 10% or below; its unused section is nearly off so the remaining level is clear. `SETUP` replaces unconfigured/uncalibrated scale readings; `SETTLE` replaces unstable readings. An empty but configured keg correctly displays zero.
 
 Open [preview/index.html](preview/index.html) in a modern browser for the standalone interactive preview. [preview/screens.png](preview/screens.png) shows example screens. Both use the actual C renderer with sample data.
 
@@ -80,6 +80,8 @@ An offline notice immediately clears the live-reading status. An `online` notice
 | Middle, short press | Cycle brightness: 6%, 13%, 25% |
 | Middle, hold 5 seconds | Open the temporary, open setup network; preserve saved settings |
 
+Wi-Fi loss keeps retrying the saved network; it does **not** automatically open setup. When moving to the cottage, hold the middle button for five seconds, join the open **KegPixel-XXXX** network, open **http://192.168.4.1/**, and save the cottage Wi-Fi and broker settings.
+
 The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup closes automatically after 10 minutes. With missing Wi-Fi or broker/topic settings it remains available. Saving settings restarts the clock. The setup network never requires a password, including after upgrades or recovery.
 
 Brightness resets to 13% after restart. Battery sleep, battery telemetry, buzzer, auto brightness, and OTA are not implemented; this version is designed for continuous USB power and USB updates.
@@ -115,7 +117,7 @@ The firmware does not silently erase NVS on startup errors. If stock/old NVS cau
 
 `idf.py menuconfig` → **Keg TC001** → enable demonstration, then build/flash. It shows `DEMO` for the first 1.5 seconds of each page and does not start networking. Disable it and rebuild for live use.
 
-Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. **Physical validation is still pending.** Verify orientation, color order, buttons, setup, broker authentication, live cottage updates, and Wi-Fi/broker/scale restarts on the actual unit.
+Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. The user has confirmed setup and live display operation and provided photos. The new typography and contrast changes still need checking on the actual clock; sustained cottage-network and restart testing remain pending.
 
 ```bash
 # Host tests require gcc, Node, and libcjson-dev/pkg-config, or CJSON_DIR pointing

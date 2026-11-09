@@ -14,3 +14,6 @@ typedef struct {
 void pixel_message(pixel_t frame[PIXEL_COUNT], const char *text, uint32_t elapsed_ms, uint32_t color);
 void pixel_render(pixel_t frame[PIXEL_COUNT], const pixel_state_t *s, unsigned page, uint32_t elapsed_ms);
 unsigned pixel_wire_index(unsigned x, unsigned y, unsigned layout);
+
+// Long beer names remain on screen until their last character has been shown.
+uint32_t pixel_page_duration_ms(const pixel_state_t *s, unsigned page);

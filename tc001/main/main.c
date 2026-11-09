@@ -21,7 +21,7 @@ static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 void app_main(void) {
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.4-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.5-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     led_strip_rmt_config_t rmt={.clk_src=RMT_CLK_SRC_DEFAULT,.resolution_hz=10000000};
@@ -59,12 +59,19 @@ void app_main(void) {
 #endif
             long_fired=true;
         }
-        if(now>=hold_until && now-page_start>=8000) { page=(page+1)%PIXEL_PAGES;page_start=now; }
 #ifdef CONFIG_TC001_DEMO
         pixel_state_t state={.servings=42,.percent=68,.gallons=3.4,.ready=true,.stable=true,.demo=true,.name="COTTAGE IPA"};
-        pixel_render(frame,&state,page,(uint32_t)(now-page_start));
+        const pixel_state_t *page_state=&state;
 #else
         tc001_view_t view;tc001_wifi_view(&view);
+        const pixel_state_t *page_state=&view.state;
+#endif
+        if(now>=hold_until && now-page_start>=pixel_page_duration_ms(page_state,page)) {
+            page=(page+1)%PIXEL_PAGES;page_start=now;
+        }
+#ifdef CONFIG_TC001_DEMO
+        pixel_render(frame,&state,page,(uint32_t)(now-page_start));
+#else
         if(view.setup_active) {
             char prompt[96];
             uint32_t elapsed=(uint32_t)(now-view.setup_start_ms);

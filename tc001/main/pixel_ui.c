@@ -56,19 +56,96 @@ static void dot(pixel_t *f, int x, int y, uint32_t c) {
 static uint16_t glyph(char c) {
     c=(char)toupper((unsigned char)c);
     for(unsigned i=0;i<sizeof(font)/sizeof(font[0]);i++) if(font[i].c==c) return font[i].bits;
-    return 0x7492; // unknown/non-ASCII byte: visible question mark
+    return 0x7282; // unknown/non-ASCII byte: visible question mark
+}
+// Five-by-seven type uses the full height above the single-row level gauge.
+typedef struct { char c; uint8_t rows[7]; } large_glyph_t;
+static const large_glyph_t large_font[] = {
+    {'0', {14,17,19,21,25,17,14}},
+    {'1', {4,12,4,4,4,4,14}},
+    {'2', {14,17,1,2,4,8,31}},
+    {'3', {30,1,1,14,1,1,30}},
+    {'4', {2,6,10,18,31,2,2}},
+    {'5', {31,16,16,30,1,1,30}},
+    {'6', {14,16,16,30,17,17,14}},
+    {'7', {31,1,2,4,8,8,8}},
+    {'8', {14,17,17,14,17,17,14}},
+    {'9', {14,17,17,15,1,1,14}},
+    {'A', {14,17,17,31,17,17,17}},
+    {'B', {30,17,17,30,17,17,30}},
+    {'C', {14,17,16,16,16,17,14}},
+    {'D', {30,17,17,17,17,17,30}},
+    {'E', {31,16,16,30,16,16,31}},
+    {'F', {31,16,16,30,16,16,16}},
+    {'G', {14,17,16,23,17,17,15}},
+    {'H', {17,17,17,31,17,17,17}},
+    {'I', {14,4,4,4,4,4,14}},
+    {'J', {7,2,2,2,2,18,12}},
+    {'K', {17,18,20,24,20,18,17}},
+    {'L', {16,16,16,16,16,16,31}},
+    {'M', {17,27,21,21,17,17,17}},
+    {'N', {17,25,21,19,17,17,17}},
+    {'O', {14,17,17,17,17,17,14}},
+    {'P', {30,17,17,30,16,16,16}},
+    {'Q', {14,17,17,17,21,18,13}},
+    {'R', {30,17,17,30,20,18,17}},
+    {'S', {15,16,16,14,1,1,30}},
+    {'T', {31,4,4,4,4,4,4}},
+    {'U', {17,17,17,17,17,17,14}},
+    {'V', {17,17,17,17,17,10,4}},
+    {'W', {17,17,17,21,21,27,17}},
+    {'X', {17,17,10,4,10,17,17}},
+    {'Y', {17,17,10,4,4,4,4}},
+    {'Z', {31,1,2,4,8,16,31}},
+    {'%', {24,25,2,4,8,19,3}},
+    {'.', {0,0,0,0,0,0,1}},
+    {'-', {0,0,0,7,0,0,0}},
+    {'?', {14,17,1,2,4,0,4}},
+    {' ', {0,0,0,0,0,0,0}},
+};
+#define SCROLL_HOLD_MS 1200u
+#define SCROLL_STEP_MS 100u
+static unsigned large_width(char c) { return c=='.'?1u:(c==' '||c=='-'?3u:5u); }
+static unsigned large_length(const char *s) {
+    unsigned n=0;
+    for(;*s;s++) n+=large_width(*s)+1;
+    return n?n-1:0;
+}
+static uint32_t scroll_cycle(unsigned length, unsigned width) {
+    return length>width?SCROLL_HOLD_MS*2+(length-width)*SCROLL_STEP_MS:8000;
+}
+static int text_left(unsigned length,unsigned width,uint32_t ms,int left) {
+    if(length<=width) return left+(int)(width-length)/2;
+    unsigned travel=length-width;
+    uint32_t t=ms%scroll_cycle(length,width);
+    unsigned pos=t<SCROLL_HOLD_MS?0:(t-SCROLL_HOLD_MS)/SCROLL_STEP_MS;
+    if(pos>travel) pos=travel;
+    return left-(int)pos;
+}
+static void large_text(pixel_t *f,const char *s,int left,unsigned width,uint32_t ms,uint32_t color) {
+    int x=text_left(large_length(s),width,ms,left);
+    for(;*s;s++) {
+        char c=(char)toupper((unsigned char)*s);
+        const large_glyph_t *g=NULL;
+        for(unsigned i=0;i<sizeof(large_font)/sizeof(large_font[0]);i++) if(large_font[i].c==c) { g=&large_font[i];break; }
+        if(!g) { c='?';g=&large_font[sizeof(large_font)/sizeof(large_font[0])-2]; }
+        unsigned w=large_width(c);
+        for(int y=0;y<7;y++) for(unsigned col=0;col<w;col++) {
+            int px=x+(int)col;
+            if(px>=left && px<left+(int)width && ((g->rows[y]>>(w-1-col))&1)) dot(f,px,y,color);
+        }
+        x+=(int)w+1;
+    }
+}
+uint32_t pixel_page_duration_ms(const pixel_state_t *s,unsigned page) {
+    if(page%PIXEL_PAGES!=3) return 8000;
+    uint32_t duration=scroll_cycle(large_length(s->name),32);
+    return duration<8000?8000:duration;
 }
 static void text(pixel_t *f, const char *s, int left, int width, uint32_t ms, uint32_t color) {
     int n=(int)strlen(s), length=n*4-1;
     if(n==0) return;
-    int x=left+(width-length)/2;
-    if(length>width) {
-        // Pause at the left edge, then scroll; include a blank gap before wrap.
-        unsigned step=ms/130;
-        unsigned period=(unsigned)(length+width+8);
-        unsigned pos=step%period;
-        x=left-(int)(pos>8?pos-8:0);
-    }
+    int x=text_left((unsigned)length,(unsigned)width,ms,left);
     for(int i=0;i<n;i++) {
         uint16_t g=glyph(s[i]);
         for(int y=0;y<5;y++) for(int col=0;col<3;col++)
@@ -98,25 +175,32 @@ void pixel_render(pixel_t f[PIXEL_COUNT],const pixel_state_t *s,unsigned page,ui
     char value[48];
     switch(page%PIXEL_PAGES) {
     case 0:
-        // Mug: white foam, amber body, white handle.
-        for(int x=1;x<=5;x++) dot(f,x,1,0xffecca);
-        for(int y=2;y<=5;y++) for(int x=1;x<=4;x++) dot(f,x,y,0xffb52e);
+        // Rounded foam and glass outline, with a dark highlight in the amber beer.
+        for(int x=1;x<=4;x++) dot(f,x,0,0xffecca);
+        dot(f,2,1,0xffecca);dot(f,3,1,0xffecca);dot(f,4,1,0xffecca);
+        for(int y=2;y<=5;y++) {
+            dot(f,1,y,0xffecca);dot(f,4,y,0xffb52e);
+            dot(f,2,y,0xffb52e);dot(f,3,y,y==2?0xffdb75:0xd97716);
+        }
         dot(f,5,2,0xffecca);dot(f,6,2,0xffecca);dot(f,6,3,0xffecca);
         dot(f,6,4,0xffecca);dot(f,5,4,0xffecca);
+        for(int x=1;x<=4;x++) dot(f,x,6,0xffb52e);
         snprintf(value,sizeof(value),"%u",s->servings);
-        text(f,value,8,24,ms,0xffecca); break;
+        large_text(f,value,8,24,ms,0xffecca);break;
     case 1:
-        for(int y=1;y<=5;y++) { dot(f,1,y,0x7f91a8);dot(f,5,y,0x7f91a8); }
-        for(int x=2;x<5;x++) { dot(f,x,1,0x7f91a8);dot(f,x,5,0x7f91a8); }
-        for(int y=5;y>=2;y--) if(pct>=(5-y)*25+1)
-            for(int x=2;x<5;x++) dot(f,x,y,color);
+        for(int y=1;y<=5;y++) { dot(f,1,y,0x7f91a8);dot(f,6,y,0x7f91a8); }
+        for(int x=2;x<=5;x++) { dot(f,x,0,0x7f91a8);dot(f,x,6,0x7f91a8); }
+        for(int row=0;row<5;row++) if(pct>row*20)
+            for(int x=2;x<=5;x++) dot(f,x,5-row,color);
         snprintf(value,sizeof(value),"%.0f%%",(double)pct);
-        text(f,value,8,24,ms,color); break;
+        large_text(f,value,8,24,ms,color);break;
     case 2:
         snprintf(value,sizeof(value),"%.2fG",(double)(isfinite(s->gallons)&&s->gallons>0?s->gallons:0));
-        text(f,value,0,32,ms,0x48baff);break;
-    default: text(f,s->name[0]?s->name:"KEG",0,32,ms,0xffecca);break;
+        large_text(f,value,0,32,ms,0x48baff);break;
+    default: large_text(f,s->name[0]?s->name:"KEG",0,32,ms,0xffecca);break;
     }
     int fill=(int)lroundf(pct*32/100);
-    for(int x=0;x<32;x++) dot(f,x,7,x<fill?color:0x0c1520);
+    // Keep the bar quieter than the readout and make its empty section nearly off.
+    uint32_t bar=((((color>>16)&255)/3)<<16)|((((color>>8)&255)/3)<<8)|((color&255)/3);
+    for(int x=0;x<32;x++) dot(f,x,7,x<fill?bar:0x010101);
 }

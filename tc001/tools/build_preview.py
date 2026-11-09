@@ -29,7 +29,7 @@ for panel,(page,tick) in enumerate([(0,20),(1,20),(2,20),(3,22),(4,0),(6,0)]):
    color=('#%06x'%c) if c else '#111925'
    dx=x+18+px*13.6;dy=y+59+py*13.6
    d.ellipse((dx,dy,dx+9,dy+9),fill=color)
-d.text((35,753),'Renderer-accurate pixels; physical device testing pending.',font=font,fill='#aebace')
+d.text((35,753),'Renderer-accurate pixels; sample data; new screen polish awaits hardware check.',font=font,fill='#aebace')
 image.save(root/'preview/screens.png')
 (root/'preview/frames.js').unlink()
 print('Created standalone preview and screen contact sheet')
