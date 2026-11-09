@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libcjson-dev
+      - run: sudo apt-get update && sudo apt-get install -y libcjson-dev libmbedtls-dev
       - run: python3 touchscreen/tests/run_connection_test.py
       - run: python3 touchscreen/tests/run_pairing_overlay_test.py
       - run: python3 touchscreen/tests/lvgl_memory_config_test.py

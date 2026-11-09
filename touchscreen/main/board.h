@@ -3,6 +3,7 @@
 #include "bsp43.h"
 #else
 #include "bsp/esp32_s3_touch_lcd_4b.h"
+#include "bsp/touch.h"
 #endif
 #include "lvgl.h"
 
