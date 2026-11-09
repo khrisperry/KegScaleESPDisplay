@@ -1,5 +1,6 @@
 #include "wifi_link.h"
 #include "wifi_policy.h"
+#include "setup_access.h"
 #include "mqtt_feed.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -93,9 +94,9 @@ static esp_err_t error_response(httpd_req_t *r,const char *status,const char *te
 }
 static bool setup_allowed(httpd_req_t *r,bool token) {
     xSemaphoreTake(guard,portMAX_DELAY);bool active=view.setup_active;xSemaphoreGive(guard);
-    struct sockaddr_in local;socklen_t size=sizeof(local);
-    if(!active || getsockname(httpd_req_to_sockfd(r),(struct sockaddr *)&local,&size)!=0 ||
-        local.sin_family!=AF_INET || local.sin_addr.s_addr!=inet_addr("192.168.4.1")) return false;
+    struct sockaddr_storage local={0};socklen_t size=sizeof(local);
+    if(getsockname(httpd_req_to_sockfd(r),(struct sockaddr *)&local,&size)!=0 ||
+        !tc001_setup_address_allowed(active,(const struct sockaddr *)&local,size)) return false;
     if(token) {
         char supplied[33];
         if(httpd_req_get_hdr_value_str(r,"X-Keg-Setup",supplied,sizeof(supplied))!=ESP_OK || strcmp(supplied,setup_token)) return false;

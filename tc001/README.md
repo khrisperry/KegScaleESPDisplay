@@ -1,6 +1,6 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.3-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+Development firmware **1.0.4-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
 
 This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
@@ -98,18 +98,18 @@ idf.py set-target esp32
 idf.py build
 ```
 
-Connect a USB-C **data cable**. Before replacing stock firmware, back up its original 4 MiB flash. Replace COM5 with the actual port and stop any serial monitor first:
+Connect a USB-C **data cable**. Before replacing stock firmware, back up its original 4 MiB flash. Replace COM15 with the actual port and stop any serial monitor first:
 
 ```powershell
-python -m esptool --chip esp32 --port COM5 read-flash 0x0 0x400000 "$env:USERPROFILE\Documents\tc001-original.bin"
-idf.py -p COM5 flash monitor
+python -m esptool --chip esp32 --port COM15 read-flash 0x0 0x400000 "$env:USERPROFILE\Documents\tc001-original.bin"
+idf.py -p COM15 flash monitor
 ```
 
 If you already flashed a previous TC001 build and made a backup, keep that original backup; do not overwrite it with the development image. `Ctrl+]` exits the monitor.
 
 If it does not enter flashing mode automatically, follow the TC001/AWTRIX flashing instructions for the actual unit. `idf.py flash` writes this project's bootloader, partition table, and application; do not flash e-paper/touchscreen/TouchPour binaries on the clock.
 
-The firmware does not silently erase NVS on startup errors. If stock/old NVS causes `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, back up as needed and run `idf.py -p COM5 erase-flash`, then flash again. This erases saved settings. A dedicated TC001 OTA hardware/channel entry would be needed before implementing OTA.
+The firmware does not silently erase NVS on startup errors. If stock/old NVS causes `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`, back up as needed and run `idf.py -p COM15 erase-flash`, then flash again. This erases saved settings. A dedicated TC001 OTA hardware/channel entry would be needed before implementing OTA.
 
 ## Demo, hardware, and validation
 
@@ -124,6 +124,6 @@ Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Bluefor
 python3 tc001/tools/build_preview.py  # Pillow required
 ```
 
-Tests execute the actual MQTT JSON parser, freshness state and bounded fragmented-message assembler, plus the renderer and setup-page JavaScript. They cover retained-state rejection, offline/online transitions, reconnect, stale timeouts, invalid/uncalibrated readings, empty kegs, payload bounds, topic validation, settings submission and password privacy. CI builds live/demo firmware for ESP32 with ESP-IDF 6.0.1 and runs these host checks. Successful builds/tests do not establish physical operation or cottage connectivity.
+Tests execute the actual MQTT JSON parser, freshness state and bounded fragmented-message assembler, plus the renderer and setup-page JavaScript. They cover retained-state rejection, offline/online transitions, reconnect, stale timeouts, invalid/uncalibrated readings, empty kegs, payload bounds, topic validation, IPv4/mapped-IPv6 setup access, settings submission and password privacy. CI builds live/demo firmware for ESP32 with ESP-IDF 6.0.1 and runs these host checks. Successful builds/tests do not establish physical operation or cottage connectivity.
 
 Validation for this change: ESP-IDF 6.0.1 live and demo builds pass; live binary is about 1.03 MiB and fits the 2 MiB application partition. Host C tests pass with AddressSanitizer/UndefinedBehaviorSanitizer, and setup-page JavaScript tests pass. Actual TC001 and cottage-network testing remain pending.

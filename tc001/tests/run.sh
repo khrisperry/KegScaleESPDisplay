@@ -15,4 +15,6 @@ else
 fi
 gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I main main/mqtt_feed.c tests/test_mqtt_feed.c "${json_flags[@]}" -lm -o "$test_bin"
 "$test_bin"
+gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_setup_access.c -o "$test_bin"
+"$test_bin"
 node tests/test_setup.js
