@@ -21,12 +21,16 @@ static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 void app_main(void) {
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.5-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.6-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
-    led_strip_rmt_config_t rmt={.clk_src=RMT_CLK_SRC_DEFAULT,.resolution_hz=10000000};
+    // Classic ESP32 has no RMT DMA. Wi-Fi can delay the RMT refill ISR and
+    // corrupt the WS2812 bitstream. SPI DMA emits the complete 2304-byte
+    // encoded frame without CPU refill deadlines. GPIO32 wiring is unchanged.
+    led_strip_spi_config_t spi={.clk_src=SPI_CLK_SRC_DEFAULT,.spi_bus=SPI2_HOST,
+        .flags.with_dma=true};
     led_strip_handle_t strip;
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config,&rmt,&strip));
+    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config,&spi,&strip));
     ESP_ERROR_CHECK(led_strip_clear(strip));
     gpio_config_t buttons={.pin_bit_mask=(1ULL<<26)|(1ULL<<14)|(1ULL<<27),
         .mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};

@@ -1,6 +1,6 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.5-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+Development firmware **1.0.6-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
 
 This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
@@ -8,7 +8,7 @@ This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour 
 
 The 32×8 RGB matrix uses larger 5×7 lettering and rotates every 8 seconds, extending the beer-name page when needed to show the full name:
 
-1. Beer mug + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
+1. Pint glass + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
 2. Keg icon + **percent remaining**.
 3. **US gallons remaining**, with `G` suffix.
 4. Scrolling **beer name**.
@@ -116,6 +116,8 @@ The firmware does not silently erase NVS on startup errors. If stock/old NVS cau
 ## Demo, hardware, and validation
 
 `idf.py menuconfig` → **Keg TC001** → enable demonstration, then build/flash. It shows `DEMO` for the first 1.5 seconds of each page and does not start networking. Disable it and rebuild for live use.
+
+The matrix now uses Espressif's **SPI + DMA** LED-strip backend on **SPI2_HOST**, with MOSI routed to the existing GPIO32. No wiring changes are needed. Classic ESP32 has no RMT DMA; its previous RMT refill interrupts could be delayed by Wi-Fi, producing transient random colors. The encoded 256-pixel frame is 2304 bytes and is transmitted from an internal DMA buffer. SPI2 is dedicated to the matrix; do not attach another device to that bus. This addresses the documented timing failure mode; confirming flicker is resolved requires testing on the clock. See the [Espressif LED-strip backend documentation](https://espressif.github.io/idf-extra-components/latest/led_strip/index.html).
 
 Hardware mapping is grounded in AWTRIX's [TC001 docs](https://github.com/Blueforcer/awtrix3/blob/main/docs/hardware.md) and source: matrix GPIO32, 256 WS2812-compatible GRB pixels; left/middle/right buttons GPIO26/27/14, active low. Default wiring is row serpentine; menuconfig also supports four 8×8 row-progressive tiles and column serpentine. The user has confirmed setup and live display operation and provided photos. The new typography and contrast changes still need checking on the actual clock; sustained cottage-network and restart testing remain pending.
 

@@ -175,16 +175,17 @@ void pixel_render(pixel_t f[PIXEL_COUNT],const pixel_state_t *s,unsigned page,ui
     char value[48];
     switch(page%PIXEL_PAGES) {
     case 0:
-        // Rounded foam and glass outline, with a dark highlight in the amber beer.
-        for(int x=1;x<=4;x++) dot(f,x,0,0xffecca);
-        dot(f,2,1,0xffecca);dot(f,3,1,0xffecca);dot(f,4,1,0xffecca);
-        for(int y=2;y<=5;y++) {
-            dot(f,1,y,0xffecca);dot(f,4,y,0xffb52e);
-            dot(f,2,y,0xffb52e);dot(f,3,y,y==2?0xffdb75:0xd97716);
+        // A compact pint: broad foam head and a tapered, solid amber glass.
+        // No handle or shaded patch that can resemble an extra letter.
+        for(int x=1;x<=5;x++) dot(f,x,0,0xffecca);
+        for(int x=0;x<=6;x++) dot(f,x,1,0xffecca);
+        dot(f,0,2,0xffecca);dot(f,6,2,0xffecca);
+        for(int x=1;x<=5;x++) dot(f,x,2,0xffbf00);
+        for(int y=3;y<=5;y++) {
+            dot(f,1,y,0xffecca);dot(f,5,y,0xffecca);
+            for(int x=2;x<=4;x++) dot(f,x,y,0xffbf00);
         }
-        dot(f,5,2,0xffecca);dot(f,6,2,0xffecca);dot(f,6,3,0xffecca);
-        dot(f,6,4,0xffecca);dot(f,5,4,0xffecca);
-        for(int x=1;x<=4;x++) dot(f,x,6,0xffb52e);
+        for(int x=2;x<=4;x++) dot(f,x,6,0xffecca);
         snprintf(value,sizeof(value),"%u",s->servings);
         large_text(f,value,8,24,ms,0xffecca);break;
     case 1:
