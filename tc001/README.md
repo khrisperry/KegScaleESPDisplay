@@ -1,6 +1,6 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.2-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+Development firmware **1.0.3-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
 
 This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
@@ -33,8 +33,8 @@ You may use the existing MQTT login, or a separate broker account with permissio
 
 ## First setup
 
-1. Flash the clock through USB. First boot opens a WPA2-protected setup network named **KegPixel-XXXX**.
-2. The clock cycles through the network name, an **eight-character password**, `192.168.4.1`, and `WIFI SETUP`. The password is the eight-character screen without a label, and can contain letters and digits.
+1. Flash the clock through USB. First boot opens an open setup network named **KegPixel-XXXX**.
+2. The clock cycles through the network name, `192.168.4.1`, and `WIFI SETUP`. **The temporary setup network has no password.**
 3. Join that network from your phone/computer. Stay connected if it says “No Internet,” and open **http://192.168.4.1/**.
 4. Scan/select your cottage's **2.4 GHz Wi-Fi** and enter its Wi-Fi password.
 5. Enter the cottage **MQTT broker hostname/IP, port, MQTT username/password, and scale base topic**. The broker address is not necessarily the scale or Home Assistant address; use the broker URI from the scale settings.
@@ -52,7 +52,7 @@ For `mqtts://`, select TLS and enter the matching hostname/port (usually 8883). 
 
 Credentials persist in NVS and are never logged or returned by the setup API. Blank Wi-Fi password preserves it only for the same SSID; select **Open network** to clear it. Blank MQTT password preserves it for the same broker and username; changing either discards it unless a new password is supplied. Select **Clear saved MQTT password** to explicitly remove it.
 
-When upgrading from the previous TC001 controller firmware, saved Wi-Fi and the clock's setup AP password are preserved. Broker settings must be entered. Its former scale address/key are unused. If the old TC001 was paired to a scale, remove that old registration only if needed to free the slot; do not remove a current TouchPour registration.
+When upgrading from the previous TC001 controller firmware, saved Wi-Fi credentials are preserved. Broker settings must be entered. Its former scale address/key are unused. If the old TC001 was paired to a scale, remove that old registration only if needed to free the slot; do not remove a current TouchPour registration.
 
 ## Freshness and status screens
 
@@ -78,9 +78,9 @@ An offline notice immediately clears the live-reading status. An `online` notice
 | Left | Previous keg page; pause automatic rotation for 20 seconds |
 | Right | Next keg page; pause automatic rotation for 20 seconds |
 | Middle, short press | Cycle brightness: 6%, 13%, 25% |
-| Middle, hold 5 seconds | Open the protected setup network; preserve saved settings |
+| Middle, hold 5 seconds | Open the temporary, open setup network; preserve saved settings |
 
-The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup closes automatically after 10 minutes. With missing Wi-Fi or broker/topic settings it remains available. Saving settings restarts the clock. The eight-character AP password remains the same across restarts.
+The setup page is accessible only through the clock's AP at `192.168.4.1`, with a per-boot setup token. On a fully configured clock, setup closes automatically after 10 minutes. With missing Wi-Fi or broker/topic settings it remains available. Saving settings restarts the clock. The setup network never requires a password, including after upgrades or recovery.
 
 Brightness resets to 13% after restart. Battery sleep, battery telemetry, buzzer, auto brightness, and OTA are not implemented; this version is designed for continuous USB power and USB updates.
 

@@ -21,7 +21,7 @@ static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 void app_main(void) {
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.2-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.3-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     led_strip_rmt_config_t rmt={.clk_src=RMT_CLK_SRC_DEFAULT,.resolution_hz=10000000};
@@ -68,10 +68,9 @@ void app_main(void) {
         if(view.setup_active) {
             char prompt[96];
             uint32_t elapsed=(uint32_t)(now-view.setup_start_ms);
-            switch((elapsed/8000)%4) {
+            switch((elapsed/8000)%3) {
             case 0: snprintf(prompt,sizeof(prompt),"JOIN %s",view.setup_ssid);break;
-            case 1: snprintf(prompt,sizeof(prompt),"%s",view.setup_password);break;
-            case 2: snprintf(prompt,sizeof(prompt),"192.168.4.1");break;
+            case 1: snprintf(prompt,sizeof(prompt),"192.168.4.1");break;
             default: snprintf(prompt,sizeof(prompt),"WIFI SETUP");break;
             }
             pixel_message(frame,prompt,elapsed%8000,0x48baff);

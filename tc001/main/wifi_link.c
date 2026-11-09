@@ -285,7 +285,7 @@ static void setup_mode(bool enabled) {
     xSemaphoreTake(guard,portMAX_DELAY);
     if(enabled) {
         memcpy(ap.ap.ssid,view.setup_ssid,strlen(view.setup_ssid));ap.ap.ssid_len=strlen(view.setup_ssid);
-        memcpy(ap.ap.password,view.setup_password,8);ap.ap.authmode=WIFI_AUTH_WPA2_PSK;ap.ap.max_connection=2;
+        ap.ap.authmode=WIFI_AUTH_OPEN;ap.ap.max_connection=2;
         view.setup_active=true;view.setup_start_ms=ms();
     } else view.setup_active=false;
     xSemaphoreGive(guard);
@@ -338,16 +338,7 @@ esp_err_t tc001_wifi_start(void) {
     settings.ssid[32]=0;settings.password[64]=0;settings.broker[127]=0;
     settings.username[64]=0;settings.mqtt_password[128]=0;settings.base_topic[95]=0;
     if(!settings.port) settings.port=1883;
-    size=sizeof(view.setup_password);e=nvs_get_str(n,"ap_pass",view.setup_password,&size);
-    if(e==ESP_ERR_NVS_NOT_FOUND) {
-        // Eight base-32 characters, readable on the pixel display; never logged.
-        const char *alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        uint8_t bytes[8];esp_fill_random(bytes,8);
-        for(unsigned i=0;i<8;i++) view.setup_password[i]=alphabet[bytes[i]&31];
-        view.setup_password[8]=0;e=nvs_set_str(n,"ap_pass",view.setup_password);
-        if(e==ESP_OK)e=nvs_commit(n);
-    }
-    nvs_close(n);if(e!=ESP_OK)return e;
+    nvs_close(n);
     uint8_t random_token[16],mac[6];esp_fill_random(random_token,16);
     for(unsigned i=0;i<16;i++) snprintf(setup_token+i*2,3,"%02x",random_token[i]);
     esp_read_mac(mac,ESP_MAC_WIFI_STA);snprintf(hostname,sizeof(hostname),"KegPixel-%02X%02X",mac[4],mac[5]);
@@ -363,8 +354,7 @@ esp_err_t tc001_wifi_start(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     wifi_config_t wifi={0};memcpy(wifi.sta.ssid,settings.ssid,strlen(settings.ssid));memcpy(wifi.sta.password,settings.password,strlen(settings.password));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&wifi));
-    // Install the WPA2 AP configuration before starting the radio, including
-    // on configured clocks, so recovery never enables a default/open AP.
+    // Install the named, open setup AP before radio startup and recovery.
     setup_mode(true);
     if(settings.ssid[0] && settings.broker[0] && settings.base_topic[0]) setup_mode(false);
     ESP_ERROR_CHECK(esp_wifi_start());ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));

@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Keg Pixel · MQTT setup</title>
 <style>body{font:17px system-ui;background:#10151d;color:#e9edf4;max-width:640px;margin:30px auto;padding:20px;line-height:1.5}h1{font-size:28px}section{background:#1c2836;padding:20px;border-radius:14px;margin:20px 0}input,button{font:inherit;border-radius:8px;padding:12px;border:1px solid #536275;box-sizing:border-box}input:not([type=checkbox]){width:100%;margin:8px 0;background:#101b28;color:#fff}button{background:#70deb0;color:#10251c;cursor:pointer;margin:8px 0}label{display:block}p{color:#bdc9d8}.note{font-size:14px}#result{white-space:pre-wrap}code{overflow-wrap:anywhere}</style>
-<h1>Keg Pixel · MQTT setup</h1><p id="status">Loading clock status…</p>
+<h1>Keg Pixel · MQTT setup</h1><p class="note">The temporary KegPixel setup Wi-Fi is open and has no password.</p><p id="status">Loading clock status…</p>
 <p>Use the cottage MQTT broker already receiving your scale's readings. TouchPour and the e-Ink display keep their existing connections. No display pairing or Home Assistant automation is needed.</p>
 <form id="config"><section><h2>Wi-Fi</h2>
 <label>Network (2.4 GHz)<input id="ssid" maxlength="32" required autocomplete="off" list="networks"></label><datalist id="networks"></datalist><button type="button" id="scanWifi">Scan Wi-Fi</button>
