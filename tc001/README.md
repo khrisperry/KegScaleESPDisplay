@@ -1,6 +1,6 @@
 # Keg Scale Display — ULANZI TC001
 
-Development firmware **1.0.6-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
+Development firmware **1.0.7-tc001-dev** receives the scale's existing **MQTT telemetry over Wi-Fi**. It shares the MQTT broker used by Home Assistant. TouchPour retains its direct Wi-Fi controller connection and the e-Ink display retains its BLE connection. The clock does not pair with the scale or consume a controller slot. No scale firmware changes or Home Assistant automations are required.
 
 This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour projects are unchanged.
 
@@ -8,7 +8,7 @@ This is a separate ESP-IDF project. Existing e-paper, touchscreen and TouchPour 
 
 The 32×8 RGB matrix uses larger 5×7 lettering and rotates every 8 seconds, extending the beer-name page when needed to show the full name:
 
-1. Pint glass + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
+1. Beer stein + **whole servings remaining**, rounded down from the scale's value and based on its configured serving size.
 2. Keg icon + **percent remaining**.
 3. **US gallons remaining**, with `G` suffix.
 4. Scrolling **beer name**.

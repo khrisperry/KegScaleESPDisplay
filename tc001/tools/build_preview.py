@@ -31,5 +31,6 @@ for panel,(page,tick) in enumerate([(0,20),(1,20),(2,20),(3,22),(4,0),(6,0)]):
    d.ellipse((dx,dy,dx+9,dy+9),fill=color)
 d.text((35,753),'Renderer-accurate pixels; sample data; new screen polish awaits hardware check.',font=font,fill='#aebace')
 image.save(root/'preview/screens.png')
+image.crop((30,110,510,315)).save(root/'preview/stein.png')
 (root/'preview/frames.js').unlink()
 print('Created standalone preview and screen contact sheet')

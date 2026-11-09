@@ -175,17 +175,14 @@ void pixel_render(pixel_t f[PIXEL_COUNT],const pixel_state_t *s,unsigned page,ui
     char value[48];
     switch(page%PIXEL_PAGES) {
     case 0:
-        // A compact pint: broad foam head and a tapered, solid amber glass.
-        // No handle or shaded patch that can resemble an extra letter.
-        for(int x=1;x<=5;x++) dot(f,x,0,0xffecca);
-        for(int x=0;x<=6;x++) dot(f,x,1,0xffecca);
-        dot(f,0,2,0xffecca);dot(f,6,2,0xffecca);
-        for(int x=1;x<=5;x++) dot(f,x,2,0xffbf00);
-        for(int y=3;y<=5;y++) {
-            dot(f,1,y,0xffecca);dot(f,5,y,0xffecca);
-            for(int x=2;x<=4;x++) dot(f,x,y,0xffbf00);
-        }
-        for(int x=2;x<=4;x++) dot(f,x,6,0xffecca);
+        // Straight-sided stein with a broad foam cap and a 2x2 open handle.
+        // The amber body stays rectangular all the way down to its flat base.
+        for(int x=1;x<=3;x++) dot(f,x,0,0xffecca);
+        for(int x=0;x<=4;x++) dot(f,x,1,0xffecca);
+        for(int y=2;y<=6;y++) for(int x=0;x<=4;x++) dot(f,x,y,0xffbf00);
+        for(int y=2;y<=4;y++) dot(f,2,y,0xffdc70);
+        for(int x=5;x<=7;x++) { dot(f,x,2,0xffecca);dot(f,x,5,0xffecca); }
+        dot(f,7,3,0xffecca);dot(f,7,4,0xffecca);
         snprintf(value,sizeof(value),"%u",s->servings);
         large_text(f,value,8,24,ms,0xffecca);break;
     case 1:
