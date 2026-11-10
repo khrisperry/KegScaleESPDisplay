@@ -20,16 +20,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: khrisperry/KegScaleESP
-          ref: dev
-          path: KegScaleESP
       - run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev libcjson-dev
-      - name: Run display tests against companion Scale checkout
-        env:
-          KEGSCALE_SCALE_ROOT: ${{ github.workspace }}/KegScaleESP
-        run: bash tests/run_host_tests.sh
+      - name: Run e-Ink source and host tests
+        run: |
+          set -euo pipefail
+          python3 tests/test_output_contract_test.py
+          test_binary="$(mktemp)"
+          trap 'rm -f "$test_binary"' EXIT
+          cc -std=c11 -Wall -Wextra -Werror tests/power_policy_test.c -o "$test_binary"
+          "$test_binary"
+          python3 tests/run_ota_tests.py
+          python3 tests/run_wake_tests.py
+      - name: Run touchscreen host regression suite
+        run: bash touchscreen/tests/run_host_tests.sh
+      # Deliberately excludes tools/check_controller_link.py here: the
+      # companion Scale repository is private and not available via this
+      # repository's GITHUB_TOKEN. Both components retain local guard tests;
+      # the cross-repo mirror check runs in a local two-repo checkout.
   eink-build:
     runs-on: ubuntu-latest
     steps:
