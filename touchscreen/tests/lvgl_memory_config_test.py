@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from test_output import fail_exit, install_excepthook, pass_line
+
+install_excepthook("Touch LVGL memory migration tests")
 
 MODULE = Path(__file__).resolve().parents[1] / 'lvgl_memory.cmake'
 CMAKE = os.environ.get('CMAKE_COMMAND', 'cmake')
@@ -56,4 +59,7 @@ class MemoryConfigTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    outcome = unittest.main(exit=False, verbosity=0).result
+    if not outcome.wasSuccessful():
+        fail_exit("Touch LVGL memory migration regressions failed")
+    pass_line("Touch LVGL memory configuration migration")
