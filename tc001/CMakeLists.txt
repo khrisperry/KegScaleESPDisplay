@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
 set(COMPONENTS main)
-set(PROJECT_VER "1.0.9-tc001-dev")
+set(PROJECT_VER "1.0.10-tc001-dev")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(keg_scale_tc001)

@@ -20,3 +20,5 @@ gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/te
 gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I main main/pixel_ui.c tests/test_battery.c -lm -o "$test_bin"
 "$test_bin"
 node tests/test_setup.js
+
+node tests/test_battery_page.js

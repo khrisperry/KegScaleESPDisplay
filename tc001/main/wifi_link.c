@@ -35,6 +35,8 @@
 static const char *TAG="tc001_wifi";
 extern const char setup_start[] asm("_binary_setup_html_start");
 extern const char setup_end[] asm("_binary_setup_html_end");
+extern const char battery_start[] asm("_binary_battery_html_start");
+extern const char battery_end[] asm("_binary_battery_html_end");
 typedef struct {
     uint32_t version;
     char ssid[33],password[65],broker[128],username[65],mqtt_password[129],base_topic[96];
@@ -93,30 +95,76 @@ static esp_err_t error_response(httpd_req_t *r,const char *status,const char *te
     if(o) cJSON_AddStringToObject(o,"error",text);
     return json_response(r,o);
 }
+static bool request_token_valid(httpd_req_t *r) {
+    char supplied[33];
+    return httpd_req_get_hdr_value_str(r,"X-Keg-Setup",supplied,sizeof(supplied))==ESP_OK && !strcmp(supplied,setup_token);
+}
 static bool setup_allowed(httpd_req_t *r,bool token) {
     xSemaphoreTake(guard,portMAX_DELAY);bool active=view.setup_active;xSemaphoreGive(guard);
     struct sockaddr_storage local={0};socklen_t size=sizeof(local);
     if(getsockname(httpd_req_to_sockfd(r),(struct sockaddr *)&local,&size)!=0 ||
         !tc001_setup_address_allowed(active,(const struct sockaddr *)&local,size)) return false;
-    if(token) {
-        char supplied[33];
-        if(httpd_req_get_hdr_value_str(r,"X-Keg-Setup",supplied,sizeof(supplied))!=ESP_OK || strcmp(supplied,setup_token)) return false;
-    }
+    if(token && !request_token_valid(r)) return false;
     return true;
 }
-static esp_err_t setup_page(httpd_req_t *r) {
-    if(!setup_allowed(r,false)) return error_response(r,"403 Forbidden","Hold the middle button for setup and join the clock Wi-Fi");
-    size_t len=(size_t)(setup_end-setup_start);
+// Battery access is available on the actual station interface or active setup AP.
+// Match socket addresses, not spoofable Host/Origin headers; handle dual-stack sockets.
+static bool battery_allowed(httpd_req_t *r,bool token) {
+    if(setup_allowed(r,false)) return !token || request_token_valid(r);
+    if(!wifi_ready) return false;
+    struct sockaddr_storage local={0};socklen_t size=sizeof(local);
+    if(getsockname(httpd_req_to_sockfd(r),(struct sockaddr *)&local,&size)!=0)return false;
+    esp_netif_t *sta=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if(!sta)return false;
+    esp_netif_ip_info_t info={0};bool allowed=false;
+    if(esp_netif_get_ip_info(sta,&info)==ESP_OK)
+        allowed=tc001_address_matches_ipv4((const struct sockaddr *)&local,size,(const unsigned char *)&info.ip.addr);
+#if CONFIG_LWIP_IPV6
+    esp_ip6_addr_t ip6;
+    if(!allowed && esp_netif_get_ip6_linklocal(sta,&ip6)==ESP_OK)
+        allowed=tc001_address_matches_ipv6((const struct sockaddr *)&local,size,(const unsigned char *)ip6.addr);
+    if(!allowed && esp_netif_get_ip6_global(sta,&ip6)==ESP_OK)
+        allowed=tc001_address_matches_ipv6((const struct sockaddr *)&local,size,(const unsigned char *)ip6.addr);
+#endif
+    return allowed && (!token || request_token_valid(r));
+}
+static esp_err_t send_page(httpd_req_t *r,const char *start,const char *end) {
+    size_t len=(size_t)(end-start);
     char *page=malloc(len+64);if(!page) return ESP_ERR_NO_MEM;
-    const char *mark=strstr(setup_start,"__SETUP_TOKEN__");
+    const char *mark=strstr(start,"__SETUP_TOKEN__");
     if(!mark) { free(page);return ESP_FAIL; }
-    size_t prefix=(size_t)(mark-setup_start);
-    memcpy(page,setup_start,prefix);memcpy(page+prefix,setup_token,32);
-    size_t suffix=(size_t)(setup_end-(mark+15));
+    size_t prefix=(size_t)(mark-start);
+    memcpy(page,start,prefix);memcpy(page+prefix,setup_token,32);
+    size_t suffix=(size_t)(end-(mark+15));
     memcpy(page+prefix+32,mark+15,suffix);page[prefix+32+suffix]=0;
     httpd_resp_set_type(r,"text/html");httpd_resp_set_hdr(r,"Cache-Control","no-store");
     httpd_resp_set_hdr(r,"X-Content-Type-Options","nosniff");
+    httpd_resp_set_hdr(r,"X-Frame-Options","DENY");
     esp_err_t e=httpd_resp_sendstr(r,page);free(page);return e;
+}
+static esp_err_t battery_page(httpd_req_t *r) {
+    if(!battery_allowed(r,false))return error_response(r,"403 Forbidden","Connect to the clock's local Wi-Fi network or its setup network");
+    return send_page(r,battery_start,battery_end);
+}
+static esp_err_t setup_page(httpd_req_t *r) {
+    if(!setup_allowed(r,false))return battery_page(r);
+    return send_page(r,setup_start,setup_end);
+}
+static void add_battery_status(cJSON *o) {
+    tc001_battery_t battery;tc001_battery_get(&battery);
+    cJSON_AddBoolToObject(o,"battery_valid",battery.valid);
+    cJSON_AddNumberToObject(o,"battery_raw",battery.raw);
+    if(battery.valid)cJSON_AddNumberToObject(o,"battery_percent",battery.percent);
+    cJSON_AddNumberToObject(o,"battery_empty",battery.empty);
+    cJSON_AddNumberToObject(o,"battery_full",battery.full);
+}
+static esp_err_t battery_status_handler(httpd_req_t *r) {
+    if(!battery_allowed(r,true))return error_response(r,"403 Forbidden","Battery page access required; reload the page");
+    cJSON *o=cJSON_CreateObject();if(!o)return ESP_ERR_NO_MEM;
+    add_battery_status(o);
+    cJSON_AddStringToObject(o,"hostname",hostname);
+    cJSON_AddStringToObject(o,"firmware",esp_app_get_description()->version);
+    return json_response(r,o);
 }
 static esp_err_t status_handler(httpd_req_t *r) {
     if(!setup_allowed(r,true)) return error_response(r,"403 Forbidden","Setup access required");
@@ -133,16 +181,11 @@ static esp_err_t status_handler(httpd_req_t *r) {
     cJSON_AddBoolToObject(o,"mqtt",mqtt_connected);
     xSemaphoreGive(guard);
     cJSON_AddBoolToObject(o,"wifi",wifi_ready);cJSON_AddStringToObject(o,"firmware",esp_app_get_description()->version);
-    tc001_battery_t battery;tc001_battery_get(&battery);
-    cJSON_AddBoolToObject(o,"battery_valid",battery.valid);
-    cJSON_AddNumberToObject(o,"battery_raw",battery.raw);
-    if(battery.valid)cJSON_AddNumberToObject(o,"battery_percent",battery.percent);
-    cJSON_AddNumberToObject(o,"battery_empty",battery.empty);
-    cJSON_AddNumberToObject(o,"battery_full",battery.full);
+    add_battery_status(o);
     return json_response(r,o);
 }
 static esp_err_t battery_handler(httpd_req_t *r) {
-    if(!setup_allowed(r,true))return error_response(r,"403 Forbidden","Setup access required");
+    if(!battery_allowed(r,true))return error_response(r,"403 Forbidden","Battery page access required; reload the page");
     if(r->content_len<=0 || r->content_len>=128)return error_response(r,"400 Bad Request","Calibration too large");
     char body[128]={0};int used=0;
     while(used<r->content_len) { int n=httpd_req_recv(r,body+used,r->content_len-used);if(n<=0)return ESP_FAIL;used+=n; }
@@ -227,7 +270,7 @@ static esp_err_t scan_wifi_handler(httpd_req_t *r) {
     return json_response(r,o);
 }
 static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
-    (void)arg;(void)data;
+    (void)arg;
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
         wifi_ready=false;wifi_connecting=false;
         xSemaphoreTake(guard,portMAX_DELAY);tc001_feed_connect(&feed,false);view.online=false;xSemaphoreGive(guard);
@@ -236,7 +279,8 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
         // A brief radio outage can leave the TCP/MQTT session alive. Re-enable
         // its feed after IP recovery, but still require a new live snapshot.
         xSemaphoreTake(guard,portMAX_DELAY);tc001_feed_connect(&feed,mqtt_connected);xSemaphoreGive(guard);
-        ESP_LOGI(TAG,"Wi-Fi connected");
+        const ip_event_got_ip_t *event=data;
+        ESP_LOGI(TAG,"Battery page: http://%s.local/ or http://" IPSTR "/",hostname,IP2STR(&event->ip_info.ip));
     }
 }
 static void update_view_locked(void) {
@@ -391,7 +435,9 @@ esp_err_t tc001_wifi_start(void) {
         {.uri="/api/status",.method=HTTP_GET,.handler=status_handler},
         {.uri="/api/config",.method=HTTP_POST,.handler=config_handler},
         {.uri="/api/wifi",.method=HTTP_GET,.handler=scan_wifi_handler},
-        {.uri="/api/battery",.method=HTTP_POST,.handler=battery_handler}
+        {.uri="/api/battery",.method=HTTP_POST,.handler=battery_handler},
+        {.uri="/api/battery",.method=HTTP_GET,.handler=battery_status_handler},
+        {.uri="/battery",.method=HTTP_GET,.handler=battery_page}
     };
     for(unsigned i=0;i<sizeof(endpoints)/sizeof(endpoints[0]);i++) ESP_ERROR_CHECK(httpd_register_uri_handler(http,&endpoints[i]));
     if(settings.tls) {

@@ -14,7 +14,7 @@ const element=s=>{
 const calls=[];
 const context={document:{querySelector:element,createElement:()=>({value:''})},fetch:async(path,options)=>{
     calls.push({path,options});
-    const data=path==='/api/status'?{ssid:'Cottage',broker:'mqtt.local',port:1883,tls:false,username:'pixel',base_topic:'kegscale/ab8070',mqtt_password_saved:true,battery_valid:true,battery_raw:633,battery_percent:75,battery_empty:565,battery_full:656,firmware:'1.0.9-tc001-dev',wifi:true,mqtt:true,connected:false}:
+    const data=path==='/api/status'?{ssid:'Cottage',broker:'mqtt.local',port:1883,tls:false,username:'pixel',base_topic:'kegscale/ab8070',mqtt_password_saved:true,battery_valid:true,battery_raw:633,battery_percent:75,battery_empty:565,battery_full:656,firmware:'1.0.10-tc001-dev',wifi:true,mqtt:true,connected:false}:
         path==='/api/wifi'?{networks:['Cottage','Guest']}:{message:'Saved'};
     return {ok:true,json:async()=>data};
 }};

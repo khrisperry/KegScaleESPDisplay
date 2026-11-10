@@ -29,7 +29,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(gpio_config(&buzzer));
     // Do not silently erase saved settings on an NVS error.
     ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_LOGI(TAG,"Keg TC001 1.0.9-tc001-dev / MQTT over Wi-Fi / USB updates");
+    ESP_LOGI(TAG,"Keg TC001 1.0.10-tc001-dev / MQTT over Wi-Fi / USB updates");
     led_strip_config_t strip_config={.strip_gpio_num=32,.max_leds=PIXEL_COUNT,
         .color_component_format=LED_STRIP_COLOR_COMPONENT_FMT_GRB,.led_model=LED_MODEL_WS2812};
     // Classic ESP32 has no RMT DMA. Wi-Fi can delay the RMT refill ISR and
