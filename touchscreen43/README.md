@@ -17,6 +17,23 @@ the viewport offset. Brightness is on/off because this board uses CH422G
 backlight control. The normal touchscreen OTA feed is disabled in this
 image, including manual installs; it is built for different hardware.
 
+## Updating yesterday's already-flashed 4.3-inch test display
+
+The existing test firmware and this update use the **same partition table**:
+`ota_0` starts at **0x20000**, and the 4.3-inch test firmware has no OTA
+slot switching. To keep stored Wi-Fi credentials and scale pairing, flash
+**only the application**, not the full merged image:
+
+```powershell
+py -m esptool --chip esp32s3 --port COM13 write-flash 0x20000 keg_scale_touchscreen43.bin
+```
+
+Change `COM13` to the port used by the board's **UART USB-C** connector.
+Then press RESET. This command preserves the NVS partition at `0x9000`.
+Use the full `firmware-usb.bin` command below only for first install or
+when intentionally restoring bootloader/partitions (a full merged flash may
+erase stored pairing and Wi-Fi configuration).
+
 ## First USB installation on Windows
 
 Use the **UART** USB-C port. Download and extract the `waveshare-43-v1.4.24-MANUAL-USB-ONLY`
