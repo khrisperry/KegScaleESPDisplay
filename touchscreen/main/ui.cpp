@@ -2,8 +2,8 @@
 #include "ui_lifetime.h"
 #include "ui_text.h"
 #include "esp_lcd_touch.h"
-#include "bsp/esp32_s3_touch_lcd_4b.h"
-#include "bsp/touch.h"
+#include "board.h"
+
 #include "esp_log.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -276,7 +276,7 @@ void show_qr_fullscreen(lv_event_t *) {
     qr_fullscreen = nullptr;
   }
 
-  lv_obj_t *root = lv_screen_active();
+  lv_obj_t *root = touchscreen_ui_root();
   qr_fullscreen = lv_obj_create(root);
   lv_obj_set_pos(qr_fullscreen, 0, 0);
   lv_obj_set_size(qr_fullscreen, 480, 480);
@@ -730,7 +730,7 @@ void focus(lv_event_t *e) {
   touchscreen_home_set_keyboard_open(true);
 
   if (!keyboard) {
-    keyboard = lv_keyboard_create(lv_screen_active());
+    keyboard = lv_keyboard_create(touchscreen_ui_root());
     lv_obj_set_size(keyboard, 480, 200);
     lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_READY, nullptr);
@@ -1426,7 +1426,7 @@ void close_ota_overlay(lv_event_t *) {
 void create_install_overlay(const char *version) {
   clear_ota_overlay();
 
-  ota_overlay = lv_obj_create(lv_screen_active());
+  ota_overlay = lv_obj_create(touchscreen_ui_root());
   lv_obj_set_pos(ota_overlay, 0, 0);
   lv_obj_set_size(ota_overlay, 480, 480);
   lv_obj_remove_flag(ota_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -1665,7 +1665,7 @@ void ui_start(const Settings &s) {
   ESP_ERROR_CHECK(
       bsp_display_brightness_set(s.brightness >= 10 ? s.brightness : 85));
   configASSERT(bsp_display_lock(0));
-  auto root = lv_screen_active();
+  auto root = touchscreen_ui_root();
   lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(root, lv_color_hex(BG), 0);
   lv_obj_set_style_text_font(root, &lv_font_montserrat_16, 0);

@@ -1,0 +1,70 @@
+name: Waveshare 4.3-inch V1.4.24 manual USB test
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/waveshare-43-v1.4.24-connection
+permissions:
+  contents: read
+concurrency:
+  group: waveshare43-manual-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  connection-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libcjson-dev libmbedtls-dev
+      - name: Test encrypted scale transport, overlays and timing
+        run: |
+          set -euo pipefail
+          python3 touchscreen/tests/run_connection_test.py
+          python3 touchscreen/tests/run_pairing_overlay_test.py
+          python3 touchscreen/tests/main_architecture_guard_test.py
+          python3 touchscreen/tests/connection_reliability_guard_test.py
+          python3 touchscreen/tests/lvgl_memory_config_test.py
+          python3 touchscreen43/tests/manual_ota_isolation_test.py
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: touchscreen43
+          command: idf.py build && cd build && python -m esptool --chip esp32s3 merge-bin -o firmware-usb.bin @flash_args
+      - name: Package MANUAL-ONLY firmware outside container build tree
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, shutil
+          project = pathlib.Path('touchscreen43/build')
+          dest = pathlib.Path(os.environ['RUNNER_TEMP']) / 'waveshare43-manual-v1.4.24'
+          files = [
+              'firmware-usb.bin',
+              'keg_scale_touchscreen43.bin',
+              'bootloader/bootloader.bin',
+              'partition_table/partition-table.bin',
+              'ota_data_initial.bin',
+              'flasher_args.json',
+          ]
+          for name in files:
+              origin = project / name
+              target = dest / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(origin, target)
+          shutil.copyfile('touchscreen43/README.md', dest/'README.md')
+          lines = []
+          for name in ('firmware-usb.bin', 'keg_scale_touchscreen43.bin'):
+              digest = hashlib.sha256((dest/name).read_bytes()).hexdigest()
+              lines.append(f'{digest}  {name}')
+          (dest/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waveshare-43-v1.4.24-MANUAL-USB-ONLY
+          retention-days: 14
+          if-no-files-found: error
+          path: ${{ runner.temp }}/waveshare43-manual-v1.4.24/

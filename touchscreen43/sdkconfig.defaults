@@ -1,0 +1,5 @@
+# USB-UART connector on the original 4.3-inch board (GPIO43/44).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG is not set
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../touchscreen/partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="../touchscreen/partitions.csv"
