@@ -491,9 +491,11 @@ static esp_err_t firmware_upload(httpd_req_t *r) {
     return error(r, "Stop pouring, servo tests and foam recording before updating", "409 Conflict");
   auto fail = [&](const char *message) {
     xSemaphoreTake(state_mutex, portMAX_DELAY);
-    firmware_updating = false;
-    update_closed = false;
-    control.stop("Firmware update failed: new start required");
+    /* An interrupted upload stays in closed maintenance state until a
+     * supervised restart. Never re-arm pouring on a failed network upload. */
+    firmware_updating = true;
+    update_closed = true;
+    control.stop("Firmware update failed: restart required");
     xQueueReset(actions);
     xSemaphoreGive(state_mutex);
     return error(r, message);
@@ -521,7 +523,7 @@ static esp_err_t firmware_upload(httpd_req_t *r) {
   if (image.magic != ESP_IMAGE_HEADER_MAGIC || image.chip_id != CONFIG_IDF_FIRMWARE_CHIP_ID ||
       desc.magic_word != ESP_APP_DESC_MAGIC_WORD ||
       strncmp(desc.project_name, esp_app_get_description()->project_name, sizeof(desc.project_name)))
-    return fail("Choose TapLidarMotor ESP32-C3 application .bin, not a full-flash image");
+    return fail("Choose a TouchPour ESP32-S3 application .bin, not another display firmware or full-flash image");
   esp_ota_handle_t handle;
   esp_err_t e = esp_ota_begin(partition, r->content_len, &handle);
   if (e != ESP_OK) return fail("Could not begin update; current firmware retained");
