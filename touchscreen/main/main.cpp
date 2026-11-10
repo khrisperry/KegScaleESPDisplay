@@ -84,7 +84,9 @@ std::atomic<bool> wifi_ready{false};
 // Paired scales can go directly to the asynchronous WebSocket client; the
 // controller HTTP setup probe is only required while establishing pairing.
 constexpr int64_t kReconnectRetryUs = 10000000LL;
-constexpr int64_t kStateStaleUs = 12000000LL;
+/* Allow short transport delays without recycling healthy authenticated sockets. */
+constexpr int64_t kStateStaleUs = 24000000LL;
+constexpr int64_t kHandshakeTimeoutUs = 22000000LL;
 
 int scale_index_for_link(cl_session_t *session) {
   if (session == &connection_for(0).link)
@@ -379,7 +381,7 @@ void connect_scale(uint8_t slot) {
   config.task_stack = 6144;
   config.disable_auto_reconnect = true;
   config.reconnect_timeout_ms = 5000;
-  config.network_timeout_ms = 5000;
+  config.network_timeout_ms = 10000;
   /*
    * We already have protocol-level liveness in both directions:
    * - Touch sends an authenticated heartbeat every 8 seconds.
@@ -446,6 +448,7 @@ void on_frame(const Frame &f) {
              "Scale %u WebSocket connected; beginning protocol-1 handshake",
              (unsigned)(slot + 1));
     disconnected(slot);
+    c.handshake_started = now();
 
     char hello[320] = {};
     esp_err_t e = connection_session_prepare_hello(
@@ -466,7 +469,7 @@ void on_frame(const Frame &f) {
       ESP_LOGI(TAG, "Sending hello for new scale %u pairing",
                (unsigned)(slot + 1));
     int sent = esp_websocket_client_send_text(
-        c.ws, hello, strlen(hello), pdMS_TO_TICKS(1000));
+        c.ws, hello, strlen(hello), pdMS_TO_TICKS(3000));
     if (sent != (int)strlen(hello))
       ESP_LOGW(TAG,
                "Scale %u protocol hello send failed/incomplete: sent=%d expected=%u",
@@ -573,6 +576,7 @@ void on_frame(const Frame &f) {
                (unsigned)(slot + 1));
     }
     c.authenticated = true;
+    c.handshake_started = 0;
     c.retry_connection = false;
     if (slot == active_scale_index) {
       ui_paired();
@@ -1226,7 +1230,15 @@ constexpr uint32_t kOtaTaskStackBytes = 12 * 1024;
 constexpr UBaseType_t kOtaTaskPriority = 4;
 constexpr uint32_t kInitialOtaCheckDelayMs = 30000;
 constexpr uint32_t kOtaReconnectDeferMs = 2000;
-constexpr uint32_t kDailyOtaCheckMs = 24U * 60U * 60U * 1000U;
+/* 64-bit conversion avoids the same pdMS_TO_TICKS 24h overflow
+ * previously fixed on the Scale's automatic update scheduler. */
+constexpr uint64_t kDailyOtaCheckMs = 24ULL * 60ULL * 60ULL * 1000ULL;
+constexpr uint64_t kDailyOtaCheckRawTicks =
+    (kDailyOtaCheckMs * (uint64_t)configTICK_RATE_HZ) / 1000ULL;
+static_assert(kDailyOtaCheckRawTicks < (uint64_t)portMAX_DELAY,
+              "Daily touchscreen OTA interval exceeds FreeRTOS tick range");
+constexpr TickType_t kDailyOtaCheckTicks =
+    static_cast<TickType_t>(kDailyOtaCheckRawTicks);
 constexpr const char *kOtaNvsNamespace = "touch_ota";
 constexpr const char *kOtaChannelKey = "channel";
 constexpr const char *kOtaAutoInstallKey = "auto_install";
@@ -1409,7 +1421,7 @@ void ota_scheduler_task(void *) {
      * this cycle. If the scale was reconnecting above, we stay in the short
      * defer loop rather than losing the check for 24 hours.
      */
-    vTaskDelay(pdMS_TO_TICKS(kDailyOtaCheckMs));
+    vTaskDelay(kDailyOtaCheckTicks);
   }
 }
 
@@ -1964,7 +1976,7 @@ extern "C" void touchscreen_app_main() {
 
       if (c.ws && esp_websocket_client_is_connected(c.ws) &&
           c.traffic_ready &&
-          current_time - c.last_ping > 8000000) {
+          current_time - c.last_ping > 6000000) {
         c.last_ping = current_time;
         if (!send_secure(slot, "{\"type\":\"ping\"}"))
           ESP_LOGW(TAG,
@@ -1979,6 +1991,16 @@ extern "C" void touchscreen_app_main() {
             (current_time - c.last_reading) / 1000000;
         if (slot == active_scale_index)
           ui_state(c.state);
+      }
+
+      if (c.ws && esp_websocket_client_is_connected(c.ws) &&
+          !c.authenticated && c.handshake_started > 0 &&
+          current_time - c.handshake_started > kHandshakeTimeoutUs) {
+        ESP_LOGW(TAG,
+                 "Scale %u handshake exceeded 22 seconds; recycling transport",
+                 (unsigned)(slot + 1));
+        connect_scale(slot);
+        continue;
       }
 
       if (c.state.online && current_time - c.last_state > kStateStaleUs) {
