@@ -60,7 +60,7 @@ checks = {
         'struct ScaleConnection' in transport_header and
         'struct Frame' in transport_header,
     "all Scale versions use authenticated application heartbeat":
-        'current_time - c.last_ping > 8000000' in main and
+        'current_time - c.last_ping > 6000000' in main and
         '!scale_supports_protocol_keepalive' not in main and
         'Scale %u heartbeat send failed; reconnect scheduled' in main,
     "WebSocket TX uses separate component lock":
@@ -68,7 +68,7 @@ checks = {
         'CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000' in defaults,
     "authenticated heartbeat owns connection liveness":
         "config.disable_pingpong_discon = true;" in main and
-        'current_time - c.last_ping > 8000000' in main and
+        'current_time - c.last_ping > 6000000' in main and
         'current_time - c.last_state > kStateStaleUs' in main,
     "Scale reconnect never stops its WebSocket synchronously":
         "esp_websocket_client_stop(c.ws)" not in main and
