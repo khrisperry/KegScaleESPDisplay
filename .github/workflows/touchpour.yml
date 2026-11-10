@@ -54,8 +54,6 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f'TouchPour **V{version}**\n\nSource: `{os.environ["GITHUB_SHA"]}`\n\nSHA-256: `{checksum}`\n')
           PYTHON
-      - name: Checksum supervised TouchPour application
-        run: cd touchpour/build && sha256sum touchpour_display.bin > touchpour_display.bin.sha256
       - uses: actions/upload-artifact@v4
         with:
           retention-days: 14
