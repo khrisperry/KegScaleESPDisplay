@@ -16,3 +16,4 @@ python3 tests/ui_poll_test.py
 python3 tests/pin_lock_test.py
 
 python3 tests/calibration_store_test.py
+python3 tests/maintenance_safety_guard_test.py
