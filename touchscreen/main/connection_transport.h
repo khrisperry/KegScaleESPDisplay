@@ -31,6 +31,7 @@ struct ScaleConnection {
   int64_t last_state = 0;
   int64_t pending_since = 0;
   int64_t last_ping = 0;
+  int64_t handshake_started = 0;
   int64_t last_reading = 0;
   int64_t last_age_update = 0;
   int64_t next_connection_attempt = 0;
