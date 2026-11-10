@@ -1,0 +1,68 @@
+name: Dev e-Ink and Touchscreen build artifacts
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.4.24-touchscreen-eink-reliability
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'main/**'
+      - 'components/**'
+      - 'touchscreen/**'
+      - 'tests/**'
+      - '.github/workflows/dev-display-artifacts.yml'
+permissions:
+  contents: read
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev libcjson-dev
+      - run: bash tests/run_host_tests.sh
+  eink-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32
+          path: .
+      - name: Hash e-Ink application image
+        run: cd build && sha256sum keg_scale_display.bin > keg_scale_display.bin.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 14
+          name: eink-esp32-dev-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            build/keg_scale_display.bin
+            build/keg_scale_display.bin.sha256
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/ota_data_initial.bin
+  touchscreen-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: touchscreen
+      - name: Hash 4-inch touchscreen application image
+        run: cd touchscreen/build && sha256sum keg_scale_touchscreen.bin > keg_scale_touchscreen.bin.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 14
+          name: touchscreen-esp32s3-dev-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            touchscreen/build/keg_scale_touchscreen.bin
+            touchscreen/build/keg_scale_touchscreen.bin.sha256
+            touchscreen/build/bootloader/bootloader.bin
+            touchscreen/build/partition_table/partition-table.bin
+            touchscreen/build/ota_data_initial.bin
