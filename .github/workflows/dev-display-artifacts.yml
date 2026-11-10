@@ -20,8 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: khrisperry/KegScaleESP
+          ref: dev
+          path: KegScaleESP
       - run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev libcjson-dev
-      - run: bash tests/run_host_tests.sh
+      - name: Run display tests against companion Scale checkout
+        env:
+          KEGSCALE_SCALE_ROOT: ${{ github.workspace }}/KegScaleESP
+        run: bash tests/run_host_tests.sh
   eink-build:
     runs-on: ubuntu-latest
     steps:
@@ -31,16 +39,19 @@ jobs:
           esp_idf_version: v6.0.1
           target: esp32
           path: .
-      - name: Hash e-Ink application image
-        run: cd build && sha256sum keg_scale_display.bin > keg_scale_display.bin.sha256
+      - name: Package e-Ink app and checksum outside root-owned build directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/eink-app"
+          cp build/keg_scale_display.bin "$RUNNER_TEMP/eink-app/"
+          (cd "$RUNNER_TEMP/eink-app" && sha256sum keg_scale_display.bin > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
           retention-days: 14
           name: eink-esp32-dev-${{ github.sha }}
           if-no-files-found: error
           path: |
-            build/keg_scale_display.bin
-            build/keg_scale_display.bin.sha256
+            ${{ runner.temp }}/eink-app/keg_scale_display.bin
+            ${{ runner.temp }}/eink-app/SHA256SUMS.txt
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
             build/ota_data_initial.bin
@@ -53,16 +64,19 @@ jobs:
           esp_idf_version: v6.0.1
           target: esp32s3
           path: touchscreen
-      - name: Hash 4-inch touchscreen application image
-        run: cd touchscreen/build && sha256sum keg_scale_touchscreen.bin > keg_scale_touchscreen.bin.sha256
+      - name: Package touchscreen app and checksum outside root-owned build directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/touchscreen-app"
+          cp touchscreen/build/keg_scale_touchscreen.bin "$RUNNER_TEMP/touchscreen-app/"
+          (cd "$RUNNER_TEMP/touchscreen-app" && sha256sum keg_scale_touchscreen.bin > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
           retention-days: 14
           name: touchscreen-esp32s3-dev-${{ github.sha }}
           if-no-files-found: error
           path: |
-            touchscreen/build/keg_scale_touchscreen.bin
-            touchscreen/build/keg_scale_touchscreen.bin.sha256
+            ${{ runner.temp }}/touchscreen-app/keg_scale_touchscreen.bin
+            ${{ runner.temp }}/touchscreen-app/SHA256SUMS.txt
             touchscreen/build/bootloader/bootloader.bin
             touchscreen/build/partition_table/partition-table.bin
             touchscreen/build/ota_data_initial.bin
