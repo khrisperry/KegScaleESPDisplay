@@ -5,8 +5,10 @@
 static inline uint32_t power_next_check_seconds(
     bool frequent, uint8_t failures, uint32_t frequent_seconds, uint32_t safety_seconds)
 {
-    if (failures == 1) return 300;
-    if (failures == 2) return 900;
+    /* A single missed BLE check should not add five minutes to the displayed
+     * reading. Short battery-conscious retry, then progressively back off. */
+    if (failures == 1) return 60;
+    if (failures == 2) return 180;
     if (failures > 2) return safety_seconds;
     return frequent ? frequent_seconds : safety_seconds;
 }
