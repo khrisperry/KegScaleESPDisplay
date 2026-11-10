@@ -301,6 +301,11 @@ void start() {
   c.speed_mode = LEDC_LOW_SPEED_MODE;
   c.channel = LEDC_CHANNEL_0;
   c.timer_sel = LEDC_TIMER_0;
+  /* Never present an arbitrary/zero PWM pulse to an attached tap during
+   * channel initialization. Start at the saved CLOSED pulse when calibrated. */
+  c.duty = settings.servo_calibrated
+               ? (uint32_t)((uint64_t)settings.closed_us * 16384 / 20000)
+               : 0U;
   ESP_ERROR_CHECK(ledc_channel_config(&c));
   ESP_LOGI(TAG, "Servo PWM output: GPIO%d, 50 Hz; optional button: GPIO%d",
            CONFIG_TAP_SERVO, CONFIG_TAP_BUTTON);
