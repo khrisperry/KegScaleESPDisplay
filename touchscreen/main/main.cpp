@@ -2005,7 +2005,7 @@ extern "C" void touchscreen_app_main() {
 
       if (c.state.online && current_time - c.last_state > kStateStaleUs) {
         ESP_LOGW(TAG,
-                 "Scale %u reading stale for >12 seconds; reconnecting",
+                 "Scale %u reading stale for >24 seconds; reconnecting",
                  (unsigned)(slot + 1));
         c.state.online = false;
         if (slot == active_scale_index) {
