@@ -33,11 +33,7 @@
 #include "power_policy.h"
 
 static const char *TAG = "display";
-#define FETCH_DIAG_MAGIC 0x46444931U
-RTC_DATA_ATTR static struct {
-    uint32_t magic, sequence;
-    struct { uint32_t sequence, duration_ms, error, minimum; } records[8];
-} fetch_diagnostics;
+
 
 
 /* Bumped when retained scale-offline tracking was added. */
@@ -97,6 +93,16 @@ typedef struct {
 } touch_diagnostic_retained_t;
 
 RTC_DATA_ATTR static touch_diagnostic_retained_t s_touch_diag;
+
+#define FETCH_DIAG_MAGIC 0x46444931U
+typedef struct {
+    uint32_t sequence, duration_ms, error, minimum;
+} fetch_diag_record_t;
+typedef struct {
+    uint32_t magic, sequence;
+    fetch_diag_record_t records[8];
+} fetch_diagnostics_t;
+RTC_DATA_ATTR static fetch_diagnostics_t fetch_diagnostics;
 
 static uint8_t s_touch_threshold_percent =
     CONFIG_KEG_DISPLAY_TOUCH_THRESHOLD_PERCENT;

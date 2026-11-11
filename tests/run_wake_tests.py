@@ -15,6 +15,8 @@ with tempfile.TemporaryDirectory(prefix='keg-wake-') as directory:
     source=main.read_text(encoding='utf-8')
     types=re.search(r'typedef struct \{.*?\} retained_state_t;',source,re.S)[0]
     types+='\n'+re.search(r'typedef struct \{[^}]*\} touch_diagnostic_retained_t;',source,re.S)[0]
+    for diagnostic_type in ['fetch_diag_record_t', 'fetch_diagnostics_t']:
+        types += '\n'+re.search(r'typedef struct \{[^}]*\} '+diagnostic_type+r';',source,re.S)[0]
     constants='\n'.join(line for line in source.splitlines() if line.startswith(('#define RETAINED_MAGIC ', '#define TOUCH_DIAG_RETAINED_MAGIC ', '#define SIGNIFICANT_WEIGHT_LBS ', '#define SCALE_OFFLINE_FAILURE_THRESHOLD ')))
     constants+='\n'+'\n'.join(line for line in ui.read_text().splitlines() if line.startswith(('#define SCALE_SCREEN_MAGIC ', '#define SCALE_FULL_REFRESH_INTERVAL ')))
     (tmp/'wake_types.inc').write_text(constants+'\n'+types)
