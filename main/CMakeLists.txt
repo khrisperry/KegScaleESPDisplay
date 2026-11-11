@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "."
-    REQUIRES
+    REQUIRES flight_recorder
         ble_client
         display_ui
         display_ota

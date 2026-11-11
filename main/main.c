@@ -1,3 +1,6 @@
+#include "flight_recorder.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <math.h>
@@ -30,6 +33,12 @@
 #include "power_policy.h"
 
 static const char *TAG = "display";
+#define FETCH_DIAG_MAGIC 0x46444931U
+RTC_DATA_ATTR static struct {
+    uint32_t magic, sequence;
+    struct { uint32_t sequence, duration_ms, error, minimum; } records[8];
+} fetch_diagnostics;
+
 
 /* Bumped when retained scale-offline tracking was added. */
 #define RETAINED_MAGIC 0x4B534455U
@@ -187,6 +196,11 @@ static void sleep_for_touch_delay(unsigned seconds)
     ESP_LOGI(TAG, "Touch phase %u: deep sleep for %u seconds",
              (unsigned)s_touch_phase, seconds);
     /* Timer-only during the pour delay: a held finger cannot cause a wake loop. */
+    fflush(stdout);
+    fr_checkpoint("eink_sleep");
+    ESP_LOGI("flight_recorder", "SLEEP checkpoint free=%u min=%u largest=%u",
+        (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     fflush(stdout);
     esp_deep_sleep_start();
 }
@@ -701,6 +715,11 @@ static void go_to_sleep(void)
 
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(50));
+    fr_checkpoint("eink_sleep");
+    ESP_LOGI("flight_recorder", "SLEEP checkpoint free=%u min=%u largest=%u",
+        (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    fflush(stdout);
     esp_deep_sleep_start();
 }
 
@@ -810,7 +829,19 @@ static esp_err_t fetch_paired_state_once(
     pairing_config_t *pairing,
     ble_client_scale_state_t *state)
 {
+    int64_t fetch_started = esp_timer_get_time();
+    fr_checkpoint("ble_fetch_begin");
     esp_err_t err = ble_client_fetch_mode(&pairing->peer, state, !s_lightweight_fetch);
+    fr_event("ble_fetch_end", err, (uint32_t)(esp_timer_get_time()-fetch_started));
+    unsigned record_index = fetch_diagnostics.sequence++ % 8;
+    fetch_diagnostics.records[record_index].sequence = fetch_diagnostics.sequence;
+    fetch_diagnostics.records[record_index].duration_ms = (esp_timer_get_time()-fetch_started)/1000;
+    fetch_diagnostics.records[record_index].error = err;
+    fetch_diagnostics.records[record_index].minimum = esp_get_minimum_free_heap_size();
+    if (err != ESP_OK) fr_dump();
+    ESP_LOGI("flight_recorder", "BLE fetch err=%d duration_ms=%lu free=%u min=%u", err,
+        (unsigned long)((esp_timer_get_time()-fetch_started)/1000),
+        (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
     if (err != ESP_OK) return err;
     if (!ble_client_state_is_compatible(&pairing->peer, state)) {
         return ESP_ERR_INVALID_VERSION;
@@ -1354,6 +1385,20 @@ static bool recovery_button_held_at_startup(esp_reset_reason_t reset_reason,
 
 void app_main(void)
 {
+    ESP_ERROR_CHECK(fr_init());
+    fr_event("eink_wake", esp_sleep_get_wakeup_cause(), 0);
+    if (fetch_diagnostics.magic != FETCH_DIAG_MAGIC) {
+        memset(&fetch_diagnostics, 0, sizeof(fetch_diagnostics));
+        fetch_diagnostics.magic = FETCH_DIAG_MAGIC;
+    }
+    for (unsigned i=0; i<8; ++i) {
+        if (!fetch_diagnostics.records[i].sequence) continue;
+        ESP_LOGI("flight_recorder", "RETAINED_BLE seq=%lu duration_ms=%lu err=%lu min=%lu",
+            (unsigned long)fetch_diagnostics.records[i].sequence,
+            (unsigned long)fetch_diagnostics.records[i].duration_ms,
+            (unsigned long)fetch_diagnostics.records[i].error,
+            (unsigned long)fetch_diagnostics.records[i].minimum);
+    }
     ESP_LOGI(
         TAG,
         "KegScaleESPDisplay starting; wake=%s",

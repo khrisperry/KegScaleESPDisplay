@@ -1,0 +1,46 @@
+name: Diagnostic firmware (manual installation only)
+on:
+  workflow_dispatch:
+  push:
+    branches: ['diagnostic/**']
+permissions:
+  contents: read
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y libmbedtls-dev libcjson-dev
+      - run: bash touchscreen/tests/run_host_tests.sh
+      - run: bash touchpour/tests/run_host_tests.sh
+      - run: bash tests/run_host_tests.sh
+      - run: python3 touchscreen43/tests/manual_ota_isolation_test.py
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {path: '.', target: esp32, name: eink}
+          - {path: touchscreen, target: esp32s3, name: touchscreen-4b}
+          - {path: touchscreen43, target: esp32s3, name: waveshare-43}
+          - {path: touchpour, target: esp32s3, name: touchpour}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: ${{ matrix.target }}
+          path: ${{ matrix.path }}
+          command: idf.py build
+      - name: Package application, debug symbols and build identity
+        env:
+          PROJECT_DIR: ${{ matrix.path }}
+          DEVICE: ${{ matrix.name }}
+        run: python3 tools/package_diagnostics.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-${{ matrix.name }}-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: error
+          path: diagnostic-package/

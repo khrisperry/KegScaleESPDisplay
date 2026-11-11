@@ -50,6 +50,7 @@ ScaleConnection &connection_for(uint8_t slot);
 const ScaleConnection &connection_for_const(uint8_t slot);
 
 void connection_transport_init();
+void connection_diagnostic_tick();
 bool connection_receive_frame(Frame *frame, TickType_t timeout);
 bool retire_transport_async(uint8_t slot,
                             esp_websocket_client_handle_t handle,

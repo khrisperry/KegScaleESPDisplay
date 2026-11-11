@@ -2,6 +2,8 @@
 """Exercise local SDK configuration migration with the real CMake interpreter."""
 import os
 from pathlib import Path
+from test_output import install_excepthook, pass_line
+install_excepthook("LVGL memory configuration")
 import subprocess
 import tempfile
 import unittest
