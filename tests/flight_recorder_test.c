@@ -20,6 +20,7 @@ int main(void) {
     assert(atomic_load(&allocations[0].freed));
     fr_allocation_t exported;
     assert(fr_allocation_at(0,&exported) && exported.size==2048 && exported.freed);
+    assert(exported.pc[0]==0x42000000-3);
     assert(!fr_allocation_at(24,&exported));
     esp_heap_trace_alloc_hook((void *)0x2000,512,3);
     assert(atomic_load(&allocation_sequence)==1);

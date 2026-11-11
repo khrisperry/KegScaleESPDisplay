@@ -19,8 +19,8 @@ checks={
     'no firmware-repo publish': 'KegScaleFirmware' not in workflow and 'git push' not in workflow,
     'scale crypto kept in shared source': 'connection_session_accept_handshake(' in shared,
     'updated 6-second heartbeat': 'current_time - c.last_ping > 6000000' in shared,
-    '4.3-only firmware version': (project/'version.txt').read_text().strip()=='V1.4.24',
+    'diagnostic firmware version': (project/'version.txt').read_text().strip()=='V1.4.25',
 }
 failed=[name for name,ok in checks.items() if not ok]
 if failed: raise SystemExit('FAIL: Waveshare43 manual-only isolation: '+'; '.join(failed))
-print('PASS: Waveshare43 V1.4.24 USB-only OTA isolation and connection policy')
+print('PASS: Waveshare43 V1.4.25 USB-only OTA isolation and connection policy')

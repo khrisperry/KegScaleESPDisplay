@@ -5,6 +5,7 @@
 #include <string.h>
 #include "esp_attr.h"
 #include "esp_debug_helpers.h"
+#include "esp_cpu_utils.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -50,7 +51,7 @@ static void capture(allocation_t *a, uint32_t seq, void *ptr, size_t size, uint3
     esp_backtrace_frame_t frame = {0};
     esp_backtrace_get_start(&frame.pc, &frame.sp, &frame.next_pc);
     for (unsigned i = 0; i < DEPTH; ++i) {
-        atomic_store(&a->pc[i], frame.pc);
+        atomic_store(&a->pc[i], esp_cpu_process_stack_pc(frame.pc));
         if (!esp_backtrace_get_next_frame(&frame)) {
             for (++i; i < DEPTH; ++i) atomic_store(&a->pc[i], 0);
             break;

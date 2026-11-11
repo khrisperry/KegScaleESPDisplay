@@ -17,7 +17,18 @@ jobs:
           /tmp/recorder-test
       - run: bash touchscreen/tests/run_host_tests.sh
       - run: bash touchpour/tests/run_host_tests.sh
-      - run: bash tests/run_host_tests.sh
+      # The private Scale workflow performs the cross-repository mirror check.
+      # Public Display CI cannot fetch the private Scale with its GITHUB_TOKEN.
+      - name: e-Ink host regressions
+        run: |
+          python3 tests/test_output_contract_test.py
+          python3 tests/display_command_ack_guard_test.py
+          cc -std=c11 -Wall -Wextra -Werror tests/power_policy_test.c -o /tmp/power-test
+          /tmp/power-test
+          cc -std=c11 -Wall -Wextra -Werror -Itests/touch_stubs -Icomponents/touch_wake/include tests/touch_calibration_test.c -o /tmp/calibration-test
+          /tmp/calibration-test
+          python3 tests/run_ota_tests.py
+          python3 tests/run_wake_tests.py
       - run: python3 touchscreen43/tests/manual_ota_isolation_test.py
   build:
     runs-on: ubuntu-latest
