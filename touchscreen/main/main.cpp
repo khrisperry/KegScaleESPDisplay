@@ -1801,7 +1801,7 @@ static void touchscreen_apply_settings_live() {
     }
 
     wifi_ready = false;
-    fr_event("display_wifi_disconnect", event_data ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0, 0);
+    fr_checkpoint("display_wifi_reconfigure");
     for (uint8_t i = 0; i < 2; ++i)
       stop_scale_transport(i, scale_host_const(i)[0]);
 
