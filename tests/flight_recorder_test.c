@@ -18,6 +18,9 @@ int main(void) {
     assert(atomic_load(&allocation_sequence)==1);
     esp_heap_trace_free_hook((void *)0x1000);
     assert(atomic_load(&allocations[0].freed));
+    fr_allocation_t exported;
+    assert(fr_allocation_at(0,&exported) && exported.size==2048 && exported.freed);
+    assert(!fr_allocation_at(24,&exported));
     esp_heap_trace_alloc_hook((void *)0x2000,512,3);
     assert(atomic_load(&allocation_sequence)==1);
     test_isr=true;
@@ -35,6 +38,8 @@ int main(void) {
     assert(atomic_load(&failed.size)==4096 && atomic_load(&failures)==1);
     allocation_failed(8192,3,"malloc");
     assert(atomic_load(&failed.size)==4096 && atomic_load(&failures)==2);
+    assert(fr_failed_allocation(&exported) && exported.size==4096);
+    assert(fr_failure_count()==2 && fr_is_frozen());
     fr_rearm(); tick(NULL);
     assert(!atomic_load(&frozen));
     esp_heap_trace_alloc_hook((void *)0x4000,2048,3);

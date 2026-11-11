@@ -110,6 +110,22 @@ size_t fr_events(fr_event_t *out, size_t capacity, uint32_t *overwritten) {
     portEXIT_CRITICAL(&event_lock);
     return n;
 }
+static int copy_allocation(allocation_t *a, fr_allocation_t *out) {
+    unsigned seq = atomic_load(&a->sequence);
+    if (!seq || seq == UINT32_MAX || !out) return 0;
+    out->sequence=seq; out->uptime_ms=atomic_load(&a->ms);
+    out->size=atomic_load(&a->size); out->caps=atomic_load(&a->caps);
+    out->pointer=atomic_load(&a->pointer); out->task=atomic_load(&a->task);
+    out->freed=atomic_load(&a->freed);
+    for (unsigned i=0;i<DEPTH;++i) out->pc[i]=atomic_load(&a->pc[i]);
+    return seq == atomic_load(&a->sequence);
+}
+int fr_allocation_at(unsigned index, fr_allocation_t *out) {
+    return index < ALLOCS && copy_allocation(&allocations[index], out);
+}
+int fr_failed_allocation(fr_allocation_t *out) { return copy_allocation(&failed, out); }
+unsigned fr_failure_count(void) { return atomic_load(&failures); }
+int fr_is_frozen(void) { return atomic_load(&frozen); }
 static void print_allocation(const char *kind, allocation_t *a) {
     unsigned seq = atomic_load(&a->sequence);
     if (!seq || seq == UINT32_MAX) return;

@@ -11,6 +11,14 @@ typedef struct {
     uint32_t argument, duration_us;
     char label[32];
 } fr_event_t;
+typedef struct {
+    uint32_t sequence, uptime_ms, size, caps, pointer, task, freed, pc[6];
+} fr_allocation_t;
+/* Best-effort atomic snapshots; candidates can be overwritten until frozen. */
+int fr_allocation_at(unsigned index, fr_allocation_t *out);
+int fr_failed_allocation(fr_allocation_t *out);
+unsigned fr_failure_count(void);
+int fr_is_frozen(void);
 esp_err_t fr_init(void);
 void fr_event(const char *label, uint32_t argument, uint32_t duration_us);
 void fr_checkpoint(const char *label);

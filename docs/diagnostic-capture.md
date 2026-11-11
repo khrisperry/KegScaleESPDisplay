@@ -17,7 +17,7 @@ The sleeping e-Ink retains eight BLE fetch outcomes in RTC memory across deep sl
 expected during deep sleep. Do not prevent sleep to collect logs.
 
 Download scale support bundles before and after each controlled test. Their
-`diagnostic_events` array is independent of the general log buffer. Save both
+`diagnostic_events` array is independent of the general log buffer. Bundles also contain `diagnostic_allocations`, frozen-state/failure counters, and the first failed allocation with its six call sites, so the scale evidence is retrievable without USB. Save both
 serial logs and this artifact's ELF, map, sdkconfig, checksums and build identity.
 The static recorder reports its RAM footprint at startup. Instrumentation consumes
 RAM and CPU; compare the diagnostic baseline separately from V1.4.20.
