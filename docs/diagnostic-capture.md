@@ -13,7 +13,7 @@ Use the existing serial monitors at 115200 baud, computer timestamps enabled,
 and Ctrl+T then Ctrl+L to save output. Keep the computer awake. Expect a
 `flight_recorder: HEALTH` line every 30 seconds on always-on devices. Touchscreen
 and TouchPour also print QUEUE_HEALTH every 30 seconds once their app loop runs.
-The sleeping e-Ink prints wake, BLE fetch and sleep diagnostics; no heartbeat is
+The sleeping e-Ink retains eight BLE fetch outcomes in RTC memory across deep sleep and prints wake, BLE fetch and sleep diagnostics; no heartbeat is
 expected during deep sleep. Do not prevent sleep to collect logs.
 
 Download scale support bundles before and after each controlled test. Their

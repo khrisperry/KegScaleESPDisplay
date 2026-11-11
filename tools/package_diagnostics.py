@@ -9,6 +9,14 @@ project = Path(os.environ['PROJECT_DIR'])
 build = project / 'build'
 desc = json.loads((build / 'project_description.json').read_text())
 name = desc['project_name']
+configuration = (project / 'sdkconfig').read_text()
+if 'CONFIG_HEAP_USE_HOOKS=y' not in configuration:
+    raise SystemExit('Allocation hooks disabled in effective sdkconfig')
+symbols = (build / f'{name}.elf').read_bytes()
+for symbol in (b'fr_init', b'esp_heap_trace_alloc_hook', b'esp_heap_trace_free_hook'):
+    if symbol not in symbols:
+        raise SystemExit(f'Missing diagnostic symbol: {symbol!r}')
+
 output = Path('diagnostic-package')
 output.mkdir(exist_ok=True)
 for source in [build / f'{name}.bin', build / f'{name}.elf', build / f'{name}.map',

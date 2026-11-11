@@ -174,6 +174,12 @@ static void tick(void *arg) {
     }
     if (minimum < observed_min) {
         fr_event("new_heap_min", observed_min-minimum, 0);
+        if (ms > 60000) {
+            ESP_LOGW(TAG, "NEW_MIN noticed_ms=%lu previous=%lu min=%lu current=%u largest=%u; observation time is not allocation time",
+                (unsigned long)ms, (unsigned long)observed_min, (unsigned long)minimum,
+                (unsigned)heap_caps_get_free_size(CAPS), (unsigned)heap_caps_get_largest_free_block(CAPS));
+            if (observed_min-minimum >= 1024) atomic_store(&pending_dump, true);
+        }
         /* Freeze only a NEW post-startup severe dip, not an old boot watermark. */
         if (ms > 60000 && minimum < 8192) {
             atomic_store(&frozen, true);

@@ -46,6 +46,11 @@ uint8_t active_scale_index;
 std::atomic<bool> wifi_ready{true};
 constexpr int64_t kReconnectRetryUs=10000000;
 int frames;
+std::atomic<uint32_t> queue_drops{0}, queue_high_water{0};
+unsigned diagnostic_events;
+void fr_request_dump() {}
+void fr_event(const char *, uint32_t, uint32_t) { ++diagnostic_events; }
+void fr_checkpoint(const char *) { ++diagnostic_events; }
 int64_t clock_us=1000000;
 unsigned stops, destroys, retirements, probes, starts, clears, results, ended, paired_ui, state_ui, saves, wifi_connects;
 bool probe_ok=true, init_ok=true, socket_connected=true;
@@ -87,7 +92,9 @@ esp_err_t esp_websocket_client_start(void *) { ++starts; return start_error; }
 int esp_websocket_client_send_text(void *, const char *s, size_t len, int) { last_hello=s; return len; }
 int esp_websocket_client_send_bin(void *, const char *, size_t len, int) { return len; }
 bool scale_accepting_connection(uint8_t) { ++probes; return probe_ok; }
-int xQueueSend(int, const Frame *f, int) { queued.push_back(*f); return pdTRUE; }
+bool queue_accept = true;
+int xQueueSend(int, const Frame *f, int) { if (!queue_accept) return 0; queued.push_back(*f); return pdTRUE; }
+unsigned uxQueueMessagesWaiting(int) { return queued.size(); }
 void esp_fill_random(void *p, size_t n) { memset(p, 1, n); }
 size_t heap_caps_get_free_size(int) { return 100000; }
 size_t heap_caps_get_largest_free_block(int) { return 100000; }
@@ -273,4 +280,13 @@ static void test_fragments_and_slot_isolation() {
  assert(c.pending_id==20);
  puts("PASS: WebSocket fragments, slot isolation, Wi-Fi loss without command replay and authenticated results");
 }
-int main() { test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_calibration_session_results();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }
+int main() {
+  Frame diagnostic_frame{};
+  diagnostic_frame.generation = 7;
+  queue_accept = false;
+  assert(!enqueue_frame(diagnostic_frame));
+  assert(queue_drops == 1 && diagnostic_events == 1);
+  queue_accept = true;
+  assert(enqueue_frame(diagnostic_frame));
+  assert(queue_high_water >= 1);
+  queued.clear(); test_reconnect();test_stale_and_cancel();test_lost_ack_and_ota();test_calibration_session_results();test_error_without_disconnect_retries();test_retirement_is_slot_local();test_fragments_and_slot_isolation(); }

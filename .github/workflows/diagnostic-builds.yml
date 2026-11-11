@@ -11,6 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update -qq && sudo apt-get install -y libmbedtls-dev libcjson-dev
+      - name: Test bounded recorder behavior
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I tests/recorder_host -I components/flight_recorder/include tests/flight_recorder_test.c -o /tmp/recorder-test
+          /tmp/recorder-test
       - run: bash touchscreen/tests/run_host_tests.sh
       - run: bash touchpour/tests/run_host_tests.sh
       - run: bash tests/run_host_tests.sh
