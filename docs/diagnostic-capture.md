@@ -60,3 +60,29 @@ xtensa-esp32-elf-addr2line for the e-Ink. Example:
 
 Do not use a rebuilt or different-version ELF. The diagnostic workflow only builds
 and uploads artifacts; signing/promotion into Dev/Beta/Production is separate.
+
+
+## November 12 diagnostic revision
+
+Allocation traces now retain 12 normalized PCs per candidate. A separate 12-entry
+incident ring captures connection closures/failures and queue overflow with free,
+minimum and largest internal heap plus reason and timing; ordinary HTTP polling
+cannot evict these incidents. Incident storage is RAM-only and wraps after 12
+incidents. Serial dumps include INCIDENT lines; Scale support bundles include
+`diagnostic_incidents`. `ws_close.duration_us` is the age of the last received
+frame at closure. Display WebSocket incident duration field carries the session
+generation (not elapsed time), matching the existing event convention.
+
+Scale HTTPS fetches record initialization, open, headers, body and cleanup
+boundaries. Open includes DNS/TCP/TLS, not isolated TLS handshake timing.
+The 24 ordinary events may wrap during the four fetches; allocation history is
+retained on a severe new post-startup watermark or allocation failure. Free
+observation stops while frozen: unmarked candidates are NOT proof of leaks.
+Additional static recorder memory and deeper unwinding affect the test baseline.
+No partition, protocol, retry policy, e-Ink sleep policy or pour-control changes.
+
+TouchPour 0.1.22 is a manual installation, including the existing PIN/full/half
+pour controls and maintenance/servo safety guards. Keep its matching ELF/map.
+Use the package flasher_args.json for offsets; never use square 4B/4.3 images
+on TouchPour. For app-only installation, inspect the installed partition table
+and active OTA slot first. Do not erase NVS or pour history.

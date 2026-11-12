@@ -16,7 +16,7 @@
 
 #define EVENTS 24U
 #define ALLOCS 24U
-#define DEPTH 6U
+#define DEPTH FR_STACK_DEPTH
 #define CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 /* Hook fields are atomic: simultaneous allocations, frees and snapshots are
  * permitted. Hooks never log, allocate, write flash, or take a mutex/spinlock.
@@ -34,6 +34,8 @@ static DRAM_ATTR atomic_bool failure_captured;
 static DRAM_ATTR allocation_t failed;
 static fr_event_t events[EVENTS];
 static uint32_t event_sequence, event_count;
+static fr_event_t incidents[FR_INCIDENT_CAPACITY];
+static uint32_t incident_sequence;
 static portMUX_TYPE event_lock = portMUX_INITIALIZER_UNLOCKED;
 static esp_timer_handle_t timer;
 static uint32_t observed_min, last_health_ms, last_dump_ms;
@@ -87,7 +89,7 @@ static void allocation_failed(size_t size, uint32_t caps, const char *function_n
     }
 }
 
-void fr_event(const char *label, uint32_t argument, uint32_t duration_us) {
+static fr_event_t make_event(const char *label, uint32_t argument, uint32_t duration_us) {
     fr_event_t e = {
         .uptime_ms = (uint32_t)(esp_timer_get_time() / 1000),
         .free_internal = heap_caps_get_free_size(CAPS),
@@ -96,11 +98,36 @@ void fr_event(const char *label, uint32_t argument, uint32_t duration_us) {
         .argument = argument, .duration_us = duration_us,
     };
     snprintf(e.label, sizeof(e.label), "%s", label);
+    return e;
+}
+void fr_event(const char *label, uint32_t argument, uint32_t duration_us) {
+    fr_event_t e = make_event(label, argument, duration_us);
     portENTER_CRITICAL(&event_lock);
     e.sequence = ++event_sequence;
     events[(e.sequence - 1) % EVENTS] = e;
     if (event_count < EVENTS) ++event_count;
     portEXIT_CRITICAL(&event_lock);
+}
+void fr_incident(const char *label, uint32_t argument, uint32_t duration_us) {
+    fr_event_t e = make_event(label, argument, duration_us);
+    portENTER_CRITICAL(&event_lock);
+    e.sequence = ++incident_sequence;
+    incidents[(e.sequence-1)%FR_INCIDENT_CAPACITY] = e;
+    portEXIT_CRITICAL(&event_lock);
+    atomic_store(&pending_dump, true);
+}
+uint32_t fr_latest_incident_sequence(void) {
+    portENTER_CRITICAL(&event_lock);
+    uint32_t seq = incident_sequence;
+    portEXIT_CRITICAL(&event_lock);
+    return seq;
+}
+int fr_get_incident(uint32_t seq, fr_event_t *out) {
+    if (!seq || !out) return 0;
+    portENTER_CRITICAL(&event_lock);
+    *out = incidents[(seq-1)%FR_INCIDENT_CAPACITY];
+    portEXIT_CRITICAL(&event_lock);
+    return out->sequence == seq;
 }
 void fr_checkpoint(const char *label) { fr_event(label, 0, 0); }
 size_t fr_events(fr_event_t *out, size_t capacity, uint32_t *overwritten) {
@@ -135,11 +162,13 @@ static void print_allocation(const char *kind, allocation_t *a) {
     uint32_t pc[DEPTH];
     for (unsigned i = 0; i < DEPTH; ++i) pc[i] = atomic_load(&a->pc[i]);
     if (seq != atomic_load(&a->sequence)) return;
-    ESP_LOGW(TAG, "%s seq=%u ms=%lu size=%lu caps=0x%lx ptr=0x%lx task=0x%lx freed=%lu pc=0x%lx:0x%lx:0x%lx:0x%lx:0x%lx:0x%lx",
+    char trace[DEPTH * 12 + 1];
+    size_t used = 0;
+    for (unsigned i=0;i<DEPTH;++i)
+        used += (size_t)snprintf(trace+used, sizeof(trace)-used, "%s0x%lx", i ? ":" : "", (unsigned long)pc[i]);
+    ESP_LOGW(TAG, "%s seq=%u ms=%lu size=%lu caps=0x%lx ptr=0x%lx task=0x%lx freed=%lu pc=%s",
         kind, seq, (unsigned long)ms, (unsigned long)size, (unsigned long)caps,
-        (unsigned long)ptr, (unsigned long)task, (unsigned long)freed,
-        (unsigned long)pc[0], (unsigned long)pc[1], (unsigned long)pc[2],
-        (unsigned long)pc[3], (unsigned long)pc[4], (unsigned long)pc[5]);
+        (unsigned long)ptr, (unsigned long)task, (unsigned long)freed, trace);
 }
 void fr_dump(void) {
     /* Copy one event at a time to avoid a multi-KiB timer-task stack frame. */
@@ -161,6 +190,17 @@ void fr_dump(void) {
             (unsigned long)e.argument, (unsigned long)e.duration_us,
             (unsigned long)e.free_internal, (unsigned long)e.minimum_internal,
             (unsigned long)e.largest_internal);
+    }
+    uint32_t incident_end = fr_latest_incident_sequence();
+    for (uint32_t seq=incident_end > FR_INCIDENT_CAPACITY ? incident_end-FR_INCIDENT_CAPACITY+1 : 1;
+         seq <= incident_end && incident_end; ++seq) {
+        fr_event_t e;
+        if (fr_get_incident(seq, &e))
+            ESP_LOGW(TAG, "INCIDENT seq=%lu ms=%lu label=%s arg=%lu duration_us=%lu free=%lu min=%lu largest=%lu",
+                (unsigned long)e.sequence, (unsigned long)e.uptime_ms, e.label,
+                (unsigned long)e.argument, (unsigned long)e.duration_us,
+                (unsigned long)e.free_internal, (unsigned long)e.minimum_internal,
+                (unsigned long)e.largest_internal);
     }
     print_allocation("FAILED_ALLOC", &failed);
     for (unsigned i=0; i<ALLOCS; ++i) print_allocation("ALLOC", &allocations[i]);
@@ -232,7 +272,7 @@ esp_err_t fr_init(void) {
     if (e != ESP_OK) return e;
     atomic_store(&armed, true);
     fr_checkpoint("recorder_start");
-    ESP_LOGI(TAG, "Static recorder storage=%u bytes", (unsigned)(sizeof(events)+sizeof(allocations)+sizeof(failed)));
-    ESP_LOGI(TAG, "Diagnostic recorder: 100ms watermark observation; 30s health; 24 allocation candidates >=1024B; 24 events; RAM-only; matching ELF required");
+    ESP_LOGI(TAG, "Static recorder storage=%u bytes", (unsigned)(sizeof(events)+sizeof(incidents)+sizeof(allocations)+sizeof(failed)));
+    ESP_LOGI(TAG, "Diagnostic recorder: 100ms watermark observation; 30s health; 24 allocation candidates >=1024B; 12 stack PCs; 24 events; 12 separate incidents; RAM-only; matching ELF required");
     return ESP_OK;
 }

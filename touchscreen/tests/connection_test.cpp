@@ -48,6 +48,7 @@ constexpr int64_t kReconnectRetryUs=10000000;
 int frames;
 std::atomic<uint32_t> queue_drops{0}, queue_high_water{0};
 unsigned diagnostic_events;
+void fr_incident(const char *, uint32_t, uint32_t) { ++diagnostic_events; }
 void fr_request_dump() {}
 void fr_event(const char *, uint32_t, uint32_t) { ++diagnostic_events; }
 void fr_checkpoint(const char *) { ++diagnostic_events; }

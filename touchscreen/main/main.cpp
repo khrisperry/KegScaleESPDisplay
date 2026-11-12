@@ -151,7 +151,7 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
              settings.ssid);
   } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
     wifi_ready = false;
-    fr_event("display_wifi_disconnect", event_data ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0, 0);
+    fr_incident("display_wifi_disconnect", event_data ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0, 0);
     auto *d = static_cast<wifi_event_sta_disconnected_t *>(event_data);
     ESP_LOGW(TAG, "Wi-Fi disconnected from SSID='%s' reason=%u; reconnecting",
              settings.ssid, d ? (unsigned)d->reason : 0U);

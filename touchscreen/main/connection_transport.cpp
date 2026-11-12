@@ -21,7 +21,7 @@ bool enqueue_frame(const Frame &frame) {
   while (depth > previous && !queue_high_water.compare_exchange_weak(previous, depth)) {}
   if (!ok) {
     ++queue_drops;
-    fr_event("display_queue_full", frame.generation, frame.slot);
+    fr_incident("display_queue_full", frame.generation, frame.slot);
     fr_request_dump();
   }
   return ok;
@@ -152,6 +152,7 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
                (unsigned)(slot + 1));
   } else if (event == WEBSOCKET_EVENT_DISCONNECTED ||
              event == WEBSOCKET_EVENT_ERROR) {
+    fr_incident("display_ws_failure", (uint32_t)event, event_generation);
     fr_request_dump();
     const bool is_error = event == WEBSOCKET_EVENT_ERROR;
     ESP_LOGW(TAG,
