@@ -1,5 +1,5 @@
 #include "app.h"
-#include "bsp/esp32_s3_touch_lcd_4b.h"
+#include "board.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
 #include "lvgl.h"
@@ -294,7 +294,7 @@ uint32_t remaining_color(int percent) {
 }
 
 lv_obj_t *find_content() {
-  lv_obj_t *root = lv_screen_active();
+  lv_obj_t *root = touchscreen_ui_root();
   const uint32_t count = lv_obj_get_child_count(root);
   for (uint32_t i = 0; i < count; ++i) {
     lv_obj_t *child = lv_obj_get_child(root, static_cast<int32_t>(i));
@@ -1190,7 +1190,7 @@ void previous_home_view_event(lv_event_t *) {
 }
 
 void tune_home_footer_layout() {
-  lv_obj_t *root = lv_screen_active();
+  lv_obj_t *root = touchscreen_ui_root();
   const uint32_t count = lv_obj_get_child_count(root);
 
   for (uint32_t i = 0; i < count; ++i) {
@@ -1235,7 +1235,7 @@ lv_obj_t *selector_arrow(lv_obj_t *parent, const char *glyph, int x,
 
 void ensure_view_button() {
   if (!view_button) {
-    lv_obj_t *root = lv_screen_active();
+    lv_obj_t *root = touchscreen_ui_root();
     view_button = lv_obj_create(root);
     lv_obj_set_pos(view_button, 318, 432);
     lv_obj_set_size(view_button, 150, 40);
@@ -1483,7 +1483,7 @@ void nav_observer(lv_event_t *event) {
 }
 
 void install_nav_observers() {
-  lv_obj_t *root = lv_screen_active();
+  lv_obj_t *root = touchscreen_ui_root();
   const uint32_t count = lv_obj_get_child_count(root);
   for (uint32_t i = 0; i < count; ++i) {
     lv_obj_t *child = lv_obj_get_child(root, static_cast<int32_t>(i));

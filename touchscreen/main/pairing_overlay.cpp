@@ -1,5 +1,5 @@
 #include "app.h"
-#include "bsp/esp32_s3_touch_lcd_4b.h"
+#include "board.h"
 #include "lvgl.h"
 #include "esp_timer.h"
 #include <cstdio>
@@ -94,7 +94,7 @@ void pairing_tick(lv_timer_t *) {
 void show_pairing_overlay_locked(const char *code) {
   clear_pairing_overlay_locked();
 
-  pairing_overlay = lv_obj_create(lv_screen_active());
+  pairing_overlay = lv_obj_create(touchscreen_ui_root());
   lv_obj_set_pos(pairing_overlay, 0, 0);
   lv_obj_set_size(pairing_overlay, 480, 480);
   lv_obj_remove_flag(pairing_overlay, LV_OBJ_FLAG_SCROLLABLE);

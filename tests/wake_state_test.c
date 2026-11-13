@@ -25,6 +25,12 @@ typedef struct {
     uint8_t requested_threshold_percent;
     uint8_t effective_threshold_percent;
 } touch_wake_arm_info_t;
+static fetch_diagnostics_t fetch_diagnostics;
+static int64_t esp_timer_get_time(void) { return 1000; }
+static unsigned esp_get_minimum_free_heap_size(void) { return 42000; }
+static void fr_checkpoint(const char *s) { (void)s; }
+static void fr_event(const char *s,uint32_t arg,uint32_t duration) { (void)s;(void)arg;(void)duration; }
+static void fr_dump(void) {}
 static retained_state_t s_retained;
 static touch_diagnostic_retained_t s_touch_diag;
 static uint8_t s_touch_threshold_percent=15;
