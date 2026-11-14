@@ -1,4 +1,14 @@
-# TouchPour Display — V0.1.19
+# TouchPour Display — V0.1.23
+
+## V0.1.23 Small Cup and display refresh
+
+- **Small Cup pour.** A separate 66 px indigo **SMALL CUP** button sits to the right of the round pour button. It fills to its own saved level, exactly like Half Pour: calibrate it on the device website under **Setup → Fill level** with **Capture small-cup level** (or enter **Small-cup cutoff** in mm), then **Save settings**. The level must be farther from the sensor than the full-pour cutoff and closer than the maximum cup distance. `0` disables it, and it stays disabled after upgrading until calibrated. It is saved under its own NVS key (`small_stop_mm`); the full calibration, Half Pour level and pour history format are unchanged.
+- Small Cup uses the same start checks as Half Pour (fresh, stable readings below its level, no fallback to another pour type, PIN lock blocks local starts) and the same stop path: raw cutoff, removal/jump detection, invalid/stale readings, maximum time and touch-anywhere stop. The web action API also accepts `start_small`, and `/api/status` reports `small_ready`.
+- **Split button.** The round button is now split evenly: **FULL POUR** on the top half and **1/2 POUR** on the whole bottom half (twice the previous touch area). During any pour the face becomes one red **EMERGENCY STOP**, moves to the centre of the screen, and SMALL CUP hides.
+- **Refreshed look.** Deeper background; the header shows the beer name with a coloured scale-link line (connected/offline/waiting) and a quieter menu button; a keg-level bar and percentage sit under the count; status is a coloured pill (green ready, amber waiting, red pouring, naming the pour type); the LiDAR reading is grey below it.
+- **Setup** is grouped into Screen Lock, Wi-Fi, Scale, Sound and Device Website sections. Back is the header arrow, Scan/Find/show-password sit beside their fields, Sounds is a switch, Remove actions are red, and Save and connect is the one filled button.
+- **PIN pad**: lock badge, four entry dots and outlined keys. Key positions, cooldown and lock behaviour are unchanged.
+- Everything is drawn with plain LVGL objects, bars and switches; no nested rounded clipping layers (see V0.1.19).
 
 ## V0.1.19 display stall correction
 
@@ -11,7 +21,7 @@ One-off cottage tap handle built for **Waveshare ESP32-S3-Touch-LCD-2.8**, 240×
 
 ## Controls and layout
 
-- A large round split **FULL POUR / 1/2 POUR** button sits at the center (150 px diameter, y=108–257). Beers remaining and the serving vessel sit above it; status (y=272–289) and instructions (y=296–313) have separate rows below. There is no on-screen manual button because the display moves with the tap handle.
+- A large round split **FULL POUR / 1/2 POUR** button (150 px diameter, x=8, y=120–269) sits beside the 66 px **SMALL CUP** button (x=166). Beers remaining, the keg-level bar and the serving vessel sit above them; the status pill (y=278–297) and LiDAR reading (y=302–317) are below. While pouring, the red Emergency Stop face is centred (x=45). There is no on-screen manual button because the display moves with the tap handle.
 - Swipe left/right above the controls to cycle beers remaining, keg percentage, and minimal gallons views. Changing views is blocked during a pour.
 - Beers remaining shows **complete** servings (rounded down), matching the Keg Scale website: 24.56 servings is shown as 24, not 25.
 - POUR starts after a completed button tap/release and uses the existing TapLidarMotor calibration, stable-cup detection and distance cutoff. The round button becomes red with **EMERGENCY STOP** during a pour; the status reads **Touch anywhere to stop**. The footer shows the live **LiDAR: <distance> mm** at idle and during pouring, or indicates stale/invalid readings.

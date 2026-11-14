@@ -14,7 +14,8 @@ harness = r'''
 #include <cstring>
 #include <string>
 int mutations=0, styles=0;
-struct lv_obj_t {std::string text;int state=0,flags=0;};
+struct lv_obj_t {std::string text;int state=0,flags=0,x=0;};
+struct lv_color_t {unsigned v;};lv_color_t lv_color_hex(unsigned v){return {v};}
 struct lv_timer_t {};
 constexpr int LV_STATE_DISABLED=1,LV_ALIGN_CENTER=0,LV_OBJ_FLAG_HIDDEN=1,pdTRUE=1;
 int lv_font_montserrat_20,lv_font_montserrat_28;
@@ -22,6 +23,9 @@ const char *lv_label_get_text(lv_obj_t*o){return o->text.c_str();}
 void lv_label_set_text(lv_obj_t*o,const char*s){o->text=s;++mutations;}
 void lv_obj_set_style_text_font(lv_obj_t*,int*,int){++styles;}
 void lv_obj_align(lv_obj_t*,int,int,int){++styles;}
+void lv_obj_set_x(lv_obj_t*o,int x){o->x=x;++styles;}
+void lv_obj_set_style_bg_color(lv_obj_t*,lv_color_t,int){++styles;}
+void lv_obj_set_style_border_color(lv_obj_t*,lv_color_t,int){++styles;}
 void lv_obj_add_flag(lv_obj_t*o,int f){if(!(o->flags&f))++mutations;o->flags|=f;}
 void lv_obj_remove_flag(lv_obj_t*o,int f){if(o->flags&f)++mutations;o->flags&=~f;}
 void lv_obj_add_state(lv_obj_t*o,int f){if(!(o->state&f))++mutations;o->state|=f;}
@@ -33,17 +37,22 @@ namespace pin_lock{bool locked(){return false;}uint32_t retry_seconds(){return 0
 struct Settings{int stale_ms=350;}settings;
 struct Sample{bool valid=true,filtered_valid=true;uint32_t at=1000;int mm=229;int stable_distance()const{return mm;}}sample;
 bool active=false,ready=true,manual_test_active=false,setup_mode=false,firmware_updating=false,history_saving=false;
-struct Control{const char*reason="Ready";bool ready(const Settings&,int)const{return tap::ready;}}control;
-int state_mutex=1,half_stop_mm=0;
+struct Control{const char*reason="Ready";bool pouring=false;bool ready(const Settings&,int)const{return tap::ready;}}control;
+int state_mutex=1,half_stop_mm=0,small_stop_mm=0;
+bool small_ok=false;
+enum class PourKind{Full,Half,Small};PourKind active_pour=PourKind::Full;
 bool half_ready(const Settings&,const Control&,const Sample&,int,int){return false;}
+bool small_ready(const Settings&,const Control&,const Sample&,int,int){return small_ok;}
 bool pouring_active(){return active;}
 const char*idle_status(const Settings&,const Sample&,uint32_t,bool ready,const char*){return ready?"Cup detected - Ready":"No cup detected";}
 }
 int xSemaphoreTake(int,int){return pdTRUE;}void xSemaphoreGive(int){}
 int64_t esp_timer_get_time(){return 1000000;}
-lv_obj_t btn,text,caption,foot,status,half_control,divider_control;
+lv_obj_t btn,text,caption,foot,status,half_control,divider_control,small_control,pill_control,dot_control;
 Split split_button{&half_control,&divider_control};
-lv_obj_t *auto_btn=&btn,*auto_text=&text,*auto_caption=&caption,*footer=&foot,*notice=&status;
+lv_obj_t *auto_btn=&btn,*auto_text=&text,*auto_caption=&caption,*footer=&foot,*notice=&status,*small_btn=&small_control,*pill=&pill_control,*pill_dot=&dot_control;
+constexpr int POUR_X_IDLE=8,POUR_X_CENTRED=45;
+void show_hidden(lv_obj_t*o,bool visible){if(visible)lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);}
 struct {lv_obj_t*root=nullptr,*message=nullptr;}pin_view;
 enum class PinMode{Unlock};
 void clear_pin_secrets(){}void show_pin(PinMode){}
@@ -53,11 +62,18 @@ struct {bool valid=true,online=true;}reading;
 void stable(){mutations=styles=0;for(int i=0;i<1000;++i)poll(nullptr);assert(mutations==0&&styles==0);}
 int main(){
  poll(nullptr);assert(text.text=="FULL\nPOUR"&&foot.text=="LiDAR: 229 mm");stable();
+ assert(btn.x==8&&!(small_control.flags&LV_OBJ_FLAG_HIDDEN)&&(small_control.state&LV_STATE_DISABLED)); // small cup needs its own level
+ tap::small_ok=true;poll(nullptr);assert(!(small_control.state&LV_STATE_DISABLED));stable();
  tap::active=true;poll(nullptr);assert(text.text=="EMERGENCY\nSTOP"&&status.text=="Touch anywhere to stop");stable();
+ assert(btn.x==45&&(small_control.flags&LV_OBJ_FLAG_HIDDEN)); // stop face centred, small cup hidden
+ tap::control.pouring=true;tap::active_pour=tap::PourKind::Small;poll(nullptr);assert(status.text=="Small cup - tap to stop");stable();
+ tap::active_pour=tap::PourKind::Half;poll(nullptr);assert(status.text=="1/2 pour - tap to stop");stable();
+ tap::control.pouring=false;poll(nullptr);assert(status.text=="Touch anywhere to stop");stable();
  tap::sample.mm=230;mutations=styles=0;poll(nullptr);assert(mutations==1&&styles==0&&foot.text=="LiDAR: 230 mm");
  tap::active=false;tap::ready=false;poll(nullptr);assert(text.text=="FULL\nPOUR"&&(btn.state&LV_STATE_DISABLED));stable();
+ assert(btn.x==8&&!(small_control.flags&LV_OBJ_FLAG_HIDDEN));
  tap::manual_test_active=true;poll(nullptr);assert(text.text=="EMERGENCY\nSTOP"&&!(btn.state&LV_STATE_DISABLED));stable();
- puts("PASS: actual UI poll has no unchanged text/font/alignment redraws at idle or pouring; LiDAR-only updates, disabled and manual-test transitions");
+ puts("PASS: actual UI poll: stop face centres and Small Cup hides while pouring, pour-type status, no unchanged text/font/alignment redraws at idle or pouring; LiDAR-only updates, disabled and manual-test transitions");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

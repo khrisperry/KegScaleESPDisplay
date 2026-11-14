@@ -21,9 +21,12 @@ extern bool manual_test_active;
 extern bool firmware_updating;
 extern bool update_closed;
 extern int servo_us;
-extern int half_stop_mm,active_stop_mm;
+extern int half_stop_mm,small_stop_mm,active_stop_mm;
+// Which automatic pour is running; read with state_mutex held (status display).
+enum class PourKind { Full, Half, Small };
+extern PourKind active_pour;
 struct Action {
-  enum Kind { START, TEST, CLOSE, START_HALF } kind;
+  enum Kind { START, TEST, CLOSE, START_HALF, START_SMALL } kind;
   int pulse;
   bool from_web = false; // Web control intentionally remains available when the physical tap is locked.
 };
@@ -31,7 +34,8 @@ void network_start();
 void start();
 bool busy();
 extern std::atomic<bool> touch_stop_armed;
-bool save_settings(const Settings &,int half_target=-1);
+// A negative target keeps the currently saved Half Pour / Small Cup level.
+bool save_settings(const Settings &,int half_target=-1,int small_target=-1);
 
 
 } // namespace tap

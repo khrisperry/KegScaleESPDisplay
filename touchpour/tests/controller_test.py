@@ -21,10 +21,11 @@ Control control,manual_hold;
 bool pouring_active(){return control.pouring||manual_hold.pouring;}
 std::atomic<bool> stop_requested{false},setup_mode{false},history_saving{false},touch_stop_armed{false};
 bool manual_test_active=false,firmware_updating=false,update_closed=false;
-int servo_us=1000,state_mutex=1,actions=1,half_stop_mm=0,active_stop_mm=80;
+int servo_us=1000,state_mutex=1,actions=1,half_stop_mm=0,small_stop_mm=0,active_stop_mm=80;
+enum class PourKind{Full,Half,Small};PourKind active_pour=PourKind::Full;
 constexpr int portMAX_DELAY=0,pdTRUE=1,CONFIG_TAP_BUTTON=7;
 const char *TAG="tap";
-struct Action{enum Kind{START,CLOSE,TEST,START_HALF}kind;int pulse;bool from_web=false;};
+struct Action{enum Kind{START,CLOSE,TEST,START_HALF,START_SMALL}kind;int pulse;bool from_web=false;};
 namespace pin_lock {bool value=false;bool locked(){return value;}}
 using gpio_num_t=int;
 uint32_t clock_ms=0,limit=0;
@@ -47,7 +48,7 @@ void xSemaphoreTake(int,int){}
 void xSemaphoreGive(int){}
 void xQueueReset(int){}
 int xQueueReceive(int,Action*a,int){
- if(((scenario>=18&&scenario<=21)||scenario==26||scenario>=27)&&clock_ms==1000){*a={scenario>=27?Action::START_HALF:Action::START,0,scenario!=18&&scenario!=26&&scenario!=31};return pdTRUE;}
+ if(((scenario>=18&&scenario<=21)||scenario==26||scenario>=27)&&clock_ms==1000){*a={scenario>=32?Action::START_SMALL:scenario>=27?Action::START_HALF:Action::START,0,scenario!=18&&scenario!=26&&scenario!=31&&scenario!=35};return pdTRUE;}
  if((scenario==22||scenario==23)&&clock_ms==1000){*a={Action::TEST,2000,scenario==23};return pdTRUE;}
  return 0;
 }
@@ -71,7 +72,7 @@ void vTaskDelay(int ms){
   }
   if(scenario==17&&clock_ms==1320){assert(touch_stop_armed);stop_requested=true;}
   if(scenario>=27 && clock_ms%100==0){
-    int mm=(scenario==29?150:(clock_ms>=1400?160:200));
+    int mm=(scenario==29||scenario==34?150:(scenario>=32?(clock_ms>=1400?180:220):(clock_ms>=1400?160:200)));
     sample={mm,11,true,clock_ms,clock_ms/100+1, float(mm),true};
   }
   if(scenario>=18 && scenario<27){
@@ -87,8 +88,8 @@ void vTaskDelay(int ms){
 '''+controller+r'''
 void run(int which,uint32_t until){
   scenario=which;clock_ms=0;limit=until;opens=closes=0;opened=closed=0;
-  half_stop_mm=(which>=27&&which!=28)?160:0;recorded_cutoff=0;
-  played.clear();pin_lock::value=which==18||which==19||(which>=22&&which<=25)||which==30||which==31;
+  half_stop_mm=(which>=27&&which!=28)?160:0;small_stop_mm=(which>=32&&which!=33)?180:0;recorded_cutoff=0;active_pour=PourKind::Full;
+  played.clear();pin_lock::value=which==18||which==19||(which>=22&&which<=25)||which==30||which==31||which==35;
   settings={};settings.servo_calibrated=settings.distance_calibrated=true;settings.closed_us=1000;settings.open_us=2500;
   control={};manual_hold={};sample={};servo_us=1000;stop_requested=false;
   if(which==5)settings.max_pour_ms=1000;
@@ -135,7 +136,13 @@ int main(){
   run(29,2000);assert(opens==0); // cup already above half target
   run(30,2000);assert(opens==1&&closed==1400); // locked physical tap still allows web half pour
   run(31,2000);assert(opens==0); // locked local half pour rejected
-  puts("PASS: separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
+  run(32,2000);assert(opens==1&&closed==1400&&!pouring_active()&&recorded_cutoff==180&&active_pour==PourKind::Small); // small-cup target selected and logged
+  assert(!strcmp(control.reason,"Fill target reached"));
+  run(33,2000);assert(opens==0); // missing small-cup calibration never falls back to full
+  run(34,2000);assert(opens==0); // cup already above small-cup level
+  run(35,2000);assert(opens==0); // locked local small-cup pour rejected
+  run(27,2000);assert(active_pour==PourKind::Half);
+  puts("PASS: small-cup target, calibration and lock rules; separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

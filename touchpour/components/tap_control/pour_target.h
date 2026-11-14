@@ -2,10 +2,17 @@
 #include "control.h"
 
 namespace tap {
-// A half-full surface is farther from the sensor than a full surface.
-// Zero means uncalibrated/disabled. Never infer volume from half the height.
-inline bool valid_half_target(const Settings &settings,int target){
+// Half Pour and Small Cup each have their own saved fill level. Both surfaces
+// sit farther from the sensor than the full-pour level. Zero means
+// uncalibrated/disabled. Never infer volume from a fraction of the height.
+inline bool valid_extra_target(const Settings &settings,int target){
   return target==0 || (target>settings.stop_mm && target<settings.max_mm);
+}
+inline bool valid_half_target(const Settings &settings,int target){
+  return valid_extra_target(settings,target);
+}
+inline bool valid_small_target(const Settings &settings,int target){
+  return valid_extra_target(settings,target);
 }
 inline bool target_ready(const Settings &settings,const Control &control,
                          const Sample &sample,uint32_t now,int target){
@@ -14,10 +21,18 @@ inline bool target_ready(const Settings &settings,const Control &control,
       uint32_t(now-sample.at)<=uint32_t(settings.stale_ms) &&
       sample.mm>target && sample.stable_distance()>target;
 }
+inline bool extra_ready(const Settings &settings,const Control &control,
+                        const Sample &sample,uint32_t now,int target){
+  return target!=0 && valid_extra_target(settings,target) &&
+      target_ready(settings,control,sample,now,target);
+}
 inline bool half_ready(const Settings &settings,const Control &control,
                        const Sample &sample,uint32_t now,int target){
-  return target!=0 && valid_half_target(settings,target) &&
-      target_ready(settings,control,sample,now,target);
+  return extra_ready(settings,control,sample,now,target);
+}
+inline bool small_ready(const Settings &settings,const Control &control,
+                        const Sample &sample,uint32_t now,int target){
+  return extra_ready(settings,control,sample,now,target);
 }
 // Runtime/diagnostic copy only. The saved full calibration and its binary
 // layout stay unchanged, including existing last-five-pour records.

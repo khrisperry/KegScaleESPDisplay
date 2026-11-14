@@ -9,8 +9,9 @@ static void flush(lv_display_t *d,const lv_area_t *,uint8_t *){lv_display_flush_
 static void submit(const char *pin){std::memcpy(received,pin,5);++submitted;pin_pad::destroy(view);}
 static void cancel(){++cancelled;pin_pad::destroy(view);}
 static lv_obj_t *find(const char *key){
-  for(unsigned i=3;i<lv_obj_get_child_count(view.root);++i){
+  for(unsigned i=0;i<lv_obj_get_child_count(view.root);++i){
     auto button=lv_obj_get_child(view.root,i);
+    if(!lv_obj_check_type(button,&lv_button_class))continue;
     if(!std::strcmp(lv_label_get_text(lv_obj_get_child(button,0)),key))return button;
   }return nullptr;
 }
@@ -20,7 +21,8 @@ int main(){
  lv_display_set_buffers(display,pixels,nullptr,sizeof(pixels),LV_DISPLAY_RENDER_MODE_DIRECT);lv_display_set_flush_cb(display,flush);
  pin_pad::create(view,lv_screen_active(),"Enter PIN to unlock",submit,nullptr);lv_refr_now(display);
  assert(!find(LV_SYMBOL_CLOSE)); // locked screen has no cancel/settings escape
- press("0");press("1");assert(!std::strcmp(lv_label_get_text(view.dots),"* * _ _"));
+ press("0");press("1");assert(view.length==2&&pin_pad::dot_filled(view,0)&&pin_pad::dot_filled(view,1)&&!pin_pad::dot_filled(view,2));
+ press(LV_SYMBOL_BACKSPACE);assert(pin_pad::dot_filled(view,0)&&!pin_pad::dot_filled(view,1));press("1");
  press(LV_SYMBOL_BACKSPACE);press("2");press("3");press("4");
  assert(submitted==1&&!std::strcmp(received,"0234")&&!view.root); // leading zero, safe deletion during event
  for(int i=0;i<10;++i){

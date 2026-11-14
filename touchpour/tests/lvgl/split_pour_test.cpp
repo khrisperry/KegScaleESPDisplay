@@ -2,12 +2,13 @@
 #include <cassert>
 #include <cstdio>
 static uint8_t pixels[240*40*2];
-static int full_count=0,half_count=0,flush_count=0;
+static int full_count=0,half_count=0,small_count=0,flush_count=0;
 static lv_point_t contact{120,165};static bool down=false;
 static void flush(lv_display_t*d,const lv_area_t*,uint8_t*){++flush_count;lv_display_flush_ready(d);}
 static void read(lv_indev_t*,lv_indev_data_t*data){data->point=contact;data->state=down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;}
 static void full(lv_event_t*){if(pour_button::half_at(108,contact.y))++half_count;else ++full_count;}
 static void half(lv_event_t*){++half_count;}
+static void small(lv_event_t*){++small_count;}
 int main(){
  lv_init();auto display=lv_display_create(240,320);lv_display_set_color_format(display,LV_COLOR_FORMAT_RGB565);
  lv_display_set_buffers(display,pixels,nullptr,sizeof(pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(display,flush);
@@ -20,6 +21,9 @@ int main(){
  auto input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_display(input,display);lv_indev_set_read_cb(input,read);
  auto click=[&](int y){contact.y=y;down=true;lv_tick_inc(50);lv_indev_read(input);down=false;lv_tick_inc(50);lv_indev_read(input);lv_refr_now(display);};
  click(165);assert(full_count==1&&half_count==0);
+ click(180);assert(full_count==2&&half_count==0); // just above the middle split: FULL
+ click(190);assert(full_count==2&&half_count==1); // just below the middle split: 1/2
+ full_count=1;half_count=0;
  click(235);assert(full_count==1&&half_count==1);
  click(255);assert(full_count==1&&half_count==2); // bottom rim belongs to half, never full
  lv_obj_add_state(split.half,LV_STATE_DISABLED);click(235);assert(full_count==1); // no full fallback
@@ -33,5 +37,10 @@ int main(){
   pour_button::split_state(split,true);pour_button::update(button,true);lv_refr_now(display);
   pour_button::split_state(split,false);pour_button::update(button,false);lv_refr_now(display);
  }
- lv_obj_delete(button);lv_deinit();puts("PASS: real pointer hit-testing for RGB565 partial rendering with bounded layer memory, 3/4 full, 1/4 half and bottom rim, no disabled-half fallback, unified emergency face");
+ // SMALL CUP: separate 66 px circle to the right; disabled never starts anything.
+ auto small_cup=pour_button::add_small(lv_screen_active(),small);lv_obj_set_pos(small_cup,166,162);lv_refr_now(display);
+ contact.x=199;click(195);assert(small_count==1);
+ lv_obj_add_state(small_cup,LV_STATE_DISABLED);lv_refr_now(display);click(195);assert(small_count==1&&full_count==2);
+ contact.x=120;
+ lv_obj_delete(small_cup);lv_obj_delete(button);lv_deinit();puts("PASS: real pointer hit-testing for RGB565 partial rendering with bounded layer memory, top-half full, bottom-half 1/2 and bottom rim, separate small cup, no disabled-half fallback, unified emergency face");
 }
