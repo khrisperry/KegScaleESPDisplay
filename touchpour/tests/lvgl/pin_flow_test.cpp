@@ -24,8 +24,9 @@ static void flush(lv_display_t*d,const lv_area_t*,uint8_t*){lv_display_flush_rea
 static void digits(const char *pin){
  for(unsigned n=0;n<4;++n){
   bool found=false;
-  for(unsigned i=3;i<lv_obj_get_child_count(pin_view.root);++i){
+  for(unsigned i=0;i<lv_obj_get_child_count(pin_view.root);++i){
    auto button=lv_obj_get_child(pin_view.root,i);
+   if(!lv_obj_check_type(button,&lv_button_class))continue;
    if(lv_label_get_text(lv_obj_get_child(button,0))[0]==pin[n]){
     lv_obj_send_event(button,LV_EVENT_CLICKED,nullptr);found=true;break;
    }

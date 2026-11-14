@@ -27,7 +27,8 @@ bool manual_test_active = false;
 bool firmware_updating = false;
 bool update_closed = false;
 int servo_us = 0;
-int half_stop_mm = 0, active_stop_mm = 0;
+int half_stop_mm = 0, small_stop_mm = 0, active_stop_mm = 0;
+PourKind active_pour = PourKind::Full;
 static_assert(CONFIG_TAP_SDA == 11 && CONFIG_TAP_SCL == 10 &&
               CONFIG_TAP_SERVO == 18 && CONFIG_TAP_BUTTON == 15,
               "TouchPour requires I2C 11/10, servo GPIO18, optional button GPIO15. Update menuconfig if using an older sdkconfig.");
@@ -41,14 +42,16 @@ bool busy() {
 }
 static const char *TAG = "tap";
 static uint32_t now_ms() { return esp_timer_get_time() / 1000; }
-bool save_settings(const Settings &c,int half_target) {
+bool save_settings(const Settings &c,int half_target,int small_target) {
   if(half_target<0)half_target=half_stop_mm;
-  if(!valid_settings(c)||!valid_half_target(c,half_target))return false;
+  if(small_target<0)small_target=small_stop_mm;
+  if(!valid_settings(c)||!valid_half_target(c,half_target)||!valid_small_target(c,small_target))return false;
   nvs_handle_t h;
   if (nvs_open("tap", NVS_READWRITE, &h) != ESP_OK)
     return false;
   esp_err_t e = nvs_set_blob(h, "settings", &c, sizeof(c));
   if (e == ESP_OK)e = nvs_set_i32(h,"half_stop_mm",half_target);
+  if (e == ESP_OK)e = nvs_set_i32(h,"small_stop_mm",small_target);
   if (e == ESP_OK)
     e = nvs_commit(h);
   nvs_close(h);
@@ -202,21 +205,27 @@ static void controller_task(void *) {
         web_operation=a.from_web;
         set_servo(a.pulse); manual_deadline = now + 2000;
         control.reason = "Servo test: closes after two seconds";
-      } else if ((a.kind == Action::START || a.kind == Action::START_HALF) &&
+      } else if ((a.kind == Action::START || a.kind == Action::START_HALF || a.kind == Action::START_SMALL) &&
                  !setup_mode && !manual_deadline && !history_saving && !pouring_active()) {
-        const bool half=a.kind==Action::START_HALF;
-        const int target=half?half_stop_mm:settings.stop_mm;
-        const bool eligible=half?half_ready(settings,control,sample,now,target):
-                                target_ready(settings,control,sample,now,target);
+        const PourKind kind=a.kind==Action::START_HALF?PourKind::Half:
+                            a.kind==Action::START_SMALL?PourKind::Small:PourKind::Full;
+        const int target=kind==PourKind::Half?half_stop_mm:
+                         kind==PourKind::Small?small_stop_mm:settings.stop_mm;
+        // Half and Small Cup share one rule: a saved, valid level the cup is still below.
+        const bool eligible=kind==PourKind::Full?target_ready(settings,control,sample,now,target):
+                                                 extra_ready(settings,control,sample,now,target);
         if(eligible){
           selected_settings=for_target(settings,target);
           if(control.start(selected_settings,now)){
-            if(half)control.reason="Half pour";
+            active_pour=kind;
+            if(kind==PourKind::Half)control.reason="Half pour";
+            else if(kind==PourKind::Small)control.reason="Small cup pour";
             button.cancelUntilRelease();manual_hold.reset_ready();
             web_operation=a.from_web;set_servo(settings.open_us);
           }
-        }else control.reason=half?"Half pour unavailable: calibrate target or cup already at half level":
-                                  "Start rejected: calibration or stable cup reading required";
+        }else control.reason=kind==PourKind::Half?"Half pour unavailable: calibrate target or cup already at half level":
+                             kind==PourKind::Small?"Small cup unavailable: calibrate target or cup already at small-cup level":
+                                                   "Start rejected: calibration or stable cup reading required";
       }
       if (event.short_press) button_event = control.pouring ? "SHORT PRESS STARTED" : "SHORT PRESS REJECTED";
     }
@@ -286,6 +295,8 @@ void start() {
       settings = loaded;
     int32_t half=0;
     if(nvs_get_i32(h,"half_stop_mm",&half)==ESP_OK && valid_half_target(settings,half))half_stop_mm=half;
+    int32_t small=0;
+    if(nvs_get_i32(h,"small_stop_mm",&small)==ESP_OK && valid_small_target(settings,small))small_stop_mm=small;
     nvs_close(h);
   }
   active_stop_mm=settings.stop_mm;
