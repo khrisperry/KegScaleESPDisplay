@@ -88,6 +88,64 @@ std::atomic<bool> wifi_ready{false};
 // Paired scales can go directly to the asynchronous WebSocket client; the
 // controller HTTP setup probe is only required while establishing pairing.
 constexpr int64_t kReconnectRetryUs = 10000000LL;
+/*
+ * V0.1.24: after an established session drops, try again in 2 s instead of
+ * 10 s. At the cottage on 2026-11-17 the scale dropped the TouchPour 19 times
+ * in 10.5 h after 13-30 s Wi-Fi stalls on the TouchPour's side; each drop
+ * then held the tap screen on "Disconnected" for 10 s or more.
+ */
+constexpr int64_t kSessionDropRetryUs = 2000000LL;
+
+/* V0.1.24 link diagnostics, reported in /api/status "link" (TouchPour). */
+struct LinkCounters {
+  std::atomic<uint32_t> ws_connected{0}, ws_dropped{0}, last_drop_s{0};
+  std::atomic<uint32_t> stale_reconnects{0}, handshake_timeouts{0};
+  std::atomic<uint32_t> heartbeat_failures{0}, max_heartbeat_gap_ms{0};
+  std::atomic<int64_t> last_heartbeat_us{0};
+};
+LinkCounters link_counters[2];
+std::atomic<uint32_t> wifi_disconnects{0}, wifi_last_reason{0},
+    wifi_last_disconnect_s{0}, max_loop_gap_ms{0};
+
+void note_max(std::atomic<uint32_t> &slot, uint32_t value) {
+  uint32_t previous = slot.load();
+  while (value > previous && !slot.compare_exchange_weak(previous, value)) {}
+}
+
+#ifdef TOUCHPOUR_FIRMWARE
+void write_link_diagnostics(cJSON *link) {
+  cJSON_AddNumberToObject(link, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+  cJSON_AddNumberToObject(link, "reset_reason", (double)esp_reset_reason());
+  cJSON_AddNumberToObject(link, "free_internal",
+      (double)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  cJSON_AddNumberToObject(link, "min_free_internal",
+      (double)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  wifi_ap_record_t ap = {};
+  const bool associated = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+  cJSON_AddBoolToObject(link, "wifi_associated", associated);
+  cJSON_AddNumberToObject(link, "wifi_rssi", associated ? ap.rssi : 0);
+  cJSON_AddNumberToObject(link, "wifi_channel", associated ? ap.primary : 0);
+  cJSON_AddNumberToObject(link, "wifi_disconnects", wifi_disconnects.load());
+  cJSON_AddNumberToObject(link, "wifi_last_reason", wifi_last_reason.load());
+  cJSON_AddNumberToObject(link, "wifi_last_disconnect_s", wifi_last_disconnect_s.load());
+  cJSON_AddNumberToObject(link, "max_loop_gap_ms", max_loop_gap_ms.load());
+  auto *scales = cJSON_AddArrayToObject(link, "scales");
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    const auto &k = link_counters[slot];
+    const auto &c = connection_for_const(slot);
+    auto *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "authenticated", c.authenticated);
+    cJSON_AddNumberToObject(o, "ws_connected", k.ws_connected.load());
+    cJSON_AddNumberToObject(o, "ws_dropped", k.ws_dropped.load());
+    cJSON_AddNumberToObject(o, "last_drop_s", k.last_drop_s.load());
+    cJSON_AddNumberToObject(o, "stale_reconnects", k.stale_reconnects.load());
+    cJSON_AddNumberToObject(o, "handshake_timeouts", k.handshake_timeouts.load());
+    cJSON_AddNumberToObject(o, "heartbeat_failures", k.heartbeat_failures.load());
+    cJSON_AddNumberToObject(o, "max_heartbeat_gap_ms", k.max_heartbeat_gap_ms.load());
+    cJSON_AddItemToArray(scales, o);
+  }
+}
+#endif
 /* Allow short transport delays without recycling healthy authenticated sockets. */
 constexpr int64_t kStateStaleUs = 24000000LL;
 constexpr int64_t kHandshakeTimeoutUs = 22000000LL;
@@ -151,6 +209,10 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
              settings.ssid);
   } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
     wifi_ready = false;
+    ++wifi_disconnects;
+    wifi_last_reason = event_data
+        ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0;
+    wifi_last_disconnect_s = (uint32_t)(esp_timer_get_time() / 1000000);
     fr_incident("display_wifi_disconnect", event_data ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0, 0);
     auto *d = static_cast<wifi_event_sta_disconnected_t *>(event_data);
     ESP_LOGW(TAG, "Wi-Fi disconnected from SSID='%s' reason=%u; reconnecting",
@@ -436,11 +498,15 @@ void on_frame(const Frame &f) {
   }
 
   if (f.kind == 2) {
-    ESP_LOGW(TAG, "Processing scale %u WebSocket disconnect; retry in 10 seconds",
-             (unsigned)(slot + 1));
+    const bool was_authenticated = c.authenticated;
+    ESP_LOGW(TAG, "Processing scale %u WebSocket disconnect; retry in %d seconds",
+             (unsigned)(slot + 1), was_authenticated ? 2 : 10);
+    ++link_counters[slot].ws_dropped;
+    link_counters[slot].last_drop_s = (uint32_t)(now() / 1000000);
     c.retry_connection = c.cancel_pairing_deadline_us == 0;
     c.cancel_pairing_deadline_us = 0;
-    c.next_connection_attempt = now() + kReconnectRetryUs;
+    c.next_connection_attempt =
+        now() + (was_authenticated ? kSessionDropRetryUs : kReconnectRetryUs);
     disconnected(slot);
     if (slot == active_scale_index && !scale_paired(slot))
       touchscreen_pairing_ended();
@@ -450,6 +516,7 @@ void on_frame(const Frame &f) {
   }
 
   if (f.kind == 1) {
+    ++link_counters[slot].ws_connected;
     ESP_LOGI(TAG,
              "Scale %u WebSocket connected; beginning protocol-1 handshake",
              (unsigned)(slot + 1));
@@ -1955,7 +2022,16 @@ extern "C" void touchscreen_app_main() {
   esp_ota_mark_app_valid_cancel_rollback();
   Frame f;
   Action a;
+#ifdef TOUCHPOUR_FIRMWARE
+  tap::set_link_diag_writer(write_link_diagnostics);
+#endif
+  int64_t previous_loop = now();
   for (;;) {
+    {
+      const int64_t loop_now = now();
+      note_max(max_loop_gap_ms, (uint32_t)((loop_now - previous_loop) / 1000));
+      previous_loop = loop_now;
+    }
     connection_diagnostic_tick();
     /*
      * Process a bounded frame batch, then give UI/actions a turn. A broken
@@ -2000,7 +2076,13 @@ extern "C" void touchscreen_app_main() {
           c.traffic_ready &&
           current_time - c.last_ping > 6000000) {
         c.last_ping = current_time;
-        if (!send_secure(slot, "{\"type\":\"ping\"}"))
+        const int64_t previous_heartbeat = link_counters[slot].last_heartbeat_us.load();
+        if (previous_heartbeat)
+          note_max(link_counters[slot].max_heartbeat_gap_ms,
+                   (uint32_t)((current_time - previous_heartbeat) / 1000));
+        link_counters[slot].last_heartbeat_us = current_time;
+        if (!send_secure(slot, "{\"type\":\"ping\"}") &&
+            (++link_counters[slot].heartbeat_failures, true))
           ESP_LOGW(TAG,
                    "Scale %u heartbeat send failed; reconnect scheduled",
                    (unsigned)(slot + 1));
@@ -2021,6 +2103,7 @@ extern "C" void touchscreen_app_main() {
         ESP_LOGW(TAG,
                  "Scale %u handshake exceeded 22 seconds; recycling transport",
                  (unsigned)(slot + 1));
+        ++link_counters[slot].handshake_timeouts;
         connect_scale(slot);
         continue;
       }
@@ -2029,6 +2112,7 @@ extern "C" void touchscreen_app_main() {
         ESP_LOGW(TAG,
                  "Scale %u reading stale for >24 seconds; reconnecting",
                  (unsigned)(slot + 1));
+        ++link_counters[slot].stale_reconnects;
         c.state.online = false;
         if (slot == active_scale_index) {
           ui_state(c.state);
