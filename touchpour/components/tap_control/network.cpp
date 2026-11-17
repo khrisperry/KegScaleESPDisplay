@@ -143,6 +143,8 @@ static void add_config(cJSON *j, const Settings &c) {
   cJSON_AddBoolToObject(j, "servo_calibrated", c.servo_calibrated);
   cJSON_AddBoolToObject(j, "distance_calibrated", c.distance_calibrated);
 }
+static std::atomic<LinkDiagWriter> link_diag_writer{nullptr};
+void set_link_diag_writer(LinkDiagWriter writer) { link_diag_writer.store(writer); }
 static esp_err_t status(httpd_req_t *r) {
   auto *j = cJSON_CreateObject();
   xSemaphoreTake(state_mutex, portMAX_DELAY);
@@ -211,6 +213,11 @@ static esp_err_t status(httpd_req_t *r) {
   char addr[20];
   snprintf(addr, sizeof(addr), IPSTR, IP2STR(&ip.ip));
   cJSON_AddStringToObject(j, "ip", addr);
+  if (auto writer = link_diag_writer.load()) {
+    auto *link = cJSON_CreateObject();
+    writer(link);
+    cJSON_AddItemToObject(j, "link", link);
+  }
   return json_reply(r, j);
 }
 static esp_err_t foam_action(httpd_req_t *r) {

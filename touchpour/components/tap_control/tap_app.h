@@ -6,6 +6,8 @@
 #include "freertos/semphr.h"
 #include <atomic>
 
+struct cJSON;
+
 namespace tap {
 extern Settings settings;
 extern Sample sample;
@@ -36,6 +38,10 @@ bool busy();
 extern std::atomic<bool> touch_stop_armed;
 // A negative target keeps the currently saved Half Pour / Small Cup level.
 bool save_settings(const Settings &,int half_target=-1,int small_target=-1);
+// V0.1.24: the application fills a "link" object in /api/status with Wi-Fi
+// and scale-connection counters (see touchscreen/main/main.cpp).
+using LinkDiagWriter = void (*)(::cJSON *link);
+void set_link_diag_writer(LinkDiagWriter writer);
 
 
 } // namespace tap
