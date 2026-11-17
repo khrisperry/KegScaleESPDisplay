@@ -24,6 +24,10 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_USE_MALLOC=y
+# V0.1.25: Wi-Fi and lwIP buffers in PSRAM. On V0.1.24 the cottage TouchPour
+# had 8-12 KB internal RAM free (minimum 5.7 KB within two minutes of boot),
+# which starves the Wi-Fi driver and matches its 13-30 s link stalls.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
 # ESP-IDF requires 64-byte D-cache lines when an ESP32-S3 RGB panel uses
 # PSRAM-backed framebuffers with a bounce buffer. Without this the RGB stream
