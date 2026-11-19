@@ -13,7 +13,7 @@ bool TwoWire::begin(int sda, int scl) {
   i2c_device_config_t d = {};
   d.dev_addr_length = I2C_ADDR_BIT_LEN_7;
   d.device_address = 0x29;
-  d.scl_speed_hz = 100000;
+  d.scl_speed_hz = 400000;
   return i2c_master_bus_add_device(bus, &d, &dev) == ESP_OK;
 }
 uint8_t TwoWire::endTransmission() {
@@ -31,3 +31,4 @@ size_t TwoWire::requestFrom(uint8_t, uint8_t n) {
     received = n;
   return received;
 }
+

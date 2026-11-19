@@ -4,6 +4,7 @@
 #include "pour_history.h"
 #include "serving_vessel.h"
 #include "pour_button.h"
+#include "grid_sensor.h"
 #include "audio.h"
 #include "pin_lock.h"
 #include "pin_pad.h"
@@ -32,6 +33,9 @@ int view = 0, page = 0;
 uint32_t generation = 1;
 bool pairing = false;
 bool pour_state_known=false, displayed_pouring=false;
+uint32_t press_started=0;
+bool screen_pressed=false,screen_long=false,screen_cancelled=false;
+void cancel_screen_hold(){screen_pressed=false;tap::screen_hold_down=false;}
 const uint32_t BG=0x101c26, CARD=0x203441, TEXT=0xf2f6f8;
 void show_home();
 void show_setup();
@@ -136,6 +140,7 @@ void change_view(lv_event_t *e) {
   (void)e;
 }
 void clear_page() {
+  cancel_screen_hold();
   ++generation;
   if(keyboard) { lv_obj_delete(keyboard); keyboard=nullptr; }
   lv_obj_clean(content); vessel={}; value=units=network_list=scale_list=ssid=password=host=nullptr;
@@ -239,7 +244,8 @@ void request_pour(bool half){
   if(tap::busy()){tap::stop_requested=true;return;}
   if(half){
     if(xSemaphoreTake(tap::state_mutex,pdMS_TO_TICKS(20))!=pdTRUE){message("Busy; try again");return;}
-    const bool ready=tap::half_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::half_stop_mm);
+    const auto runtime=tap::grid_settings(tap::settings);
+    const bool ready=tap::grid_ready(esp_timer_get_time()/1000,true) && tap::half_ready(runtime,tap::control,tap::sample,esp_timer_get_time()/1000,tap::grid_half_target(tap::half_stop_mm));
     const bool calibrated=tap::half_stop_mm!=0;
     xSemaphoreGive(tap::state_mutex);
     if(!ready){message(calibrated?"Half target reached or cup not ready":"Calibrate half pour on website");return;}
@@ -247,7 +253,20 @@ void request_pour(bool half){
   tap::Action action{half?tap::Action::START_HALF:tap::Action::START,0};
   if(xQueueSend(tap::actions,&action,0)!=pdTRUE)message("Busy; try again");
 }
+void screen_gesture(lv_event_t *e){
+  const auto code=lv_event_get_code(e);
+  if(code==LV_EVENT_PRESSED){
+    screen_cancelled=tap::touch_stop_armed.load() || page || pairing || tap::pin_lock::locked();
+    screen_long=false;screen_pressed=!screen_cancelled;
+    press_started=esp_timer_get_time()/1000;
+    tap::screen_hold_at=press_started;tap::screen_hold_down=screen_pressed;
+  }else if(code==LV_EVENT_RELEASED || code==LV_EVENT_PRESS_LOST){
+    if(code==LV_EVENT_PRESS_LOST)screen_cancelled=true;
+    cancel_screen_hold();
+  }
+}
 void auto_action(lv_event_t *){
+  if(screen_long || screen_cancelled)return;
   // Include the lower rim in the half-pour hit region, even if LVGL dispatches
   // a tap on a disabled half child to its parent. Never fall back to full pour.
   bool half=false;
@@ -269,16 +288,29 @@ void poll(lv_timer_t *) {
   if(pin_view.root)return;
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
   bool active=tap::pouring_active() || tap::manual_test_active;
-  bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
-  bool half_ready=tap::half_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::half_stop_mm);
+  const uint32_t now=esp_timer_get_time()/1000;
+  const auto runtime=tap::grid_settings(tap::settings);
+  bool ready=tap::grid_ready(now) && tap::control.ready(runtime,now);
+  bool half_ready=tap::grid_ready(now,true) && tap::half_ready(runtime,tap::control,tap::sample,now,tap::grid_half_target(tap::half_stop_mm));
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
-  const tap::Settings config=tap::settings;
+  const tap::Settings config=runtime;
+  const bool manual_available=tap::settings.servo_calibrated;
+  const bool grid=tap::grid_sensor_present;
+  const bool recognized=tap::grid_match.recognized && tap::grid_ready(now);
+  const int vessel_profile=tap::grid_match.profile;
+  const bool manual_active=tap::manual_hold.pouring;
+  if(screen_pressed && !screen_long && !blocked && !active &&
+     tap::screen_hold_down.load() && now-press_started>=2000){
+    screen_long=true;
+    tap::Action action{tap::Action::SCREEN_MANUAL,0};
+    if(xQueueSend(tap::actions,&action,0)!=pdTRUE){screen_cancelled=true;cancel_screen_hold();}
+  }
   const tap::Sample measurement=tap::sample;
   const uint32_t age=uint32_t(esp_timer_get_time()/1000)-measurement.at;
   const bool fresh=age<=uint32_t(tap::settings.stale_ms);
   const char *idle=tap::idle_status(config,measurement,uint32_t(esp_timer_get_time()/1000),ready,tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
-  if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
+  if(active || (!blocked && manual_available))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
   if(active || (!blocked && half_ready))lv_obj_remove_state(split_button.half,LV_STATE_DISABLED);else lv_obj_add_state(split_button.half,LV_STATE_DISABLED);
   // Fonts, alignment and visibility invalidate the button even when unchanged.
   // Keep the 50 ms safety/status poll, but repaint the face only on transitions.
@@ -295,8 +327,14 @@ void poll(lv_timer_t *) {
   else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid&&!fresh?"stale":"no reading");
   text_if_changed(footer,distance);
   if(!page && !pairing) {
-    if(active)message("Touch anywhere to stop");
-    else message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);
+    if(manual_active)message("Manual pour - release to close");
+    else if(active)message("Touch anywhere to stop");
+    else if(grid){
+      char info[80];
+      if(recognized && vessel_profile>=0)snprintf(info,sizeof(info),"%s - %s",tap::vessel_names[vessel_profile],ready?"Ready":"At target / hold 2s manual");
+      else snprintf(info,sizeof(info),"Unknown cup - hold 2s manual");
+      message(info);
+    }else message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);
   }
 }
 }
@@ -313,6 +351,9 @@ void ui_start(const Settings &s) {
   notice=label(root,"");lv_obj_set_pos(notice,8,243);lv_obj_set_size(notice,224,18);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(notice,LV_TEXT_ALIGN_CENTER,0);
   auto_btn=button(root,"FULL\nPOUR",auto_action);lv_obj_set_pos(auto_btn,45,108);lv_obj_set_size(auto_btn,150,150);auto_text=lv_obj_get_child(auto_btn,0);
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_PRESSED,nullptr);
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_RELEASED,nullptr);
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_PRESS_LOST,nullptr);
   pour_button::style(auto_btn);
   lv_obj_set_style_text_font(auto_text,&lv_font_montserrat_28,0);
   lv_obj_set_style_text_color(auto_text,lv_color_hex(TEXT),0);
@@ -348,3 +389,4 @@ void ui_update_installing(const char *){}
 void ui_update_progress(int){}
 void ui_update_complete(const char *){}
 void ui_update_error(const char *s,bool){ui_message(s);}
+
