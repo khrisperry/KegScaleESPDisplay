@@ -70,7 +70,7 @@ struct Done{};
 void vTaskDelay(int ms){
   clock_ms+=ms;
   if(scenario>=32){
-    if(scenario!=33)screen_hold_at=clock_ms;
+    if(scenario!=33 && !(scenario==38&&clock_ms>1200))screen_hold_at=clock_ms;
     if(scenario==32&&clock_ms>=1500)screen_hold_down=false;
     if(scenario==34&&clock_ms>=1500)stop_requested=true;
     if(scenario==36&&clock_ms>=1500)pin_lock::value=true;
@@ -159,6 +159,7 @@ int main(){
   run(35,2000);assert(opens==0); // screen manual needs servo calibration
   run(36,2000);assert(opens==1&&closed==1500&&!pouring_active()); // lock closes local manual
   run(37,2500);assert(opens==1&&closed==2000&&!pouring_active()); // max manual time
+  run(38,2000);assert(opens==1&&closed==1460&&!pouring_active()); // stale touch lease closes active manual pour
   puts("PASS: separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''

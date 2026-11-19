@@ -23,6 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash touchpour/tests/run_host_tests.sh
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test training website on desktop and mobile
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/touchpour-web" playwright
+          "$RUNNER_TEMP/touchpour-web/node_modules/.bin/playwright" install --with-deps chromium
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/touchpour-web/node_modules/playwright" node touchpour/tests/web_test.cjs
   build:
     runs-on: ubuntu-latest
     steps:

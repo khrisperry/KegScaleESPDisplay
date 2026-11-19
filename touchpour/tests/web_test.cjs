@@ -35,7 +35,7 @@ const server=http.createServer((q,r)=>{
   const shots=process.env.TOUCHPOUR_SCREENSHOTS;if(shots)fs.mkdirSync(shots,{recursive:true});
   for(const width of [1280,390]){
    await page.setViewportSize({width,height:900});
-   for(const group of ['servo','distance','advanced','wifi','history','foam','firmware']){
+   for(const group of ['servo','grid','distance','advanced','wifi','history','foam','firmware']){
     await page.locator('[data-group="'+group+'"]').click();
     assert(await page.locator('[data-panel="'+group+'"]').isVisible());
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Overflow '+width+' '+group);
@@ -43,6 +43,17 @@ const server=http.createServer((q,r)=>{
    }
   }
   await page.setViewportSize({width:1280,height:900});
+  state.grid={sensor_present:true,enabled:false,background_ready:false,fresh:true,recognized:false,profile:-1,score:0,stable_frames:0,mm:Array(64).fill(600),status:Array(64).fill(5),profiles:['Small cup','Large cup','Pitcher'].map(name=>({name,examples:0,full:false,half:false}))};
+  await page.locator('[data-group=grid]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('#gridPixels>div').length===64);
+  await page.locator('#gridProfile').selectOption('2');
+  await page.locator('[data-grid=empty]').click();
+  await page.waitForFunction(()=>document.getElementById('message').textContent==='Training saved.');
+  assert(requests.some(x=>x.url==='/api/grid/train'&&x.data.action==='empty'&&x.data.profile===2));
+  state.grid.profiles[2].examples=3;state.grid.enabled=true;state.grid.recognized=true;state.grid.profile=2;state.grid.score=95;
+  await page.waitForFunction(()=>document.getElementById('gridSummary').textContent.includes('Pitcher'));
+  assert((await page.locator('#gridProfiles').textContent()).includes('Pitcher: 3/8'));
+  delete state.grid;
   await page.locator('[data-group=distance]').click();
   const boxes=await page.locator('[data-panel=distance] input').evaluateAll(inputs=>inputs.map(i=>i.getBoundingClientRect().top));
   assert.equal(boxes[0],boxes[1]);assert.equal(boxes[2],boxes[3]);
@@ -78,3 +89,4 @@ const server=http.createServer((q,r)=>{
   console.log('PASS: real web UI desktop/mobile groups, no overflow, field alignment, idle status, stop, filtered capture, Wi-Fi/password, history escaping, correct S3 upload, pour lockouts');
  }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exit(1)});
+
