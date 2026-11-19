@@ -12,17 +12,17 @@ Mount the sensor looking down at the cup opening. The whole container outline mu
 
 ## Flash the test
 
-The GitHub Actions test artifact includes the application, bootloader, partition table, OTA metadata, flash arguments, full-flash image, and this guide. Test artifacts are retained for 90 days, covering Christmas 2026; download a local copy before then.
+The GitHub Actions test artifact includes the application, bootloader, partition table, OTA metadata, flash arguments, and this guide. Test artifacts are retained for 90 days, covering Christmas 2026; download a local copy before then.
 
 For an existing TouchPour device with the current partition table, use its website → Setup → Updates and upload **touchpour_display.bin**. Verify that the installed version reads **0.2.0-grid-test.1**. This is a manual upload only; the regular OTA feed is unchanged. Keep the normal firmware binary available to return to it.
 
 For USB on an ESP-IDF/esptool terminal, replace COM18 with the display's actual port:
 
 ```powershell
-python -m esptool --chip esp32s3 --port COM18 --baud 460800 write_flash 0x0 touchpour-grid-test-full.bin
+python -m esptool --chip esp32s3 --port COM18 --baud 460800 write_flash "@flash_args"
 ```
 
-Do not erase flash. Existing Wi-Fi, servo calibration, original single-zone fill settings, PIN and pour history remain in their original keys/partitions; grid training uses a separate versioned NVS blob. The full-flash file installs the same TouchPour partition layout. An application-only update is preferable when already installed.
+Run that command from the unpacked artifact directory. The supplied flash_args writes each component at its existing offset, leaving the NVS and pour-history gaps untouched. Do not erase flash. Existing Wi-Fi, servo calibration, original single-zone fill settings, PIN and pour history remain in their original keys/partitions; grid training uses a separate versioned NVS blob. An application-only update is preferable when already installed.
 
 Start with the tap linkage disconnected; verify closed/open commands before reconnecting. Test manual release/STOP with water before beer. No physical hardware validation has been performed during development.
 

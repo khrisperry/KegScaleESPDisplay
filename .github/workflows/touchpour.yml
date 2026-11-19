@@ -54,21 +54,11 @@ jobs:
           checksum = hashlib.sha256(binary.read_bytes()).hexdigest()
           package = pathlib.Path(os.environ['RUNNER_TEMP']) / 'touchpour-firmware'
           package.mkdir(parents=True, exist_ok=True)
-          for name in ('touchpour_display.bin', 'bootloader/bootloader.bin', 'partition_table/partition-table.bin', 'ota_data_initial.bin', 'flasher_args.json'):
+          for name in ('touchpour_display.bin', 'bootloader/bootloader.bin', 'partition_table/partition-table.bin', 'ota_data_initial.bin', 'flasher_args.json', 'flash_args'):
               destination = package / name
               destination.parent.mkdir(parents=True, exist_ok=True)
               shutil.copyfile(pathlib.Path('touchpour/build') / name, destination)
           shutil.copyfile('touchpour/docs/8X8_CHRISTMAS_TEST.md', package / 'TEST_GUIDE.md')
-          import json
-          flash = json.loads(pathlib.Path('touchpour/build/flasher_args.json').read_text())
-          image = bytearray()
-          for offset, filename in sorted(flash['flash_files'].items(), key=lambda item: int(item[0], 0)):
-              offset = int(offset, 0)
-              data = (pathlib.Path('touchpour/build') / filename).read_bytes()
-              if len(image) < offset + len(data):
-                  image.extend(b'\xff' * (offset + len(data) - len(image)))
-              image[offset:offset + len(data)] = data
-          (package / 'touchpour-grid-test-full.bin').write_bytes(image)
           sums = ''.join(f'{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(package)}\n' for f in sorted(package.rglob('*.bin')))
           (package / 'SHA256SUMS.txt').write_text(sums)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
