@@ -241,8 +241,6 @@ static esp_err_t foam_action(httpd_req_t *r) {
   if (!cJSON_IsString(a)) { cJSON_Delete(j); return error(r, "Action required"); }
   bool ok = false;
   uint32_t now = esp_timer_get_time() / 1000;
-  const Settings runtime=grid_settings(settings);
-  const int runtime_half=grid_half_target(half_stop_mm);
   xSemaphoreTake(state_mutex, portMAX_DELAY);
   if (!strcmp(a->valuestring, "start")) {
     auto f = foam_status(now);
