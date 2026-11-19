@@ -1,5 +1,5 @@
-idf_component_register(SRCS "wifi_settings.cpp" "app.cpp" "network.cpp" "foam_capture.cpp" "pour_history.cpp" "audio.cpp" "pin_lock.cpp" INCLUDE_DIRS "."
-    REQUIRES vl53l0x esp_driver_gpio esp_driver_ledc esp_driver_i2s esp_timer nvs_flash esp_wifi esp_netif esp_http_server cjson lwip app_update esp_partition mbedtls
+idf_component_register(SRCS "grid_sensor.cpp" "wifi_settings.cpp" "app.cpp" "network.cpp" "foam_capture.cpp" "pour_history.cpp" "audio.cpp" "pin_lock.cpp" INCLUDE_DIRS "."
+    REQUIRES vl53l7cx vl53l0x esp_driver_gpio esp_driver_ledc esp_driver_i2s esp_timer nvs_flash esp_wifi esp_netif esp_http_server cjson lwip app_update esp_partition mbedtls
     EMBED_TXTFILES "index.html")
 
 idf_build_get_property(idf_python PYTHON)
@@ -12,3 +12,4 @@ add_custom_command(OUTPUT "${gzip_page}"
     VERBATIM)
 add_custom_target(tap_web_gzip DEPENDS "${gzip_page}")
 target_add_binary_data(${COMPONENT_LIB} "${gzip_page}" BINARY DEPENDS tap_web_gzip)
+

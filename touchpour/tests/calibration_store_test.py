@@ -5,7 +5,7 @@ root=Path(__file__).resolve().parents[1]
 source=(root/'components/tap_control/app.cpp').read_text()
 save=source[source.index('bool save_settings('):source.index('static void set_servo(')]
 start=source[source.index('void start()'):]
-load=start[start.index('  nvs_handle_t h;'):start.index('  active_stop_mm=settings.stop_mm;')]
+load=start[start.index('  nvs_handle_t h;'):start.index('  grid_load();')]
 harness=r'''
 #include "pour_target.h"
 #include <cassert>
@@ -48,3 +48,4 @@ with tempfile.TemporaryDirectory() as directory:
  path=Path(directory);(path/'test.cpp').write_text(harness)
  subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-I',str(root/'components/tap_control'),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
  subprocess.run([str(path/'test')],check=True)
+

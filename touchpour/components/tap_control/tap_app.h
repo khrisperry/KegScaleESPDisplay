@@ -23,7 +23,7 @@ extern bool update_closed;
 extern int servo_us;
 extern int half_stop_mm,active_stop_mm;
 struct Action {
-  enum Kind { START, TEST, CLOSE, START_HALF } kind;
+  enum Kind { START, TEST, CLOSE, START_HALF, SCREEN_MANUAL } kind;
   int pulse;
   bool from_web = false; // Web control intentionally remains available when the physical tap is locked.
 };
@@ -31,7 +31,11 @@ void network_start();
 void start();
 bool busy();
 extern std::atomic<bool> touch_stop_armed;
+extern std::atomic<bool> screen_hold_down;
+extern std::atomic<uint32_t> screen_hold_at;
+
 bool save_settings(const Settings &,int half_target=-1);
 
 
 } // namespace tap
+

@@ -23,6 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash touchpour/tests/run_host_tests.sh
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test training website on desktop and mobile
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/touchpour-web" playwright
+          "$RUNNER_TEMP/touchpour-web/node_modules/.bin/playwright" install --with-deps chromium
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/touchpour-web/node_modules/playwright" node touchpour/tests/web_test.cjs
   build:
     runs-on: ubuntu-latest
     steps:
@@ -39,16 +49,18 @@ jobs:
           python - <<'PYTHON'
           import hashlib, os, pathlib, re, shutil
           project = pathlib.Path('touchpour/CMakeLists.txt').read_text()
-          version = re.search(r'set\(PROJECT_VER "([0-9.]+)"\)', project).group(1)
+          version = re.search(r'set\(PROJECT_VER "([^"]+)"\)', project).group(1)
           binary = pathlib.Path('touchpour/build/touchpour_display.bin')
           checksum = hashlib.sha256(binary.read_bytes()).hexdigest()
           package = pathlib.Path(os.environ['RUNNER_TEMP']) / 'touchpour-firmware'
           package.mkdir(parents=True, exist_ok=True)
-          for name in ('touchpour_display.bin', 'bootloader/bootloader.bin', 'partition_table/partition-table.bin', 'ota_data_initial.bin', 'flasher_args.json'):
+          for name in ('touchpour_display.bin', 'bootloader/bootloader.bin', 'partition_table/partition-table.bin', 'ota_data_initial.bin', 'flasher_args.json', 'flash_args'):
               destination = package / name
               destination.parent.mkdir(parents=True, exist_ok=True)
               shutil.copyfile(pathlib.Path('touchpour/build') / name, destination)
-          (package / 'SHA256SUMS.txt').write_text(f'{checksum}  touchpour_display.bin\n')
+          shutil.copyfile('touchpour/docs/8X8_CHRISTMAS_TEST.md', package / 'TEST_GUIDE.md')
+          sums = ''.join(f'{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(package)}\n' for f in sorted(package.rglob('*.bin')))
+          (package / 'SHA256SUMS.txt').write_text(sums)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'version={version}\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
@@ -56,7 +68,8 @@ jobs:
           PYTHON
       - uses: actions/upload-artifact@v4
         with:
-          retention-days: 14
+          retention-days: 90
           name: touchpour-esp32s3-v${{ steps.firmware.outputs.version }}
           if-no-files-found: error
           path: ${{ runner.temp }}/touchpour-firmware/
+

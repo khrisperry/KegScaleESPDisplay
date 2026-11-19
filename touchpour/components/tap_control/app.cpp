@@ -5,7 +5,7 @@
 #include "audio.h"
 #include "pin_lock.h"
 #include "distance_filter.h"
-#include "VL53L0X.h"
+#include "grid_sensor.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -72,47 +72,16 @@ static void set_servo(int us) {
   ESP_LOGI(TAG, "Servo PWM GPIO%d: %d us, 50 Hz, duty=%lu/16384",
            CONFIG_TAP_SERVO, us, (unsigned long)duty);
 }
-static void sensor_task(void *) {
-  VL53L0X lidar;
-  bool bus_ok = Wire.begin(CONFIG_TAP_SDA, CONFIG_TAP_SCL);
-  lidar.setTimeout(120);
-  bool initialized = false;
-  uint32_t seq = 0;
-  DistanceFilter filter;
-  for (;;) {
-    Wire.healthy = true;
-    int mm = 0;
-    if (!initialized) {
-      initialized = bus_ok && lidar.init() && Wire.healthy;
-      if (initialized) {
-        initialized = lidar.setMeasurementTimingBudget(50000);
-        lidar.startContinuous(100);
-        initialized &= Wire.healthy;
-      }
-    }
-    bool valid = false;
-    if (initialized) {
-      mm = lidar.readRangeContinuousMillimeters();
-      valid = Wire.healthy && !lidar.timeoutOccurred() &&
-              lidar.range_status == 11 && mm >= 20 && mm <= 2000;
-      if (!Wire.healthy)
-        initialized = false;
-    }
-    Sample s{mm, lidar.range_status, valid, now_ms(), ++seq};
-    xSemaphoreTake(state_mutex, portMAX_DELAY);
-    s.filtered_mm=filter.update(mm,valid,s.at,settings.stale_ms);
-    s.filtered_valid=valid;
-    sample = s;
-    xSemaphoreGive(state_mutex);
-    vTaskDelay(pdMS_TO_TICKS(initialized ? 20 : 1000));
-  }
-}
+std::atomic<bool> screen_hold_down{false};
+std::atomic<uint32_t> screen_hold_at{0};
 static void controller_task(void *) {
   bool initial_high = gpio_get_level((gpio_num_t)CONFIG_TAP_BUTTON);
   ButtonGesture button(initial_high, now_ms());
   SoundEvents sounds;
   uint32_t manual_deadline = 0;
   bool web_operation = false;
+  bool screen_manual=false;
+  int selected_profile=-1;
   Settings selected_settings=settings;
 
   ESP_LOGI(TAG, "Button GPIO%d: active-low, debounce=30 ms, tap starts on release, "
@@ -123,23 +92,33 @@ static void controller_task(void *) {
     xSemaphoreTake(state_mutex, portMAX_DELAY);
     uint32_t now = now_ms();
     bool was = pouring_active(), held_was = manual_hold.pouring;
+    const Settings runtime=grid_settings(settings);
+    const int runtime_half=grid_half_target(half_stop_mm);
+    // Screen ownership has a short lease renewed by healthy single-touch reads.
+    // A lost UI task, failed touch read or missing release therefore closes.
+    const bool screen_down=screen_hold_down.load() && uint32_t(now-screen_hold_at.load())<=250;
+    if(screen_manual && manual_hold.pouring && !screen_down){
+      manual_hold.stop("Manual fill: screen released");control.stop(manual_hold.reason);
+    }
+    if(control.pouring && grid_store.enabled &&
+       (!grid_ready(now) || grid_match.profile!=selected_profile))control.stop("Container recognition lost");
     auto event = button.update(raw_high, now, was || manual_deadline || setup_mode || firmware_updating || history_saving || pin_lock::locked());
     const char *button_event = event.pressed ? "PRESSED (release to start; hold for manual fill)"
                              : event.released ? "RELEASED" : nullptr;
     // Release of an active manual hold is acted on immediately, without waiting
     // for the release debounce. A bouncing release closes rather than reopening.
-    if (manual_hold.pouring && raw_high) {
+    if (manual_hold.pouring && !screen_manual && raw_high) {
       manual_hold.stop("Manual fill: button released");
       control.stop(manual_hold.reason);
       button.cancelUntilRelease();
       button_event = "HOLD RELEASED / CLOSE";
     }
     const bool startup_dropout_was=control.startup_dropout_used;
-    if (!manual_hold.pouring) control.update(control.pouring?selected_settings:settings, sample, now);
+    if (!manual_hold.pouring) control.update(control.pouring?selected_settings:runtime, sample, now);
     if(!startup_dropout_was && control.startup_dropout_used)
       ESP_LOGI(TAG,"One startup LiDAR no-return ignored: sequence=%lu; recovery required before %lu ms from opening",
                (unsigned long)sample.sequence,(unsigned long)Control::startup_recovery_ms);
-    bool cup_ready=control.ready(settings,now);
+    bool cup_ready=control.ready(runtime,now) && grid_ready(now);
     bool cup_absent=sample.valid && uint32_t(now-sample.at)<=uint32_t(settings.stale_ms) &&
                     (sample.stable_distance()>settings.max_mm || sample.mm>=settings.tray_mm-20);
     // The operator controls manual fill. LiDAR readings never authorize or
@@ -202,14 +181,20 @@ static void controller_task(void *) {
         web_operation=a.from_web;
         set_servo(a.pulse); manual_deadline = now + 2000;
         control.reason = "Servo test: closes after two seconds";
+      } else if(a.kind==Action::SCREEN_MANUAL && screen_down && !setup_mode &&
+                !manual_deadline && !history_saving && !pouring_active() && settings.servo_calibrated){
+        screen_manual=true;manual_hold.pouring=true;manual_hold.started=now;
+        manual_hold.reason="Manual fill: release screen to close (all LiDAR checks bypassed)";
+        control.stop(manual_hold.reason);web_operation=false;set_servo(settings.open_us);
       } else if ((a.kind == Action::START || a.kind == Action::START_HALF) &&
                  !setup_mode && !manual_deadline && !history_saving && !pouring_active()) {
         const bool half=a.kind==Action::START_HALF;
-        const int target=half?half_stop_mm:settings.stop_mm;
-        const bool eligible=half?half_ready(settings,control,sample,now,target):
-                                target_ready(settings,control,sample,now,target);
+        const int target=half?runtime_half:runtime.stop_mm;
+        const bool eligible=grid_ready(now,half) && (half?half_ready(runtime,control,sample,now,target):
+                                target_ready(runtime,control,sample,now,target));
         if(eligible){
-          selected_settings=for_target(settings,target);
+          selected_settings=for_target(runtime,target);
+          selected_profile=grid_match.profile;
           if(control.start(selected_settings,now)){
             if(half)control.reason="Half pour";
             button.cancelUntilRelease();manual_hold.reset_ready();
@@ -224,7 +209,7 @@ static void controller_task(void *) {
       bool accepted = !pin_lock::locked() && !setup_mode && !manual_deadline && !history_saving && !pouring_active() &&
                       settings.servo_calibrated;
       if (accepted) {
-        selected_settings=settings;
+        selected_settings=settings;screen_manual=false;
         manual_hold.pouring = true;
         manual_hold.started = now;
         manual_hold.reason = "Manual fill: release button to close (all LiDAR checks bypassed)";
@@ -242,10 +227,10 @@ static void controller_task(void *) {
     if(!pouring_active() && !manual_deadline)web_operation=false;
     manual_test_active = manual_deadline != 0;
     touch_stop_armed = pouring_active() || manual_test_active;
-    active_stop_mm=control.pouring?selected_settings.stop_mm:settings.stop_mm;
+    active_stop_mm=control.pouring?selected_settings.stop_mm:runtime.stop_mm;
     const Settings &observed=(!manual_hold.pouring && !held_was && (control.pouring||was))?selected_settings:settings;
     foam_observe(sample, observed, now_ms(), servo_us, pouring_active(),
-                 control.ready(settings, now) && !pouring_active() && !setup_mode && !manual_test_active,
+                 control.ready(runtime, now) && grid_ready(now) && !pouring_active() && !setup_mode && !manual_test_active,
                  manual_test_active, event.pressed || event.short_press || event.long_press,
                  manual_hold.pouring ? manual_hold.count : control.count,
                  manual_hold.pouring ? manual_hold.reason : control.reason, manual_hold.pouring);
@@ -288,6 +273,7 @@ void start() {
     if(nvs_get_i32(h,"half_stop_mm",&half)==ESP_OK && valid_half_target(settings,half))half_stop_mm=half;
     nvs_close(h);
   }
+  grid_load();
   active_stop_mm=settings.stop_mm;
   ledc_timer_config_t t = {};
   t.speed_mode = LEDC_LOW_SPEED_MODE;
@@ -315,10 +301,11 @@ void start() {
   audio_start();
   configASSERT(xTaskCreate(controller_task, "pour_control", 4096, nullptr, 8,
                            nullptr) == pdPASS);
-  configASSERT(xTaskCreate(sensor_task, "lidar", 4096, nullptr, 4, nullptr) ==
+  configASSERT(xTaskCreate(grid_sensor_task, "lidar", 8192, nullptr, 4, nullptr) ==
                pdPASS);
 
 }
 
 
 } // namespace tap
+

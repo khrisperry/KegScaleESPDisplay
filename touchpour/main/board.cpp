@@ -55,6 +55,8 @@ void read_touch(lv_indev_t *input, lv_indev_data_t *data) {
     }
   }
   const bool healthy = err == ESP_OK && count <= 5 && (!count || (x < 240 && y < 320));
+  tap::screen_hold_at = esp_timer_get_time()/1000;
+  if(!healthy || count!=1)tap::screen_hold_down=false;
   // Process STOP before passing the contact to LVGL, across the entire panel.
   if (emergency.update(healthy, count, tap::touch_stop_armed.load()))
     tap::stop_requested = true;
@@ -162,3 +164,4 @@ lv_display_t *touchpour_board_start() {
   lvgl_port_unlock();
   return display;
 }
+
