@@ -1,4 +1,6 @@
 #include "connection_transport.h"
+#include "flight_recorder.h"
+#include "esp_timer.h"
 
 #include "esp_log.h"
 #include "freertos/queue.h"
@@ -11,6 +13,19 @@ ScaleConnection connections[2];
 QueueHandle_t frames;
 QueueHandle_t retired_transports;
 TaskHandle_t transport_retirement_task_handle;
+std::atomic<uint32_t> queue_drops{0}, queue_high_water{0};
+bool enqueue_frame(const Frame &frame) {
+  bool ok = xQueueSend(frames, &frame, 0) == pdTRUE;
+  uint32_t depth = uxQueueMessagesWaiting(frames);
+  uint32_t previous = queue_high_water.load();
+  while (depth > previous && !queue_high_water.compare_exchange_weak(previous, depth)) {}
+  if (!ok) {
+    ++queue_drops;
+    fr_incident("display_queue_full", frame.generation, frame.slot);
+    fr_request_dump();
+  }
+  return ok;
+}
 
 struct RetiredTransport {
   esp_websocket_client_handle_t handle;
@@ -60,6 +75,23 @@ void connection_transport_init() {
   configASSERT(created == pdPASS);
 }
 
+void connection_diagnostic_tick() {
+  static int64_t last = 0, summary = 0;
+  int64_t current = esp_timer_get_time();
+  if (last && current-last > 500000) {
+    fr_event("display_consumer_stall", uxQueueMessagesWaiting(frames), (uint32_t)(current-last));
+    ESP_LOGW(TAG, "CONSUMER_STALL duration_ms=%lld queue=%u", (long long)((current-last)/1000), (unsigned)uxQueueMessagesWaiting(frames));
+  }
+  last = current;
+  if (current-summary >= 30000000) {
+    summary = current;
+    ESP_LOGI(TAG, "QUEUE_HEALTH depth=%u high_water=%lu dropped=%lu s1_auth=%u s2_auth=%u s1_rx_age_ms=%lld s2_rx_age_ms=%lld",
+      (unsigned)uxQueueMessagesWaiting(frames), (unsigned long)queue_high_water.load(),
+      (unsigned long)queue_drops.load(), connections[0].authenticated, connections[1].authenticated,
+      connections[0].last_state ? (long long)((current-connections[0].last_state)/1000) : -1LL,
+      connections[1].last_state ? (long long)((current-connections[1].last_state)/1000) : -1LL);
+  }
+}
 bool connection_receive_frame(Frame *frame, TickType_t timeout) {
   return frame && xQueueReceive(frames, frame, timeout) == pdTRUE;
 }
@@ -107,16 +139,21 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
   Frame f{};
   f.slot = slot;
   f.generation = event_generation;
+  if (event == WEBSOCKET_EVENT_CONNECTED || event == WEBSOCKET_EVENT_ERROR ||
+      event == WEBSOCKET_EVENT_DISCONNECTED)
+    fr_event("display_ws_event", (uint32_t)event, event_generation);
   if (event == WEBSOCKET_EVENT_CONNECTED) {
     ESP_LOGI(TAG, "Scale %u WebSocket transport connected to %s generation=%lu",
              (unsigned)(slot + 1), c.uri,
              (unsigned long)event_generation);
     f.kind = 1;
-    if (xQueueSend(frames, &f, 0) != pdTRUE)
+    if (!enqueue_frame(f))
       ESP_LOGW(TAG, "Frame queue full while reporting scale %u connection",
                (unsigned)(slot + 1));
   } else if (event == WEBSOCKET_EVENT_DISCONNECTED ||
              event == WEBSOCKET_EVENT_ERROR) {
+    fr_incident("display_ws_failure", (uint32_t)event, event_generation);
+    fr_request_dump();
     const bool is_error = event == WEBSOCKET_EVENT_ERROR;
     ESP_LOGW(TAG,
              "Scale %u WebSocket transport %s from %s generation=%lu%s",
@@ -130,7 +167,7 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
         c.disconnect_reported_generation.exchange(event_generation);
     if (already_reported != event_generation) {
       f.kind = 2;
-      if (xQueueSend(frames, &f, 0) != pdTRUE)
+      if (!enqueue_frame(f))
         ESP_LOGW(TAG,
                  "Frame queue full while reporting scale %u WebSocket %s",
                  (unsigned)(slot + 1),
@@ -167,7 +204,7 @@ void socket_event(void *arg, esp_event_base_t, int32_t event, void *data) {
                "Complete scale %u WebSocket message received: opcode=%d len=%u",
                (unsigned)(slot + 1), d->op_code,
                (unsigned)c.assembly.length);
-      if (xQueueSend(frames, &c.assembly, 0) != pdTRUE)
+      if (!enqueue_frame(c.assembly))
         ESP_LOGW(TAG, "Frame queue full; dropping scale %u WebSocket message",
                  (unsigned)(slot + 1));
     }

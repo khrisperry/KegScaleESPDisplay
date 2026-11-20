@@ -1,5 +1,5 @@
 dependencies:
-  idf: ">=6.0.1,<6.1"
+  idf: ">=6.0.1,<6.2"
   waveshare/esp32_s3_touch_lcd_4b: "2.0.0"
   lvgl/lvgl: "9.5.0"
   espressif/esp_websocket_client: "^1.8.0"

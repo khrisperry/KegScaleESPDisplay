@@ -5,7 +5,7 @@ set(sources main.cpp connection_transport.cpp connection_session.cpp
 list(TRANSFORM sources PREPEND "${shared}/")
 idf_component_register(SRCS ${sources} "app_task.cpp" "bsp43.c" "ota_disabled.cpp"
     INCLUDE_DIRS "." "${shared}"
-    REQUIRES esp_lcd esp_lcd_touch esp_lcd_touch_gt911 esp_lvgl_port
+    REQUIRES flight_recorder esp_lcd esp_lcd_touch esp_lcd_touch_gt911 esp_lvgl_port
       esp_driver_gpio esp_driver_i2c controller_link ble_client esp_wifi
       esp_netif esp_event nvs_flash esp_timer app_update esp_https_ota
       esp_http_client esp_websocket_client cjson mbedtls mdns lvgl)

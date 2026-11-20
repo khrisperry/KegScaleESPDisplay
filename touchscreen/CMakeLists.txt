@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-set(EXTRA_COMPONENT_DIRS "../components/ble_client")
+set(EXTRA_COMPONENT_DIRS "../components/flight_recorder" "../components/ble_client")
 include("${CMAKE_CURRENT_LIST_DIR}/lvgl_memory.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(keg_scale_touchscreen)

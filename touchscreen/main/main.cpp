@@ -1,4 +1,8 @@
 #include "app.h"
+#include "flight_recorder.h"
+#ifdef TOUCHPOUR_FIRMWARE
+#include "tap_control.h"
+#endif
 #include "ble_client.h"
 #include "cJSON.h"
 #include "controller_link.h"
@@ -147,6 +151,7 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
              settings.ssid);
   } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
     wifi_ready = false;
+    fr_incident("display_wifi_disconnect", event_data ? ((wifi_event_sta_disconnected_t *)event_data)->reason : 0, 0);
     auto *d = static_cast<wifi_event_sta_disconnected_t *>(event_data);
     ESP_LOGW(TAG, "Wi-Fi disconnected from SSID='%s' reason=%u; reconnecting",
              settings.ssid, d ? (unsigned)d->reason : 0U);
@@ -166,6 +171,7 @@ void wifi_event(void *, esp_event_base_t base, int32_t id, void *event_data) {
       ESP_LOGW(TAG, "Wi-Fi reconnect request failed: %s", esp_err_to_name(e));
   } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     wifi_ready = true;
+    fr_checkpoint("display_wifi_ip");
     ESP_LOGI(TAG, "Wi-Fi has an IP address; enabling both scale connections");
     for (uint8_t slot = 0; slot < 2; ++slot) {
       auto &c = connection_for(slot);
@@ -952,6 +958,9 @@ void discover_unpaired_scale_qr(uint8_t slot) {
 }
 
 void action(const Action &a) {
+#ifdef TOUCHPOUR_FIRMWARE
+  if (tap::busy()) { ui_message("Stop pouring before changing settings"); return; }
+#endif
   cJSON *o = cJSON_Parse(a.body);
 
   if (!strcmp(a.kind, "cancel_pairing")) {
@@ -1792,6 +1801,7 @@ static void touchscreen_apply_settings_live() {
     }
 
     wifi_ready = false;
+    fr_checkpoint("display_wifi_reconfigure");
     for (uint8_t i = 0; i < 2; ++i)
       stop_scale_transport(i, scale_host_const(i)[0]);
 
@@ -1836,6 +1846,7 @@ extern "C" void touchscreen_request_auto_discovery() {
 }
 
 extern "C" void touchscreen_app_main() {
+  ESP_ERROR_CHECK(fr_init());
   ESP_LOGI(TAG, "Starting Wi-Fi touchscreen firmware %s",
            esp_app_get_description()->version);
 #ifdef CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK
@@ -1898,7 +1909,11 @@ extern "C" void touchscreen_app_main() {
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   char hostname[32];
+  #ifdef TOUCHPOUR_FIRMWARE
+  snprintf(hostname, sizeof(hostname), "TouchPour-%02X%02X", mac[4], mac[5]);
+#else
   snprintf(hostname, sizeof(hostname), "KegTouch-%02X%02X", mac[4], mac[5]);
+#endif
   esp_netif_set_hostname(netif, hostname);
   ESP_LOGI(TAG, "Touchscreen network hostname: %s", hostname);
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -1930,6 +1945,9 @@ extern "C" void touchscreen_app_main() {
   } else {
     ESP_LOGW(TAG, "mDNS initialization failed: %s", esp_err_to_name(e));
   }
+#ifdef TOUCHPOUR_FIRMWARE
+  tap::network_start();
+#endif
   for (uint8_t slot = 0; slot < 2; ++slot)
     connect_scale(slot);
   /* Hardware/UI, NVS and networking initialized. An offline scale must not
@@ -1938,6 +1956,7 @@ extern "C" void touchscreen_app_main() {
   Frame f;
   Action a;
   for (;;) {
+    connection_diagnostic_tick();
     /*
      * Process a bounded frame batch, then give UI/actions a turn. A broken
      * Scale must not be able to starve Switch Scale or Setup actions by
@@ -1946,7 +1965,10 @@ extern "C" void touchscreen_app_main() {
     for (unsigned processed = 0; processed < 8; ++processed) {
       if (!connection_receive_frame(&f, 0))
         break;
+      int64_t frame_started = now();
       on_frame(f);
+      if (now()-frame_started > 100000)
+        fr_event("display_frame_slow", f.kind, (uint32_t)(now()-frame_started));
     }
 
     if (xQueueReceive(actions, &a, pdMS_TO_TICKS(30)) == pdTRUE)

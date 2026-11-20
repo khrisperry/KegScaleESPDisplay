@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='keg-connection-') as directory:
                 raise RuntimeError('Missing production type: ' + name)
             types.append(match[0])
     (tmp / 'connection_types.inc').write_text('\n'.join(types), encoding='utf-8')
-    transport_functions = helpers.functions(transport, ['socket_event'])
+    transport_functions = helpers.functions(transport, ['enqueue_frame', 'socket_event'])
     session_functions = helpers.functions(session, [
         'connection_session_reset', 'connection_session_send_secure',
         'connection_session_prepare_hello', 'connection_session_accept_handshake'

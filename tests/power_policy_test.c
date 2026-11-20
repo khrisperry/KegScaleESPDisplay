@@ -6,8 +6,8 @@ int main(void)
 {
     for (unsigned frequent = 0; frequent < 2; ++frequent) {
         assert(power_next_check_seconds(frequent, 0, 180, 3600) == (frequent ? 180 : 3600));
-        assert(power_next_check_seconds(frequent, 1, 180, 3600) == 300);
-        assert(power_next_check_seconds(frequent, 2, 180, 3600) == 900);
+        assert(power_next_check_seconds(frequent, 1, 180, 3600) == 60);
+        assert(power_next_check_seconds(frequent, 2, 180, 3600) == 180);
         for (unsigned failures = 3; failures < 256; ++failures)
             assert(power_next_check_seconds(frequent, failures, 180, 3600) == 3600);
     }
