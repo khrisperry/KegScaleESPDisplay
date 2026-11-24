@@ -62,7 +62,7 @@ the touchscreen on the scale web page. The scale supports one authorized
 Wi-Fi touchscreen; use a spare scale for an independent test, or expect
 to replace the existing touchscreen pairing. BLE e-paper pairing is separate.
 
-## Build locally (ESP-IDF v6.0.1)
+## Build locally (ESP-IDF v6.0.1 or v6.1)
 
 ```powershell
 cd touchscreen43
