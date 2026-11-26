@@ -4,6 +4,7 @@
 #include "pour_history.h"
 #include "serving_vessel.h"
 #include "pour_button.h"
+#include "grid_sensor.h"
 #include "audio.h"
 #include "pin_lock.h"
 #include "pin_pad.h"
@@ -34,11 +35,14 @@ lv_obj_t *ssid, *password, *host, *keyboard;
 int view = 0, page = 0;
 uint32_t generation = 1;
 bool pairing = false;
-bool pour_state_known=false, displayed_pouring=false;
+bool pour_state_known=false, displayed_pouring=false, displayed_manual=false;
 const uint32_t BG=0x0d1821, SURFACE=0x16252f, RAISED=0x1e3240, LINE=0x2a4252,
                TEXT=0xf2f6f8, MUTED=0x93a8b6, ACCENT=0x7fd0ff, DANGER=0xff8a90;
 // Pour button x positions: left of SMALL CUP when idle, centred while pouring.
 constexpr int POUR_X_IDLE=8, POUR_X_CENTRED=45, POUR_Y=120;
+uint32_t press_started=0;
+bool screen_pressed=false,screen_long=false,screen_cancelled=false;
+void cancel_screen_hold(){screen_pressed=false;tap::screen_hold_down=false;}
 void show_home();
 void show_setup();
 void message(const char *s);
@@ -185,6 +189,7 @@ void change_view(lv_event_t *e) {
   (void)e;
 }
 void clear_page() {
+  cancel_screen_hold();
   ++generation;
   if(keyboard) { lv_obj_delete(keyboard); keyboard=nullptr; }
   lv_obj_clean(content); vessel={};
@@ -210,7 +215,7 @@ void show_home() {
   lv_obj_set_style_bg_opa(content,LV_OPA_TRANSP,0);
   lv_obj_set_style_pad_all(content,0,0);
   lv_obj_set_pos(pill,8,278);
-  lv_obj_set_pos(auto_btn,displayed_pouring?POUR_X_CENTRED:POUR_X_IDLE,POUR_Y);lv_obj_set_size(auto_btn,150,150);
+  lv_obj_set_pos(auto_btn,displayed_pouring && !displayed_manual?POUR_X_CENTRED:POUR_X_IDLE,POUR_Y);lv_obj_set_size(auto_btn,150,150);
   lv_obj_set_scrollbar_mode(content,LV_SCROLLBAR_MODE_OFF);
   lv_obj_remove_flag(content,LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_layout(content,LV_LAYOUT_NONE);
@@ -426,12 +431,17 @@ void request_pour(tap::PourKind kind){
   if(kind!=tap::PourKind::Full){
     const bool half=kind==tap::PourKind::Half;
     if(xSemaphoreTake(tap::state_mutex,pdMS_TO_TICKS(20))!=pdTRUE){message("Busy; try again");return;}
-    const int target=half?tap::half_stop_mm:tap::small_stop_mm;
-    const bool ready=tap::extra_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,target);
+    const uint32_t now=esp_timer_get_time()/1000;
+    const auto runtime=tap::grid_settings(tap::settings);
+    // With the 8x8 sensor, Half uses the recognized profile's level and Small Cup
+    // is unavailable (train the Small-cup profile instead).
+    const int target=half?tap::grid_half_target(tap::half_stop_mm):tap::grid_small_target(tap::small_stop_mm);
+    const bool grid=tap::grid_store.enabled || tap::grid_sensor_present;
+    const bool ready=tap::grid_ready(now,half) && tap::extra_ready(runtime,tap::control,tap::sample,now,target);
     xSemaphoreGive(tap::state_mutex);
     if(!ready){
-      if(half)message(target?"Half level reached or cup not ready":"Set half level on website");
-      else message(target?"Small-cup level reached or not ready":"Set small-cup level on website");
+      if(half)message(target?"Half level reached or cup not ready":grid?"Cup not recognized or no half level":"Set half level on website");
+      else message(target?"Small-cup level reached or not ready":grid?"Use the 8x8 Small cup profile":"Set small-cup level on website");
       return;
     }
   }
@@ -439,7 +449,25 @@ void request_pour(tap::PourKind kind){
                      kind==tap::PourKind::Small?tap::Action::START_SMALL:tap::Action::START,0};
   if(xQueueSend(tap::actions,&action,0)!=pdTRUE)message("Busy; try again");
 }
+void screen_gesture(lv_event_t *e){
+  const auto code=lv_event_get_code(e);
+  if(code==LV_EVENT_PRESSED){
+    bool lower=false;
+    if(auto input=lv_indev_active()){
+      lv_point_t point;lv_indev_get_point(input,&point);
+      lv_area_t area;lv_obj_get_coords(auto_btn,&area);lower=pour_button::half_at(area.y1,point.y);
+    }
+    screen_cancelled=lower || tap::touch_stop_armed.load() || page || pairing || tap::pin_lock::locked();
+    screen_long=false;screen_pressed=!screen_cancelled;
+    press_started=esp_timer_get_time()/1000;
+    tap::screen_hold_at=press_started;tap::screen_hold_down=screen_pressed;
+  }else if(code==LV_EVENT_RELEASED || code==LV_EVENT_PRESS_LOST){
+    if(code==LV_EVENT_PRESS_LOST)screen_cancelled=true;
+    cancel_screen_hold();
+  }
+}
 void auto_action(lv_event_t *){
+  if(screen_long || screen_cancelled)return;
   // Include the lower rim in the half-pour hit region, even if LVGL dispatches
   // a tap on a disabled half child to its parent. Never fall back to full pour.
   bool half=false;
@@ -462,42 +490,63 @@ void poll(lv_timer_t *) {
   if(pin_view.root)return;
   if(xSemaphoreTake(tap::state_mutex,0)!=pdTRUE)return;
   bool active=tap::pouring_active() || tap::manual_test_active;
-  bool ready=tap::control.ready(tap::settings,esp_timer_get_time()/1000);
-  bool half_ready=tap::half_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::half_stop_mm);
-  bool small_ready=tap::small_ready(tap::settings,tap::control,tap::sample,esp_timer_get_time()/1000,tap::small_stop_mm);
+  const uint32_t now=esp_timer_get_time()/1000;
+  const auto runtime=tap::grid_settings(tap::settings);
+  bool ready=tap::grid_ready(now) && tap::control.ready(runtime,now);
+  bool half_ready=tap::grid_ready(now,true) && tap::half_ready(runtime,tap::control,tap::sample,now,tap::grid_half_target(tap::half_stop_mm));
+  bool small_ready=tap::grid_ready(now) && tap::small_ready(runtime,tap::control,tap::sample,now,tap::grid_small_target(tap::small_stop_mm));
   bool blocked=page || pairing || tap::setup_mode || tap::firmware_updating || tap::manual_test_active || tap::history_saving;
   const bool automatic=tap::control.pouring;
   const tap::PourKind kind=tap::active_pour;
-  const tap::Settings config=tap::settings;
+  const tap::Settings config=runtime;
+  const bool manual_available=tap::settings.servo_calibrated;
+  const bool grid=tap::grid_sensor_present;
+  const bool recognized=tap::grid_match.recognized && tap::grid_ready(now);
+  const int vessel_profile=tap::grid_match.profile;
+  const bool manual_active=tap::manual_hold.pouring;
+  if(screen_pressed && !screen_long && !blocked && !active &&
+     tap::screen_hold_down.load() && now-press_started>=2000){
+    screen_long=true;
+    tap::Action action{tap::Action::SCREEN_MANUAL,0};
+    if(xQueueSend(tap::actions,&action,0)!=pdTRUE){screen_cancelled=true;cancel_screen_hold();}
+  }
   const tap::Sample measurement=tap::sample;
   const uint32_t age=uint32_t(esp_timer_get_time()/1000)-measurement.at;
   const bool fresh=age<=uint32_t(tap::settings.stale_ms);
   const char *idle=tap::idle_status(config,measurement,uint32_t(esp_timer_get_time()/1000),ready,tap::control.reason);
   xSemaphoreGive(tap::state_mutex);
-  if(active || (!blocked && ready))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
+  if(active || (!blocked && manual_available))lv_obj_remove_state(auto_btn,LV_STATE_DISABLED);else lv_obj_add_state(auto_btn,LV_STATE_DISABLED);
   if(active || (!blocked && half_ready))lv_obj_remove_state(split_button.half,LV_STATE_DISABLED);else lv_obj_add_state(split_button.half,LV_STATE_DISABLED);
   if(!blocked && small_ready)lv_obj_remove_state(small_btn,LV_STATE_DISABLED);else lv_obj_add_state(small_btn,LV_STATE_DISABLED);
   // Fonts, alignment and visibility invalidate the button even when unchanged.
   // Keep the 50 ms safety/status poll, but repaint the face only on transitions.
   // While pouring the stop face is centred and SMALL CUP is hidden.
-  if(!pour_state_known || active!=displayed_pouring) {
-    lv_label_set_text(auto_text,active?"EMERGENCY\nSTOP":"FULL\nPOUR");
+  if(!pour_state_known || active!=displayed_pouring || manual_active!=displayed_manual) {
+    lv_label_set_text(auto_text,manual_active?"RELEASE\nTO STOP":active?"EMERGENCY\nSTOP":"FULL\nPOUR");
     lv_obj_align(auto_text,LV_ALIGN_CENTER,0,active?0:-28);
-    lv_obj_set_x(auto_btn,active?POUR_X_CENTRED:POUR_X_IDLE);
+    // A screen-hold pour keeps the button under the finger: moving it would
+    // drop the press (PRESS_LOST) and close the tap.
+    lv_obj_set_x(auto_btn,active && !manual_active?POUR_X_CENTRED:POUR_X_IDLE);
     show_hidden(small_btn,!active && !page);
     pour_button::split_state(split_button,active);
     pour_button::update(auto_btn,active);
-    displayed_pouring=active;pour_state_known=true;
+    displayed_pouring=active;displayed_manual=manual_active;pour_state_known=true;
   }
   char distance[48];
   if(measurement.valid && measurement.filtered_valid && fresh)snprintf(distance,sizeof(distance),"LiDAR: %d mm",measurement.stable_distance());
   else snprintf(distance,sizeof(distance),"LiDAR: %s",measurement.valid&&!fresh?"stale":"no reading");
   text_if_changed(footer,distance);
   if(!page && !pairing) {
-    if(active){set_tone(Tone::Pouring);message(automatic?pouring_text(kind):"Touch anywhere to stop");}
+    if(manual_active){set_tone(Tone::Pouring);message("Manual pour - release to close");}
+    else if(active){set_tone(Tone::Pouring);message(automatic?pouring_text(kind):"Touch anywhere to stop");}
     else{
       set_tone(!blocked && ready?Tone::Ready:Tone::Waiting);
-      message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);
+      if(grid){
+        char info[48];
+        if(recognized && vessel_profile>=0)snprintf(info,sizeof(info),"%s - %s",tap::vessel_names[vessel_profile],ready?"ready":"at target");
+        else snprintf(info,sizeof(info),"Unknown cup - hold 2s manual");
+        message(info);
+      }else message(ready&&reading.valid&&!reading.online?"Cup ready - Scale stale":idle);
     }
   }
 }
@@ -542,6 +591,10 @@ void ui_start(const Settings &s) {
   set_tone(Tone::Neutral);
   // Split FULL / 1/2 pour button and the separate SMALL CUP button.
   auto_btn=lv_button_create(root);auto_text=lv_label_create(auto_btn);lv_label_set_text(auto_text,"FULL\nPOUR");
+  // 8x8 test: hold the FULL POUR area for 2 s to pour by hand (LiDAR ignored).
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_PRESSED,nullptr);
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_RELEASED,nullptr);
+  lv_obj_add_event_cb(auto_btn,screen_gesture,LV_EVENT_PRESS_LOST,nullptr);
   pour_button::style(auto_btn);
   lv_obj_set_pos(auto_btn,POUR_X_IDLE,POUR_Y);lv_obj_set_size(auto_btn,150,150);
   lv_obj_add_event_cb(auto_btn,auto_action,LV_EVENT_CLICKED,nullptr);
@@ -582,3 +635,4 @@ void ui_update_installing(const char *){}
 void ui_update_progress(int){}
 void ui_update_complete(const char *){}
 void ui_update_error(const char *s,bool){ui_message(s);}
+

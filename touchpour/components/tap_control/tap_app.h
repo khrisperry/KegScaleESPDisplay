@@ -28,7 +28,7 @@ extern int half_stop_mm,small_stop_mm,active_stop_mm;
 enum class PourKind { Full, Half, Small };
 extern PourKind active_pour;
 struct Action {
-  enum Kind { START, TEST, CLOSE, START_HALF, START_SMALL } kind;
+  enum Kind { START, TEST, CLOSE, START_HALF, START_SMALL, SCREEN_MANUAL } kind;
   int pulse;
   bool from_web = false; // Web control intentionally remains available when the physical tap is locked.
 };
@@ -36,6 +36,9 @@ void network_start();
 void start();
 bool busy();
 extern std::atomic<bool> touch_stop_armed;
+extern std::atomic<bool> screen_hold_down;
+extern std::atomic<uint32_t> screen_hold_at;
+
 // A negative target keeps the currently saved Half Pour / Small Cup level.
 bool save_settings(const Settings &,int half_target=-1,int small_target=-1);
 // V0.1.24: the application fills a "link" object in /api/status with Wi-Fi
@@ -45,3 +48,4 @@ void set_link_diag_writer(LinkDiagWriter writer);
 
 
 } // namespace tap
+

@@ -9,6 +9,7 @@ harness=r'''
 #include "button_gesture.h"
 #include "audio_events.h"
 #include "pour_target.h"
+#include "grid_model.h"
 using namespace tap;
 #include <atomic>
 #include <cassert>
@@ -18,6 +19,14 @@ using namespace tap;
 Settings settings;
 Sample sample;
 Control control,manual_hold;
+GridStore grid_store;GridMatch grid_match;
+bool recognition_ok=true;
+bool grid_ready(uint32_t,bool=false){return !grid_store.enabled||recognition_ok;}
+Settings grid_settings(const Settings &s){return s;}
+int grid_half_target(int t){return t;}
+int grid_small_target(int t){return t;}
+std::atomic<bool> screen_hold_down{false};
+std::atomic<uint32_t> screen_hold_at{0};
 bool pouring_active(){return control.pouring||manual_hold.pouring;}
 std::atomic<bool> stop_requested{false},setup_mode{false},history_saving{false},touch_stop_armed{false};
 bool manual_test_active=false,firmware_updating=false,update_closed=false;
@@ -25,7 +34,7 @@ int servo_us=1000,state_mutex=1,actions=1,half_stop_mm=0,small_stop_mm=0,active_
 enum class PourKind{Full,Half,Small};PourKind active_pour=PourKind::Full;
 constexpr int portMAX_DELAY=0,pdTRUE=1,CONFIG_TAP_BUTTON=7;
 const char *TAG="tap";
-struct Action{enum Kind{START,CLOSE,TEST,START_HALF,START_SMALL}kind;int pulse;bool from_web=false;};
+struct Action{enum Kind{START,CLOSE,TEST,START_HALF,START_SMALL,SCREEN_MANUAL}kind;int pulse;bool from_web=false;};
 namespace pin_lock {bool value=false;bool locked(){return value;}}
 using gpio_num_t=int;
 uint32_t clock_ms=0,limit=0;
@@ -48,7 +57,8 @@ void xSemaphoreTake(int,int){}
 void xSemaphoreGive(int){}
 void xQueueReset(int){}
 int xQueueReceive(int,Action*a,int){
- if(((scenario>=18&&scenario<=21)||scenario==26||scenario>=27)&&clock_ms==1000){*a={scenario>=32?Action::START_SMALL:scenario>=27?Action::START_HALF:Action::START,0,scenario!=18&&scenario!=26&&scenario!=31&&scenario!=35};return pdTRUE;}
+ if(scenario>=40 && clock_ms==1000){*a={Action::SCREEN_MANUAL,0,false};return pdTRUE;}
+ if(((scenario>=18&&scenario<=21)||scenario==26||(scenario>=27&&scenario<40))&&clock_ms==1000){*a={scenario>=32?Action::START_SMALL:scenario>=27?Action::START_HALF:Action::START,0,scenario!=18&&scenario!=26&&scenario!=31&&scenario!=35};return pdTRUE;}
  if((scenario==22||scenario==23)&&clock_ms==1000){*a={Action::TEST,2000,scenario==23};return pdTRUE;}
  return 0;
 }
@@ -61,6 +71,12 @@ template<class... T> void log(const char*,const char*,T...){}
 struct Done{};
 void vTaskDelay(int ms){
   clock_ms+=ms;
+  if(scenario>=40){
+    if(scenario!=41 && !(scenario==46&&clock_ms>1200))screen_hold_at=clock_ms;
+    if(scenario==40&&clock_ms>=1500)screen_hold_down=false;
+    if(scenario==42&&clock_ms>=1500)stop_requested=true;
+    if(scenario==44&&clock_ms>=1500)pin_lock::value=true;
+  }
   if(clock_ms>=limit)throw Done{};
   if(clock_ms%100==0 && !(scenario==8&&clock_ms>500)){int mm=scenario==12?600:scenario>=10?200:scenario==0?(clock_ms>=1800?75:200):scenario==7?(clock_ms%200==0?20:1900):60;bool valid=!(scenario==2&&clock_ms>=3300)&&scenario!=6;sample={mm,valid?11:-1,valid,clock_ms,clock_ms/100+1};}
   if(scenario>=13 && scenario<=17 && clock_ms%100==0) {
@@ -72,7 +88,7 @@ void vTaskDelay(int ms){
   }
   if(scenario==17&&clock_ms==1320){assert(touch_stop_armed);stop_requested=true;}
   if(scenario>=27 && clock_ms%100==0){
-    int mm=(scenario==29||scenario==34?150:(scenario>=32?(clock_ms>=1400?180:220):(clock_ms>=1400?160:200)));
+    int mm=(scenario==29||scenario==34?150:(scenario>=32&&scenario<40?(clock_ms>=1400?180:220):(clock_ms>=1400?160:200)));
     sample={mm,11,true,clock_ms,clock_ms/100+1, float(mm),true};
   }
   if(scenario>=18 && scenario<27){
@@ -87,14 +103,17 @@ void vTaskDelay(int ms){
 }
 '''+controller+r'''
 void run(int which,uint32_t until){
-  scenario=which;clock_ms=0;limit=until;opens=closes=0;opened=closed=0;
-  half_stop_mm=(which>=27&&which!=28)?160:0;small_stop_mm=(which>=32&&which!=33)?180:0;recorded_cutoff=0;active_pour=PourKind::Full;
+  scenario=which;grid_store={};grid_match={};recognition_ok=true;
+  screen_hold_down=which>=40;screen_hold_at=0;
+  clock_ms=0;limit=until;opens=closes=0;opened=closed=0;
+  half_stop_mm=(which>=27&&which!=28)?160:0;small_stop_mm=(which>=32&&which<40&&which!=33)?180:0;recorded_cutoff=0;active_pour=PourKind::Full;
   played.clear();pin_lock::value=which==18||which==19||(which>=22&&which<=25)||which==30||which==31||which==35;
   settings={};settings.servo_calibrated=settings.distance_calibrated=true;settings.closed_us=1000;settings.open_us=2500;
   control={};manual_hold={};sample={};servo_us=1000;stop_requested=false;
   if(which==5)settings.max_pour_ms=1000;
   if(which==6)settings.distance_calibrated=false;
-  if(which==9)settings.servo_calibrated=false;
+  if(which==9||which==43)settings.servo_calibrated=false;
+  if(which==45)settings.max_pour_ms=1000;
   try{controller_task(nullptr);}catch(Done&){}
 }
 int main(){
@@ -142,10 +161,18 @@ int main(){
   run(34,2000);assert(opens==0); // cup already above small-cup level
   run(35,2000);assert(opens==0); // locked local small-cup pour rejected
   run(27,2000);assert(active_pour==PourKind::Half);
-  puts("PASS: small-cup target, calibration and lock rules; separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
+  run(40,2000);assert(opens==1&&closed==1500&&!pouring_active()); // screen release closes
+  run(41,2000);assert(opens==0); // expired touch lease rejects queued manual start
+  run(42,2000);assert(opens==1&&closed==1500&&!pouring_active()); // STOP cannot reopen held screen
+  run(43,2000);assert(opens==0); // screen manual needs servo calibration
+  run(44,2000);assert(opens==1&&closed==1500&&!pouring_active()); // lock closes local manual
+  run(45,2500);assert(opens==1&&closed==2000&&!pouring_active()); // max manual time
+  run(46,2000);assert(opens==1&&closed==1460&&!pouring_active()); // stale touch lease closes active manual pour
+  puts("PASS: screen 2 s manual hold release/lease/STOP/lock/servo/max-time rules; small-cup target, calibration and lock rules; separate half/full targets and history cutoff; PIN lock blocks physical/local starts and tests, preserves web control and STOP; startup sentinel recovery in actual controller, repeated fault/raw safety/touch closure; emergency touch closes actual controller, clears armed state, allows a fresh later press;  real controller tap/cutoff, manual hold ignores invalid/stale/missing/cup/jump readings and distance calibration, immediate release, STOP lockout, held-at-boot, servo calibration and maximum time");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
     d=pathlib.Path(directory);(d/'test.cpp').write_text(harness)
     subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-I',str(root/'components/tap_control'),str(d/'test.cpp'),'-o',str(d/'test')],check=True)
     subprocess.run([str(d/'test')],check=True)
+

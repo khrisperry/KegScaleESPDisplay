@@ -13,6 +13,7 @@ harness = r'''
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <atomic>
 int mutations=0, styles=0;
 struct lv_obj_t {std::string text;int state=0,flags=0,x=0;};
 struct lv_color_t {unsigned v;};lv_color_t lv_color_hex(unsigned v){return {v};}
@@ -34,11 +35,21 @@ struct Split{lv_obj_t*half=nullptr,*divider=nullptr;};
 namespace pour_button {void split_state(const Split&,bool){} void update(lv_obj_t*,bool){++styles;}}
 namespace tap {
 namespace pin_lock{bool locked(){return false;}uint32_t retry_seconds(){return 0;}}
-struct Settings{int stale_ms=350;}settings;
+struct Settings{int stale_ms=350;bool servo_calibrated=false;}settings;
 struct Sample{bool valid=true,filtered_valid=true;uint32_t at=1000;int mm=229;int stable_distance()const{return mm;}}sample;
 bool active=false,ready=true,manual_test_active=false,setup_mode=false,firmware_updating=false,history_saving=false;
 struct Control{const char*reason="Ready";bool pouring=false;bool ready(const Settings&,int)const{return tap::ready;}}control;
-int state_mutex=1,half_stop_mm=0,small_stop_mm=0;
+struct {bool pouring=false;} manual_hold;
+struct {bool recognized=false;int profile=-1;} grid_match;
+bool grid_sensor_present=false;
+Settings grid_settings(Settings s){return s;}
+bool grid_ready(uint32_t,bool=false){return true;}
+int grid_small_target(int t){return t;}
+int grid_half_target(int t){return t;}
+const char *vessel_names[]={"Small cup","Large cup","Pitcher"};
+std::atomic<bool> screen_hold_down{false};
+struct Action{enum Kind{SCREEN_MANUAL}kind;int pulse;};
+int state_mutex=1,half_stop_mm=0,small_stop_mm=0,actions=1;
 bool small_ok=false;
 enum class PourKind{Full,Half,Small};PourKind active_pour=PourKind::Full;
 bool half_ready(const Settings&,const Control&,const Sample&,int,int){return false;}
@@ -46,6 +57,9 @@ bool small_ready(const Settings&,const Control&,const Sample&,int,int){return sm
 bool pouring_active(){return active;}
 const char*idle_status(const Settings&,const Sample&,uint32_t,bool ready,const char*){return ready?"Cup detected - Ready":"No cup detected";}
 }
+bool screen_pressed=false,screen_long=false,screen_cancelled=false;uint32_t press_started=0;
+void cancel_screen_hold(){}
+int xQueueSend(int,tap::Action*,int){return 1;}
 int xSemaphoreTake(int,int){return pdTRUE;}void xSemaphoreGive(int){}
 int64_t esp_timer_get_time(){return 1000000;}
 lv_obj_t btn,text,caption,foot,status,half_control,divider_control,small_control,pill_control,dot_control;
@@ -56,7 +70,7 @@ void show_hidden(lv_obj_t*o,bool visible){if(visible)lv_obj_remove_flag(o,LV_OBJ
 struct {lv_obj_t*root=nullptr,*message=nullptr;}pin_view;
 enum class PinMode{Unlock};
 void clear_pin_secrets(){}void show_pin(PinMode){}
-int page=0;bool pairing=false,pour_state_known=false,displayed_pouring=false;
+int page=0;bool pairing=false,pour_state_known=false,displayed_pouring=false,displayed_manual=false;
 struct {bool valid=true,online=true;}reading;
 '''+helpers+poll+r'''
 void stable(){mutations=styles=0;for(int i=0;i<1000;++i)poll(nullptr);assert(mutations==0&&styles==0);}
@@ -81,3 +95,4 @@ with tempfile.TemporaryDirectory() as directory:
     (path / 'test.cpp').write_text(harness)
     subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', str(path/'test.cpp'), '-o', str(path/'test')],check=True)
     subprocess.run([str(path/'test')],check=True)
+

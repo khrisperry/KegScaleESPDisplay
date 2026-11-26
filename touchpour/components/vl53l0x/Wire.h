@@ -9,6 +9,7 @@ class TwoWire {
   size_t used = 0, pos = 0, received = 0;
 
 public:
+  i2c_master_dev_handle_t native_device() const { return dev; }
   bool healthy = true;
   bool begin(int sda, int scl);
   void beginTransmission(uint8_t) { used = 0; }
@@ -25,3 +26,4 @@ public:
   int read() { return pos < received ? rx[pos++] : 255; }
 };
 extern TwoWire Wire;
+

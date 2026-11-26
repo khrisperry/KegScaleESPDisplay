@@ -1,6 +1,7 @@
 #include "tap_app.h"
 #include "pin_lock.h"
 #include "foam_capture.h"
+#include "grid_sensor.h"
 #include "pour_history.h"
 #include "cJSON.h"
 #include "esp_event.h"
@@ -149,6 +150,8 @@ static esp_err_t status(httpd_req_t *r) {
   auto *j = cJSON_CreateObject();
   xSemaphoreTake(state_mutex, portMAX_DELAY);
   uint32_t now = esp_timer_get_time() / 1000;
+  const Settings runtime=grid_settings(settings);
+  const int runtime_half=grid_half_target(half_stop_mm);
   cJSON_AddStringToObject(j, "version", esp_app_get_description()->version);
   cJSON_AddStringToObject(j, "hostname", device_hostname);
   cJSON_AddStringToObject(j, "build", esp_app_get_description()->idf_ver);
@@ -157,7 +160,7 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddNumberToObject(j, "ota_max_bytes", next ? next->size : 0);
   cJSON_AddStringToObject(j, "state",
                           firmware_updating ? "UPDATING" : manual_hold.pouring ? "MANUAL HOLD" : pouring_active() ? "POURING"
-                          : control.ready(settings, now) && !setup_mode &&
+                          : (control.ready(runtime, now) && grid_ready(now)) && !setup_mode &&
                                   !manual_test_active && !firmware_updating && !history_saving
                               ? "READY"
                               : "IDLE");
@@ -165,7 +168,7 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddBoolToObject(j, "pouring", pouring_active());
   cJSON_AddBoolToObject(j, "manual_hold", manual_hold.pouring);
   cJSON_AddBoolToObject(j, "ready",
-                        control.ready(settings, now) && !setup_mode &&
+                        (control.ready(runtime, now) && grid_ready(now)) && !setup_mode &&
                             !manual_test_active && !firmware_updating && !history_saving && !pouring_active());
   cJSON_AddNumberToObject(j, "distance_mm", sample.stable_distance());
   cJSON_AddNumberToObject(j, "raw_distance_mm", sample.mm);
@@ -179,9 +182,9 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddNumberToObject(j, "stable_samples", manual_hold.pouring ? manual_hold.count : control.count);
   cJSON_AddNumberToObject(j, "servo_us", servo_us);
   cJSON_AddNumberToObject(j,"active_cutoff_mm",active_stop_mm);
-  cJSON_AddBoolToObject(j,"half_ready",half_ready(settings,control,sample,now,half_stop_mm) &&
+  cJSON_AddBoolToObject(j,"half_ready",(grid_ready(now,true) && half_ready(runtime,control,sample,now,runtime_half)) &&
       !setup_mode && !manual_test_active && !firmware_updating && !history_saving && !pouring_active());
-  cJSON_AddBoolToObject(j,"small_ready",small_ready(settings,control,sample,now,small_stop_mm) &&
+  cJSON_AddBoolToObject(j,"small_ready",(grid_ready(now) && small_ready(runtime,control,sample,now,grid_small_target(small_stop_mm))) &&
       !setup_mode && !manual_test_active && !firmware_updating && !history_saving && !pouring_active());
   cJSON_AddBoolToObject(j, "physical_locked", pin_lock::locked());
   cJSON_AddBoolToObject(j, "setup_mode", setup_mode.load());
@@ -192,6 +195,29 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddNumberToObject(f, "elapsed_ms", recording.elapsed_ms);
   cJSON_AddNumberToObject(f, "max_samples", FoamCapture::capacity);
   cJSON_AddNumberToObject(f, "max_duration_ms", FoamCapture::duration_ms);
+  auto *g=cJSON_AddObjectToObject(j,"grid");
+  cJSON_AddBoolToObject(g,"sensor_present",grid_sensor_present);
+  cJSON_AddBoolToObject(g,"enabled",grid_store.enabled);
+  cJSON_AddBoolToObject(g,"background_ready",grid_store.background_ready);
+  cJSON_AddBoolToObject(g,"fresh",grid_frame.connected && now-grid_frame.at<=uint32_t(settings.stale_ms));
+  cJSON_AddBoolToObject(g,"recognized",grid_match.recognized && grid_frame.connected && now-grid_frame.at<=uint32_t(settings.stale_ms));
+  cJSON_AddNumberToObject(g,"profile",grid_match.profile);
+  cJSON_AddNumberToObject(g,"score",grid_match.score);
+  cJSON_AddNumberToObject(g,"stable_frames",grid_stable_frames);
+  cJSON_AddNumberToObject(g,"rim_mm",grid_match.rim);
+  cJSON_AddNumberToObject(g,"level_mm",grid_match.level);
+  cJSON_AddNumberToObject(g,"active_full_mm",runtime.stop_mm);
+  cJSON_AddNumberToObject(g,"active_half_mm",runtime_half);
+  auto *distances=cJSON_AddArrayToObject(g,"mm");auto *statuses=cJSON_AddArrayToObject(g,"status");
+  for(int i=0;i<64;++i){cJSON_AddItemToArray(distances,cJSON_CreateNumber(grid_frame.mm[i]));cJSON_AddItemToArray(statuses,cJSON_CreateNumber(grid_frame.status[i]));}
+  auto *profiles=cJSON_AddArrayToObject(g,"profiles");
+  for(int i=0;i<3;++i){
+    const auto &profile=grid_store.profiles[i];auto *v=cJSON_CreateObject();
+    cJSON_AddStringToObject(v,"name",vessel_names[i]);cJSON_AddNumberToObject(v,"examples",profile.count);
+    cJSON_AddBoolToObject(v,"full",profile.full);cJSON_AddBoolToObject(v,"half",profile.half);
+    cJSON_AddNumberToObject(v,"full_gap_mm",profile.full_gap);cJSON_AddNumberToObject(v,"half_gap_mm",profile.half_gap);
+    cJSON_AddItemToArray(profiles,v);
+  }
   auto *c = cJSON_AddObjectToObject(j, "settings");
   add_config(c, settings);
   xSemaphoreGive(state_mutex);
@@ -334,6 +360,37 @@ static esp_err_t pour_csv(httpd_req_t *r) {
   if (used) { e = httpd_resp_send_chunk(r, chunk, used); if (e != ESP_OK) return e; }
   return httpd_resp_send_chunk(r, nullptr, 0);
 }
+static esp_err_t train_grid(httpd_req_t *r){
+  auto *j=body(r);if(!cJSON_IsObject(j)){cJSON_Delete(j);return error(r,"JSON and X-Tap-Control header required");}
+  auto *a=cJSON_GetObjectItemCaseSensitive(j,"action"),*p=cJSON_GetObjectItemCaseSensitive(j,"profile");
+  int profile=cJSON_IsNumber(p)&&p->valuedouble==p->valueint?p->valueint:-1;
+  xSemaphoreTake(state_mutex,portMAX_DELAY);
+  bool ok=cJSON_IsString(a)&&!pouring_active()&&!manual_test_active&&!firmware_updating&&!history_saving;
+  static TAP_EXT_BSS GridStore next; // off the httpd stack; guarded by state_mutex
+  next=grid_store;
+  const uint32_t now=esp_timer_get_time()/1000;
+  if(ok){
+    const char *op=a->valuestring;
+    if(!strcmp(op,"disable"))next.enabled=false;
+    else if(!strcmp(op,"enable")){ok=next.background_ready&&grid_sensor_present;next.enabled=ok;}
+    else if(!strcmp(op,"reset_profile")){
+      ok=profile>=0&&profile<3;if(ok)clear_profile(next.profiles[profile]);
+    }else{
+      ok=grid_sensor_present&&grid_frame.connected&&now-grid_frame.at<=uint32_t(settings.stale_ms);
+      if(ok){
+        if(!strcmp(op,"background"))ok=capture_background(next,grid_frame);
+        else if(!strcmp(op,"empty"))ok=capture_example(next,grid_frame,profile);
+        else if(!strcmp(op,"full")||!strcmp(op,"half"))ok=capture_target(next,grid_frame,profile,!strcmp(op,"half"));
+        else ok=false;
+      }
+    }
+    if(ok)ok=grid_save(next);
+    if(ok){grid_store=next;grid_stable_frames=0;control.stop("Container training saved: rechecking cup");xQueueReset(actions);}
+  }
+  xSemaphoreGive(state_mutex);cJSON_Delete(j);
+  if(!ok)return error(r,"Capture rejected: stop pouring, check fresh 8x8 data and keep the whole container in view. Empty captures need at least three interior zones; targets require a matching trained pose.","409 Conflict");
+  return status(r);
+}
 static esp_err_t configure(httpd_req_t *r) {
   auto *j = body(r);
   if (!j || !cJSON_IsObject(j)) {
@@ -421,10 +478,11 @@ static esp_err_t action(httpd_req_t *r) {
       const bool small=!strcmp(v->valuestring,"start_small");
       a.kind = half?Action::START_HALF:small?Action::START_SMALL:Action::START;
       const uint32_t now=esp_timer_get_time()/1000;
-      ok = !setup_mode && !pouring_active() && !manual_test_active &&
-           (half?half_ready(settings,control,sample,now,half_stop_mm):
-            small?small_ready(settings,control,sample,now,small_stop_mm):
-                  target_ready(settings,control,sample,now,settings.stop_mm));
+      const auto runtime=grid_settings(settings);
+      ok = !setup_mode && !pouring_active() && !manual_test_active && grid_ready(now,half) &&
+           (half?half_ready(runtime,control,sample,now,grid_half_target(half_stop_mm)):
+            small?small_ready(runtime,control,sample,now,grid_small_target(small_stop_mm)):
+                  target_ready(runtime,control,sample,now,runtime.stop_mm));
     } else if (!strcmp(v->valuestring, "close")) {
       a.kind = Action::CLOSE;
       ok = !pouring_active();
@@ -613,8 +671,8 @@ void network_start() {
   ESP_ERROR_CHECK(esp_read_mac(station_mac, ESP_MAC_WIFI_STA));
   snprintf(device_hostname, sizeof(device_hostname), "TouchPour-%02X%02X", station_mac[4], station_mac[5]);
   httpd_config_t c = HTTPD_DEFAULT_CONFIG();
-  c.max_uri_handlers = 12;
-  c.stack_size = 8192;
+  c.max_uri_handlers = 13;
+  c.stack_size = 9216; // V0.1.25 used 8192; grid buffers are static in PSRAM
   c.recv_wait_timeout = 10;
   c.send_wait_timeout = 15;
   c.keep_alive_enable = true;
@@ -637,6 +695,7 @@ void network_start() {
                     {"/api/pours/download", HTTP_GET, pour_csv},
                     {"/api/firmware", HTTP_POST, firmware_upload},
                     {"/api/settings", HTTP_POST, configure},
+                    {"/api/grid/train", HTTP_POST, train_grid},
                     {"/api/action", HTTP_POST, action},
                     {"/api/wifi/scan", HTTP_POST, scan},
                     {"/api/wifi/save", HTTP_POST, wifi_save},
@@ -656,3 +715,4 @@ void network_start() {
 
 
 } // namespace tap
+

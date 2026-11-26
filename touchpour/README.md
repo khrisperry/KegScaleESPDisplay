@@ -1,3 +1,7 @@
+# One-off 8×8 Christmas test · 0.2.0-grid-test.2
+
+See [test flashing, training and acceptance guide](docs/8X8_CHRISTMAS_TEST.md). This branch is TouchPour-only experimental firmware and must not be promoted to the regular OTA channels. It is the 8×8 test rebased onto V0.1.25, so it keeps everything below.
+
 # TouchPour Display — V0.1.23
 
 ## V0.1.23 Small Cup and display refresh
@@ -220,3 +224,4 @@ This includes existing automatic cutoff/button/foam checks, anywhere-touch emerg
 Current V0.1.10 validation: ten host suites pass, including idle status and actual-controller idle-close behavior; Playwright browser checks pass for desktop/mobile layouts, aligned fields, Wi-Fi, calibration capture, pour downloads, S3 firmware validation and active-pour lockouts. The full ESP-IDF build was not rerun for this update. Browser checks can be run with `node touchpour/tests/web_test.cjs` when Playwright and its Chromium browser are installed.
 
 Initial V0.1.0 validation: ESP-IDF 6.0.1 ESP32-S3 build passed; application size 0x1bab20 bytes (1,813,280 bytes), within each 6 MB app slot. Later V0.1.8 built successfully and the user confirmed audio output on the board.
+
