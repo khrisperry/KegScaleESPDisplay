@@ -104,3 +104,11 @@ CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=2000
 # Diagnostic-only allocation hooks; logs retain matching-ELF call sites.
 CONFIG_HEAP_USE_HOOKS=y
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096
+
+# Release-speed code. LVGL draws every frame in software with full refresh, so
+# -O2 makes screen drawing and touch response noticeably faster than -Og.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# Instant press feedback: animated style transitions forced several extra
+# full-screen redraws on every tap.
+CONFIG_LV_THEME_DEFAULT_TRANSITION_TIME=0

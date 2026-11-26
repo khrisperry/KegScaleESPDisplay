@@ -117,7 +117,7 @@ void start_cleanup(PendingCleanup *cleanup, const char *host, unsigned slot) {
     return;
   *cleanup = {};
   cleanup->phase = CleanupPhase::VerifyRemoval;
-  snprintf(cleanup->host, sizeof(cleanup->host), "%s", host);
+  strlcpy(cleanup->host, host, sizeof(cleanup->host));
   ESP_LOGI(TAG,
            "Scale %u local pairing cleared; verifying scale-side cleanup for '%s'",
            slot + 1, cleanup->host);

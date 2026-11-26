@@ -35,10 +35,13 @@ char scale_hosts_ui[2][128] = {};
 bool scale_paired_ui[2] = {};
 uint8_t active_scale_ui = 0;
 uint8_t setup_scale_slot = 0;
-lv_obj_t *scale_slot_dropdown = nullptr;
-lv_obj_t *scale_host_dropdown = nullptr;
-lv_obj_t *scale_manual_label = nullptr;
+// Setup widgets. Async scan results check these before writing.
+lv_obj_t *scale_list = nullptr;
 lv_obj_t *scale_manual_host = nullptr;
+lv_obj_t *selected_list_row = nullptr;
+lv_obj_t *wifi_status_label = nullptr;
+lv_obj_t *wifi_status_dot = nullptr;
+bool wifi_status_shown = false;
 lv_obj_t *capacity_dropdown = nullptr;
 lv_obj_t *home_nav_button = nullptr;
 lv_obj_t *menu_handle_button = nullptr;
@@ -63,9 +66,24 @@ const uint32_t BG = 0x101c26, CARD = 0x203441, ACCENT = 0x54d6bf,
 // TOUCH_BUTTON_STYLE_V5
 // TOUCH_TRANSIENT_NOTICE_V6
 // TOUCH_HOME_NOTICE_REMOVAL_V7
+// Page ids. Setup is a hub that leads to the Wi-Fi and Scales pages.
+enum : int {
+  PAGE_HOME = 0,
+  PAGE_KEG = 1,
+  PAGE_CALIBRATE = 2,
+  PAGE_SETUP = 3,
+  PAGE_UPDATE = 4,
+  PAGE_WIFI = 5,
+  PAGE_SCALES = 6,
+  PAGE_SCALE_CONNECT = 7,
+};
 void build(int page);
 void render_update_page();
 void focus(lv_event_t *e);
+void nav(lv_event_t *e);
+void open_keyboard(lv_obj_t *field);
+void network_row_clicked(lv_event_t *e);
+void scale_row_clicked(lv_event_t *e);
 
 void clear_notice_locked() {
   if (notice_clear_timer) {
@@ -110,7 +128,8 @@ bool submit(const char *kind, cJSON *json) {
   snprintf(a.kind, sizeof(a.kind), "%s", kind);
   char *s = json ? cJSON_PrintUnformatted(json) : nullptr;
   bool valid = !s || strlen(s) < sizeof(a.body);
-  snprintf(a.body, sizeof(a.body), "%s", s ? s : "{}");
+  // Over-length bodies are rejected via `valid` below; copy never overflows.
+  strlcpy(a.body, s ? s : "{}", sizeof(a.body));
   free(s);
   if (!valid || xQueueSend(actions, &a, 0) != pdTRUE) {
     message("Busy — please try again");
@@ -608,96 +627,284 @@ bool is_manual_host_option(const char *text) {
   return text && !strcmp(text, "Manual IP / hostname...");
 }
 
-void set_manual_host_visible(bool visible) {
-  if (scale_manual_label) {
-    if (visible)
-      lv_obj_remove_flag(scale_manual_label, LV_OBJ_FLAG_HIDDEN);
-    else
-      lv_obj_add_flag(scale_manual_label, LV_OBJ_FLAG_HIDDEN);
-  }
-  if (scale_manual_host) {
-    if (visible)
-      lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_HIDDEN);
-    else
-      lv_obj_add_flag(scale_manual_host, LV_OBJ_FLAG_HIDDEN);
-  }
+const uint32_t CARD_BG = 0x173247, CARD_BORDER = 0x55b7e8, MUTED = 0x9fb3bf,
+               STATUS_OK = 0x42d3a2, STATUS_WAIT = 0xffb347,
+               STATUS_OFF = 0x8aa0ad;
+
+void *page_data(int page) {
+  return reinterpret_cast<void *>(static_cast<intptr_t>(page));
 }
 
-void select_host_option_for_slot(bool prefer_discovered) {
-  if (!scale_host_dropdown)
-    return;
-
-  const char *saved = scale_hosts_ui[setup_scale_slot];
-  const char *other = scale_hosts_ui[setup_scale_slot == 0 ? 1 : 0];
-  const uint16_t option_count = lv_dropdown_get_option_count(scale_host_dropdown);
-  int saved_index = -1;
-  int first_available = -1;
-  int manual_index = -1;
-  char option[128];
-
-  for (uint16_t i = 0; i < option_count; ++i) {
-    lv_dropdown_set_selected(scale_host_dropdown, i);
-    lv_dropdown_get_selected_str(scale_host_dropdown, option, sizeof(option));
-    if (is_manual_host_option(option)) {
-      manual_index = i;
-      continue;
-    }
-    if (saved[0] && !strcmp(option, saved))
-      saved_index = i;
-    if (first_available < 0 && (!other[0] || strcmp(option, other)))
-      first_available = i;
-  }
-
-  int chosen = manual_index >= 0 ? manual_index : 0;
-  if (saved_index >= 0)
-    chosen = saved_index;
-  else if (prefer_discovered && first_available >= 0)
-    chosen = first_available;
-
-  lv_dropdown_set_selected(scale_host_dropdown, (uint16_t)chosen);
-  lv_dropdown_get_selected_str(scale_host_dropdown, option, sizeof(option));
-  const bool manual = is_manual_host_option(option);
-  if (manual && scale_manual_host)
-    touchscreen_text::textarea_set_text(scale_manual_host, saved);
-  set_manual_host_visible(manual);
+// Forget every Setup widget pointer before its parent is cleaned, so a late
+// Wi-Fi scan or scale search can never write into a deleted object.
+void reset_setup_widgets() {
+  memset(fields, 0, sizeof(fields));
+  networks = nullptr;
+  scale_list = nullptr;
+  scale_manual_host = nullptr;
+  selected_list_row = nullptr;
+  wifi_status_label = nullptr;
+  wifi_status_dot = nullptr;
 }
 
-void load_saved_host_options() {
-  if (!scale_host_dropdown)
-    return;
-  char options[320] = {};
-  const char *saved = scale_hosts_ui[setup_scale_slot];
-  if (saved[0]) {
-    snprintf(options, sizeof(options), "%s\nManual IP / hostname...", saved);
+// LVGL symbol glyphs sit in the private-use range that the text sanitizer
+// replaces with '?', so only constant LV_SYMBOL_* strings are set directly.
+lv_obj_t *symbol(lv_obj_t *parent, const char *glyph, int x, int y,
+                 uint32_t color = TEXT,
+                 const lv_font_t *font = &lv_font_montserrat_20) {
+  auto o = lv_label_create(parent);
+  lv_label_set_text(o, glyph);
+  lv_obj_set_pos(o, x, y);
+  lv_obj_set_style_text_font(o, font, 0);
+  lv_obj_set_style_text_color(o, lv_color_hex(color), 0);
+  return o;
+}
+
+lv_obj_t *status_dot(lv_obj_t *parent, int x, int y, uint32_t color) {
+  auto dot = lv_obj_create(parent);
+  lv_obj_set_pos(dot, x, y);
+  lv_obj_set_size(dot, 10, 10);
+  lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(dot, lv_color_hex(color), 0);
+  lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(dot, 0, 0);
+  lv_obj_set_style_radius(dot, 5, 0);
+  lv_obj_set_style_pad_all(dot, 0, 0);
+  return dot;
+}
+
+// Rounded panel used by the Setup hub and Scales page. With a callback the
+// whole card is one large touch target.
+lv_obj_t *setup_card(int y, int height, lv_event_cb_t cb = nullptr,
+                     void *data = nullptr) {
+  auto card = lv_obj_create(content);
+  lv_obj_set_pos(card, 8, y);
+  lv_obj_set_size(card, 424, height);
+  lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(card, lv_color_hex(CARD_BG), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(CARD_BORDER), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 15, 0);
+  lv_obj_set_style_pad_all(card, 0, 0);
+  if (cb) {
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x276990), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(card, lv_color_hex(ACCENT), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, data);
   } else {
-    snprintf(options, sizeof(options), "Manual IP / hostname...");
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
   }
-  touchscreen_text::dropdown_set_options(scale_host_dropdown, options);
-  select_host_option_for_slot(false);
+  return card;
 }
 
-void scale_host_selection_changed(lv_event_t *event) {
-  char selected[128];
-  lv_dropdown_get_selected_str((lv_obj_t *)lv_event_get_target(event),
-                               selected, sizeof(selected));
-  const bool manual = is_manual_host_option(selected);
-  if (manual && scale_manual_host && !lv_textarea_get_text(scale_manual_host)[0])
-    touchscreen_text::textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
-  set_manual_host_visible(manual);
+// "< Back" plus the page title, shared by every Setup sub-page.
+void page_header(const char *title, int back_page) {
+  auto back = button(content, "Back", 8, 0, 96, nav, page_data(back_page));
+  lv_obj_set_height(back, 40);
+  if (lv_obj_t *text = lv_obj_get_child(back, 0)) {
+    lv_label_set_text(text, LV_SYMBOL_LEFT "  Back");
+    lv_obj_center(text);
+  }
+  lv_obj_set_ext_click_area(back, 6);
+  label(content, title, 118, 6, 314, &lv_font_montserrat_24);
 }
 
-void scale_slot_changed(lv_event_t *event) {
-  const uint16_t selected =
-      lv_dropdown_get_selected((lv_obj_t *)lv_event_get_target(event));
-  setup_scale_slot = selected == 1 ? 1 : 0;
-  if (scale_host_dropdown &&
-      strcmp(discovered_scale_options, "Manual IP / hostname...")) {
-    touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
-    select_host_option_for_slot(true);
-  } else {
-    load_saved_host_options();
+lv_obj_t *small_button(lv_obj_t *parent, const char *text, int x, int y,
+                       int width, lv_event_cb_t cb, void *data = nullptr) {
+  auto b = button(parent, text, x, y, width, cb, data);
+  lv_obj_set_height(b, 36);
+  if (lv_obj_t *t = lv_obj_get_child(b, 0)) {
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_center(t);
   }
+  return b;
 }
+
+lv_obj_t *setup_field(const char *title, const char *value, int x, int y,
+                      int width, bool password = false, int limit = 64) {
+  label(content, title, x, y, width, &lv_font_montserrat_14);
+  auto o = lv_textarea_create(content);
+  lv_obj_set_pos(o, x, y + 17);
+  lv_obj_set_size(o, width, 40);
+  lv_textarea_set_one_line(o, true);
+  lv_textarea_set_max_length(o, limit);
+  touchscreen_text::textarea_set_text(o, value);
+  if (password)
+    lv_textarea_set_password_mode(o, true);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+  lv_obj_add_event_cb(o, focus, LV_EVENT_SHORT_CLICKED, nullptr);
+  return o;
+}
+
+// Scrollable list of tappable rows (Wi-Fi networks, discovered scales).
+lv_obj_t *list_box(int y, int height) {
+  auto box = lv_obj_create(content);
+  lv_obj_set_pos(box, 8, y);
+  lv_obj_set_size(box, 424, height);
+  lv_obj_set_scroll_dir(box, LV_DIR_VER);
+  lv_obj_set_style_bg_color(box, lv_color_hex(BG), 0);
+  lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(box, lv_color_hex(0x2d4a5e), 0);
+  lv_obj_set_style_border_width(box, 1, 0);
+  lv_obj_set_style_radius(box, 12, 0);
+  lv_obj_set_style_pad_all(box, 5, 0);
+  lv_obj_set_style_pad_row(box, 5, 0);
+  lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+  return box;
+}
+
+void list_placeholder(lv_obj_t *box, const char *text) {
+  if (!box)
+    return;
+  auto o = lv_label_create(box);
+  touchscreen_text::label_set_text(o, text);
+  lv_obj_set_width(o, lv_pct(100));
+  lv_label_set_long_mode(o, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(o, lv_color_hex(MUTED), 0);
+  lv_obj_set_style_pad_all(o, 6, 0);
+}
+
+// Row label child 0 always holds the exact value (SSID or host name).
+lv_obj_t *list_row(lv_obj_t *box, const char *text, lv_event_cb_t cb,
+                   const char *note = nullptr) {
+  auto row = lv_button_create(box);
+  lv_obj_set_size(row, lv_pct(100), 40);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x173b55), 0);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_radius(row, 10, 0);
+  lv_obj_set_style_shadow_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x276990), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x1f5a7a), LV_STATE_CHECKED);
+  lv_obj_set_style_border_color(row, lv_color_hex(ACCENT), LV_STATE_CHECKED);
+  lv_obj_set_style_border_width(row, 2, LV_STATE_CHECKED);
+  lv_obj_set_style_bg_opa(row, LV_OPA_50, LV_STATE_DISABLED);
+
+  auto t = lv_label_create(row);
+  touchscreen_text::label_set_text(t, text);
+  lv_obj_set_width(t, note ? 290 : 380);
+  lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_color(t, lv_color_hex(TEXT), 0);
+  lv_obj_align(t, LV_ALIGN_LEFT_MID, 12, 0);
+
+  if (note) {
+    auto n = lv_label_create(row);
+    touchscreen_text::label_set_text(n, note);
+    lv_obj_set_style_text_font(n, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(n, lv_color_hex(MUTED), 0);
+    lv_obj_align(n, LV_ALIGN_RIGHT_MID, -12, 0);
+  }
+  if (cb)
+    lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, nullptr);
+  return row;
+}
+
+void mark_selected_row(lv_obj_t *row) {
+  if (selected_list_row)
+    lv_obj_remove_state(selected_list_row, LV_STATE_CHECKED);
+  selected_list_row = row;
+  if (row)
+    lv_obj_add_state(row, LV_STATE_CHECKED);
+}
+
+const char *row_value(lv_obj_t *row) {
+  lv_obj_t *t = row ? lv_obj_get_child(row, 0) : nullptr;
+  return t ? lv_label_get_text(t) : "";
+}
+
+// Copies line `index` of a newline-separated option list; false at the end.
+bool option_line(const char *options, int index, char *out, size_t size) {
+  if (!options || !size)
+    return false;
+  const char *p = options;
+  for (int i = 0; i < index; ++i) {
+    p = strchr(p, '\n');
+    if (!p)
+      return false;
+    ++p;
+  }
+  const char *end = strchr(p, '\n');
+  size_t len = end ? (size_t)(end - p) : strlen(p);
+  if (!len && !end && !*p)
+    return false;
+  if (len >= size)
+    len = size - 1;
+  memcpy(out, p, len);
+  out[len] = 0;
+  return true;
+}
+
+const char *scale_status(uint8_t slot, uint32_t *color) {
+  if (!scale_hosts_ui[slot][0]) {
+    *color = STATUS_OFF;
+    return "Not set up";
+  }
+  if (slot == active_scale_ui && current.online) {
+    *color = STATUS_OK;
+    return "Connected";
+  }
+  if (scale_paired_ui[slot]) {
+    *color = STATUS_WAIT;
+    return slot == active_scale_ui ? "Offline" : "Paired";
+  }
+  *color = STATUS_WAIT;
+  return "Not paired";
+}
+
+// Wi-Fi status line on the Setup hub or the Wi-Fi page. The 1 s UI timer
+// calls this again when the connection comes up or drops.
+void render_wifi_status() {
+  if (!wifi_status_label)
+    return;
+  const bool up = touchscreen_wifi_connected();
+  wifi_status_shown = up;
+  char text[96];
+  if (!initial.ssid[0])
+    snprintf(text, sizeof(text), "%s",
+             page_id == PAGE_SETUP ? "Not set up - tap to choose a network"
+                                   : "Not connected to Wi-Fi yet");
+  else if (page_id == PAGE_SETUP)
+    snprintf(text, sizeof(text), "%s - %s", initial.ssid,
+             up ? "Connected" : "Not connected");
+  else
+    snprintf(text, sizeof(text), "%s %s",
+             up ? "Connected to" : "Not connected:", initial.ssid);
+  touchscreen_text::label_set_text(wifi_status_label, text);
+  if (wifi_status_dot)
+    lv_obj_set_style_bg_color(
+        wifi_status_dot,
+        lv_color_hex(!initial.ssid[0] ? STATUS_OFF
+                     : up             ? STATUS_OK
+                                      : STATUS_WAIT),
+        0);
+}
+
+uint8_t saved_brightness() {
+  return initial.brightness >= 10 && initial.brightness <= 100
+             ? initial.brightness
+             : 85;
+}
+
+// Every connection change goes through the existing "settings" action. Values
+// the page does not edit are sent back unchanged, so the main task applies
+// only what actually changed (Wi-Fi, or one scale's host).
+bool submit_connection(uint8_t slot, const char *ssid, const char *password,
+                       const char *host) {
+  auto o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(o, "slot", slot);
+  cJSON_AddStringToObject(o, "ssid", ssid);
+  cJSON_AddStringToObject(o, "password", password);
+  cJSON_AddStringToObject(o, "host", host);
+  cJSON_AddNumberToObject(o, "brightness", saved_brightness());
+  const bool sent = submit("settings", o);
+  cJSON_Delete(o);
+  return sent;
+}
+
 void toggle_password_visibility(lv_event_t *event) {
   auto button = static_cast<lv_obj_t *>(lv_event_get_target(event));
   auto password = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
@@ -727,6 +934,11 @@ void dismiss_keyboard() {
 }
 void keyboard_event(lv_event_t *) { dismiss_keyboard(); }
 void focus(lv_event_t *e) {
+  open_keyboard(static_cast<lv_obj_t *>(lv_event_get_target(e)));
+}
+void open_keyboard(lv_obj_t *field) {
+  if (!field)
+    return;
   touchscreen_home_set_keyboard_open(true);
 
   if (!keyboard) {
@@ -737,7 +949,6 @@ void focus(lv_event_t *e) {
     lv_obj_add_event_cb(keyboard, keyboard_event, LV_EVENT_CANCEL, nullptr);
   }
 
-  auto field = (lv_obj_t *)lv_event_get_target(e);
   lv_keyboard_set_textarea(keyboard, field);
   lv_obj_set_height(content, 222);
   lv_obj_scroll_to_view(field, LV_ANIM_OFF);
@@ -876,76 +1087,215 @@ void cancel_calibration(lv_event_t *) {
   cal_step = 0;
   build(0);
 }
+// ---- Wi-Fi page -----------------------------------------------------------
+void fill_network_list(const char *options) {
+  if (!networks)
+    return;
+  lv_obj_clean(networks);
+  selected_list_row = nullptr;
+  int added = 0;
+  char ssid[40];
+  for (int i = 0; option_line(options, i, ssid, sizeof(ssid)); ++i) {
+    if (!ssid[0] || !strcmp(ssid, "No networks found"))
+      continue;
+    // One row per network name, even when several access points share it.
+    bool duplicate = false;
+    const uint32_t rows = lv_obj_get_child_count(networks);
+    for (uint32_t r = 0; r < rows && !duplicate; ++r)
+      duplicate = !strcmp(row_value(lv_obj_get_child(networks, r)), ssid);
+    if (duplicate)
+      continue;
+    const bool saved = initial.ssid[0] && !strcmp(ssid, initial.ssid);
+    auto row = list_row(networks, ssid, network_row_clicked,
+                        saved ? "Saved" : nullptr);
+    if (saved)
+      mark_selected_row(row);
+    ++added;
+  }
+  if (!added)
+    list_placeholder(networks,
+                     "No networks found. Tap Rescan, or type the network "
+                     "name below.");
+}
+
+void network_row_clicked(lv_event_t *e) {
+  auto row = static_cast<lv_obj_t *>(lv_event_get_current_target(e));
+  if (!row || !fields[0] || !fields[1])
+    return;
+  mark_selected_row(row);
+  const char *ssid = row_value(row);
+  const bool same_as_saved = !strcmp(ssid, initial.ssid);
+  touchscreen_text::textarea_set_text(fields[0], ssid);
+  touchscreen_text::textarea_set_text(fields[1],
+                                      same_as_saved ? initial.password : "");
+  // The next thing the user needs is the password.
+  open_keyboard(fields[1]);
+}
+
+void scan(lv_event_t *) {
+  dismiss_keyboard();
+  if (networks) {
+    lv_obj_clean(networks);
+    selected_list_row = nullptr;
+    list_placeholder(networks, "Scanning for networks…");
+  }
+  submit("scan_wifi", nullptr);
+}
+
+void wifi_connect(lv_event_t *) {
+  if (!fields[0] || !fields[1])
+    return;
+  char ssid[33];
+  char password[65];
+  snprintf(ssid, sizeof(ssid), "%s", lv_textarea_get_text(fields[0]));
+  snprintf(password, sizeof(password), "%s", lv_textarea_get_text(fields[1]));
+  if (!ssid[0]) {
+    message("Choose a network, or type its name");
+    return;
+  }
+  dismiss_keyboard();
+  const uint8_t slot = active_scale_ui < 2 ? active_scale_ui : 0;
+  if (submit_connection(slot, ssid, password, scale_hosts_ui[slot]))
+    message("Connecting to Wi-Fi…");
+}
+
+// ---- Scales pages ---------------------------------------------------------
+void fill_scale_list(const char *options) {
+  if (!scale_list)
+    return;
+  lv_obj_clean(scale_list);
+  selected_list_row = nullptr;
+  const uint8_t other = setup_scale_slot == 0 ? 1 : 0;
+  int added = 0;
+  char host[128];
+  for (int i = 0; option_line(options, i, host, sizeof(host)); ++i) {
+    if (!host[0] || is_manual_host_option(host))
+      continue;
+    const bool taken =
+        scale_hosts_ui[other][0] && !strcmp(host, scale_hosts_ui[other]);
+    char note[16] = {};
+    if (taken)
+      snprintf(note, sizeof(note), "Scale %u", (unsigned)(other + 1));
+    auto row = list_row(scale_list, host, taken ? nullptr : scale_row_clicked,
+                        taken ? note : nullptr);
+    if (taken)
+      lv_obj_add_state(row, LV_STATE_DISABLED);
+    else if (!strcmp(host, scale_hosts_ui[setup_scale_slot]))
+      mark_selected_row(row);
+    ++added;
+  }
+  if (!added)
+    list_placeholder(scale_list,
+                     "No scales found. Check the scale is powered on and on "
+                     "the same Wi-Fi, or type its address below.");
+}
+
+void scale_row_clicked(lv_event_t *e) {
+  auto row = static_cast<lv_obj_t *>(lv_event_get_current_target(e));
+  if (!row || !scale_manual_host)
+    return;
+  dismiss_keyboard();
+  mark_selected_row(row);
+  touchscreen_text::textarea_set_text(scale_manual_host, row_value(row));
+}
+
 void discover(lv_event_t *) {
   dismiss_keyboard();
+  if (scale_list) {
+    lv_obj_clean(scale_list);
+    selected_list_row = nullptr;
+    list_placeholder(scale_list, "Searching for scales…");
+  }
   auto o = cJSON_CreateObject();
   cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
   submit("discover", o);
   cJSON_Delete(o);
-  message("Looking for a scale…");
 }
-void scan(lv_event_t *) {
-  dismiss_keyboard();
-  submit("scan_wifi", nullptr);
-  message("Scanning Wi-Fi…");
-}
-void select_network(lv_event_t *e) {
-  char ssid[33];
-  lv_dropdown_get_selected_str((lv_obj_t *)lv_event_get_target(e), ssid,
-                               sizeof(ssid));
-  touchscreen_text::textarea_set_text(fields[0], ssid);
-}
-void save_settings(lv_event_t *) {
-  dismiss_keyboard();
-  char selected[128] = {};
-  if (scale_host_dropdown)
-    lv_dropdown_get_selected_str(scale_host_dropdown, selected,
-                                 sizeof(selected));
-  const char *host =
-      is_manual_host_option(selected)
-          ? (scale_manual_host ? lv_textarea_get_text(scale_manual_host) : "")
-          : selected;
 
-  auto o = cJSON_CreateObject();
-  cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
-  cJSON_AddStringToObject(o, "ssid", lv_textarea_get_text(fields[0]));
-  cJSON_AddStringToObject(o, "password", lv_textarea_get_text(fields[1]));
-  cJSON_AddStringToObject(o, "host", host);
-  cJSON_AddNumberToObject(o, "brightness", lv_slider_get_value(fields[3]));
-  submit("settings", o);
-  cJSON_Delete(o);
+void open_scale_connect(lv_event_t *e) {
+  const int slot =
+      static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+  setup_scale_slot = slot == 1 ? 1 : 0;
+  build(PAGE_SCALE_CONNECT);
 }
-void brightness(lv_event_t *e) {
-  bsp_display_brightness_set(
-      lv_slider_get_value((lv_obj_t *)lv_event_get_target(e)));
+
+void scale_connect(lv_event_t *) {
+  if (!scale_manual_host)
+    return;
+  // Accept a pasted URL: keep only the host name or IP address.
+  char host[128];
+  const char *text = lv_textarea_get_text(scale_manual_host);
+  while (*text == ' ')
+    ++text;
+  if (!strncmp(text, "http://", 7))
+    text += 7;
+  else if (!strncmp(text, "https://", 8))
+    text += 8;
+  snprintf(host, sizeof(host), "%s", text);
+  for (char *p = host; *p; ++p) {
+    if (*p == '/' || *p == ' ') {
+      *p = 0;
+      break;
+    }
+  }
+  if (!host[0]) {
+    message("Tap a scale, or type its address");
+    return;
+  }
+  dismiss_keyboard();
+  if (submit_connection(setup_scale_slot, initial.ssid, initial.password,
+                        host))
+    message("Connecting to scale…");
 }
+
 void forget_yes(lv_event_t *) {
   auto o = cJSON_CreateObject();
   cJSON_AddNumberToObject(o, "slot", setup_scale_slot);
   submit("forget", o);
   cJSON_Delete(o);
-  build(3);
+  build(PAGE_SCALES);
 }
-void forget(lv_event_t *) {
+void forget(lv_event_t *e) {
+  const int slot =
+      static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+  setup_scale_slot = slot == 1 ? 1 : 0;
   dismiss_keyboard();
   // A Wi-Fi scan/discovery may complete while this confirmation is visible.
   // Do not let its result write into deleted setup widgets.
-  memset(fields, 0, sizeof(fields));
-  networks = nullptr;
-  scale_slot_dropdown = nullptr;
-  scale_host_dropdown = nullptr;
-  scale_manual_label = nullptr;
-  scale_manual_host = nullptr;
+  reset_setup_widgets();
   touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
-  label(content, "Remove scale pairing?", 8, 12, 424,
-        &lv_font_montserrat_24);
+  char title[48];
+  snprintf(title, sizeof(title), "Remove Scale %u pairing?",
+           (unsigned)(setup_scale_slot + 1));
+  label(content, title, 8, 12, 424, &lv_font_montserrat_24);
   label(content,
         "This removes the pairing from both the touchscreen and the scale. "
         "Use Add touchscreen on the scale when you are ready to pair again.",
         8, 64, 424);
   button(content, "Remove pairing", 8, 185, 205, forget_yes);
-  button(content, "Cancel", 230, 185, 200, nav, (void *)3);
+  button(content, "Cancel", 230, 185, 200, nav, page_data(PAGE_SCALES));
+}
+
+// ---- Display --------------------------------------------------------------
+void brightness(lv_event_t *e) {
+  auto slider = static_cast<lv_obj_t *>(lv_event_get_target(e));
+  const int32_t value = lv_slider_get_value(slider);
+  bsp_display_brightness_set(value);
+  if (fields[4])
+    touchscreen_text::label_set_text_fmt(fields[4], "%ld%%", (long)value);
+}
+
+void brightness_released(lv_event_t *e) {
+  auto slider = static_cast<lv_obj_t *>(lv_event_get_target(e));
+  const int32_t value = lv_slider_get_value(slider);
+  if (value == initial.brightness)
+    return;
+  initial.brightness = (uint8_t)value;
+  auto o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(o, "brightness", value);
+  submit("brightness", o);
+  cJSON_Delete(o);
 }
 void update_yes(lv_event_t *) {
   submit("ota", nullptr);
@@ -1015,13 +1365,9 @@ void build(int page) {
   touchscreen_ui_generation_advance(&content_generation);
   lv_obj_clean(content);
   lv_obj_scroll_to(content, 0, 0, LV_ANIM_OFF);
-  headline = detail = connection = arc = networks = nullptr;
-  scale_slot_dropdown = nullptr;
-  scale_host_dropdown = nullptr;
-  scale_manual_label = nullptr;
-  scale_manual_host = nullptr;
+  headline = detail = connection = arc = nullptr;
   capacity_dropdown = nullptr;
-  memset(fields, 0, sizeof(fields));
+  reset_setup_widgets();
   if (page == 0) {
     // Identify the shared content container as Home without building the old
     // arc/servings/Replace-keg UI. The custom renderer runs before this
@@ -1132,88 +1478,76 @@ void build(int page) {
            8, cal_step == 2 ? 225 : 210, 424, calibration);
     button(content, "Cancel / release scale", 8, cal_step == 2 ? 275 : 265, 424,
            cancel_calibration);
-  } else if (page == 3) {
-    label(content, "Setup", 8, 0, 190, &lv_font_montserrat_24);
+  } else if (page == PAGE_SETUP) {
+    // Setup hub: one card per area, each showing its current state.
+    label(content, "Setup", 8, 0, 424, &lv_font_montserrat_24);
 
-    setup_scale_slot = active_scale_ui;
+    // Wi-Fi
+    auto wifi = setup_card(40, 78, nav, page_data(PAGE_WIFI));
+    symbol(wifi, LV_SYMBOL_WIFI, 16, 14);
+    label(wifi, "Wi-Fi", 52, 11, 300, &lv_font_montserrat_20);
+    wifi_status_dot = status_dot(wifi, 52, 49, STATUS_OFF);
+    wifi_status_label = label(wifi, "", 70, 44, 316, &lv_font_montserrat_14);
+    lv_label_set_long_mode(wifi_status_label, LV_LABEL_LONG_DOT);
+    render_wifi_status();
+    symbol(wifi, LV_SYMBOL_RIGHT, 396, 28, MUTED);
 
-    auto compact_setup_field =
-        [&](const char *title, const char *value, int x, int y, int width,
-            bool password = false, int limit = 64) -> lv_obj_t * {
-      label(content, title, x, y, width, &lv_font_montserrat_14);
-      auto o = lv_textarea_create(content);
-      lv_obj_set_pos(o, x, y + 17);
-      lv_obj_set_size(o, width, 40);
-      lv_textarea_set_one_line(o, true);
-      lv_textarea_set_max_length(o, limit);
-      touchscreen_text::textarea_set_text(o, value);
-      if (password)
-        lv_textarea_set_password_mode(o, true);
-      lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
-      lv_obj_add_event_cb(o, focus, LV_EVENT_SHORT_CLICKED, nullptr);
-      return o;
-    };
+    // Scales
+    auto scales = setup_card(128, 104, nav, page_data(PAGE_SCALES));
+    symbol(scales, LV_SYMBOL_LIST, 16, 14);
+    label(scales, "Scales", 52, 11, 300, &lv_font_montserrat_20);
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+      uint32_t color;
+      const char *status = scale_status(slot, &color);
+      char text[300];
+      if (scale_hosts_ui[slot][0])
+        snprintf(text, sizeof(text), "Scale %u: %s - %s",
+                 (unsigned)(slot + 1), scale_hosts_ui[slot], status);
+      else
+        snprintf(text, sizeof(text), "Scale %u: %s", (unsigned)(slot + 1),
+                 status);
+      const int y = 44 + slot * 26;
+      status_dot(scales, 52, y + 5, color);
+      auto l = label(scales, text, 70, y, 316, &lv_font_montserrat_14);
+      lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    }
+    symbol(scales, LV_SYMBOL_RIGHT, 396, 40, MUTED);
 
-    label(content, "Scale", 8, 30, 195, &lv_font_montserrat_14);
-    label(content, "Scale host", 211, 30, 221, &lv_font_montserrat_14);
-
-    scale_slot_dropdown = lv_dropdown_create(content);
-    lv_obj_set_pos(scale_slot_dropdown, 8, 46);
-    lv_obj_set_size(scale_slot_dropdown, 195, 40);
-    char scale_options[128];
-    snprintf(scale_options, sizeof(scale_options),
-             "Scale 1%s\nScale 2%s",
-             scale_paired_ui[0] ? " - Paired"
-                                : (scale_hosts_ui[0][0] ? " - Configured"
-                                                        : " - Not configured"),
-             scale_paired_ui[1] ? " - Paired"
-                                : (scale_hosts_ui[1][0] ? " - Configured"
-                                                        : " - Not configured"));
-    touchscreen_text::dropdown_set_options(scale_slot_dropdown, scale_options);
-    lv_dropdown_set_selected(scale_slot_dropdown, setup_scale_slot);
-    lv_obj_add_event_cb(scale_slot_dropdown, scale_slot_changed,
-                        LV_EVENT_VALUE_CHANGED, nullptr);
-
-    scale_host_dropdown = lv_dropdown_create(content);
-    lv_obj_set_pos(scale_host_dropdown, 211, 46);
-    lv_obj_set_size(scale_host_dropdown, 221, 40);
-    lv_obj_add_event_cb(scale_host_dropdown, scale_host_selection_changed,
-                        LV_EVENT_VALUE_CHANGED, nullptr);
-
-    button(content, "Scan Wi-Fi", 8, 94, 120, scan);
-    button(content, "Find scale", 136, 94, 120, discover);
-
-    scale_manual_label =
-        label(content, "", 0, 0, 1, &lv_font_montserrat_14);
-    scale_manual_host = lv_textarea_create(content);
-    lv_obj_set_pos(scale_manual_host, 264, 97);
-    lv_obj_set_size(scale_manual_host, 168, 40);
-    lv_textarea_set_one_line(scale_manual_host, true);
-    lv_textarea_set_max_length(scale_manual_host, 127);
-    lv_textarea_set_placeholder_text(scale_manual_host, "Manual host");
-    touchscreen_text::textarea_set_text(scale_manual_host, scale_hosts_ui[setup_scale_slot]);
-    lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
-    lv_obj_add_event_cb(scale_manual_host, focus, LV_EVENT_SHORT_CLICKED,
+    // Display: adjusted in place, no extra page needed.
+    auto display = setup_card(242, 92);
+    symbol(display, LV_SYMBOL_EYE_OPEN, 16, 14);
+    label(display, "Brightness", 52, 11, 260, &lv_font_montserrat_20);
+    char percent[8];
+    snprintf(percent, sizeof(percent), "%u%%", (unsigned)saved_brightness());
+    fields[4] = label(display, percent, 330, 13, 76, &lv_font_montserrat_18);
+    lv_obj_set_style_text_align(fields[4], LV_TEXT_ALIGN_RIGHT, 0);
+    fields[3] = lv_slider_create(display);
+    lv_obj_set_pos(fields[3], 28, 56);
+    lv_obj_set_size(fields[3], 368, 15);
+    lv_slider_set_range(fields[3], 10, 100);
+    lv_slider_set_value(fields[3], saved_brightness(), LV_ANIM_OFF);
+    lv_obj_set_ext_click_area(fields[3], 12);
+    lv_obj_add_event_cb(fields[3], brightness, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(fields[3], brightness_released, LV_EVENT_RELEASED,
                         nullptr);
+  } else if (page == PAGE_WIFI) {
+    page_header("Wi-Fi", PAGE_SETUP);
 
-    load_saved_host_options();
+    wifi_status_dot = status_dot(content, 10, 57, STATUS_OFF);
+    wifi_status_label = label(content, "", 28, 52, 404, &lv_font_montserrat_14);
+    lv_label_set_long_mode(wifi_status_label, LV_LABEL_LONG_DOT);
+    render_wifi_status();
 
-    networks = lv_dropdown_create(content);
-    lv_obj_set_pos(networks, 8, 144);
-    lv_obj_set_size(networks, 424, 36);
-    touchscreen_text::dropdown_set_options(networks, "Select Wi-Fi network");
-    lv_obj_add_event_cb(networks, select_network, LV_EVENT_VALUE_CHANGED,
-                        nullptr);
+    label(content, "Tap your network", 8, 86, 260, &lv_font_montserrat_14);
+    small_button(content, "Rescan", 332, 76, 100, scan);
+    networks = list_box(116, 120);
 
-    fields[0] =
-        compact_setup_field("SSID", initial.ssid, 8, 186, 207, false, 32);
-    fields[1] =
-        compact_setup_field("Password", initial.password, 225, 186, 207, true, 64);
-
+    fields[0] = setup_field("Network name", initial.ssid, 8, 242, 207, false, 32);
+    fields[1] = setup_field("Password", initial.password, 225, 242, 207, true, 64);
     lv_obj_set_style_pad_right(fields[1], 58, LV_PART_MAIN);
 
     lv_obj_t *password_toggle = lv_button_create(content);
-    lv_obj_set_pos(password_toggle, 378, 207);
+    lv_obj_set_pos(password_toggle, 378, 263);
     lv_obj_set_size(password_toggle, 50, 32);
     lv_obj_set_style_bg_color(password_toggle, lv_color_hex(0x173b55), 0);
     lv_obj_set_style_bg_opa(password_toggle, LV_OPA_COVER, 0);
@@ -1221,26 +1555,94 @@ void build(int page) {
     lv_obj_set_style_border_width(password_toggle, 1, 0);
     lv_obj_set_style_radius(password_toggle, 10, 0);
     lv_obj_set_style_pad_all(password_toggle, 0, 0);
-
     lv_obj_t *password_toggle_text = lv_label_create(password_toggle);
     touchscreen_text::label_set_text(password_toggle_text, "SHOW");
     lv_obj_set_style_text_font(password_toggle_text, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(password_toggle_text, lv_color_hex(TEXT), 0);
     lv_obj_center(password_toggle_text);
-
     lv_obj_add_event_cb(password_toggle, toggle_password_visibility,
                         LV_EVENT_CLICKED, fields[1]);
 
-    label(content, "Brightness", 8, 250, 92, &lv_font_montserrat_14);
-    fields[3] = lv_slider_create(content);
-    lv_obj_set_pos(fields[3], 108, 258);
-    lv_obj_set_size(fields[3], 324, 15);
-    lv_slider_set_range(fields[3], 10, 100);
-    lv_slider_set_value(fields[3], initial.brightness, LV_ANIM_OFF);
-    lv_obj_add_event_cb(fields[3], brightness, LV_EVENT_VALUE_CHANGED, nullptr);
+    button(content, "Connect to Wi-Fi", 8, 314, 424, wifi_connect);
 
-    button(content, "Save & connect", 8, 284, 207, save_settings);
-    button(content, "Remove pairing", 225, 284, 207, forget);
+    // A scan takes the radio off the home channel for a couple of seconds and
+    // stalls the scale connection, so only scan automatically when Wi-Fi is
+    // not working yet. Otherwise show the saved network and wait for Rescan.
+    if (initial.ssid[0] && touchscreen_wifi_connected()) {
+      fill_network_list(initial.ssid);
+      list_placeholder(networks, "Tap Rescan to see other networks.");
+    } else {
+      scan(nullptr);
+    }
+  } else if (page == PAGE_SCALES) {
+    page_header("Scales", PAGE_SETUP);
+
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+      auto card = setup_card(50 + slot * 128, 118);
+      char title[16];
+      snprintf(title, sizeof(title), "Scale %u", (unsigned)(slot + 1));
+      label(card, title, 14, 10, 160, &lv_font_montserrat_20);
+
+      uint32_t color;
+      const char *status = scale_status(slot, &color);
+      status_dot(card, 270, 17, color);
+      label(card, status, 288, 12, 124, &lv_font_montserrat_14);
+
+      auto host = label(card,
+                        scale_hosts_ui[slot][0] ? scale_hosts_ui[slot]
+                                                : "No scale chosen yet",
+                        14, 38, 396, &lv_font_montserrat_14);
+      lv_label_set_long_mode(host, LV_LABEL_LONG_DOT);
+      if (!scale_hosts_ui[slot][0])
+        lv_obj_set_style_text_color(host, lv_color_hex(MUTED), 0);
+
+      void *slot_data = reinterpret_cast<void *>(static_cast<intptr_t>(slot));
+      if (!scale_hosts_ui[slot][0]) {
+        button(card, "Set up this scale", 12, 62, 398, open_scale_connect,
+               slot_data);
+      } else if (scale_paired_ui[slot]) {
+        button(card, "Change scale", 12, 62, 194, open_scale_connect,
+               slot_data);
+        button(card, "Remove pairing", 216, 62, 194, forget, slot_data);
+      } else {
+        button(card, "Change scale", 12, 62, 398, open_scale_connect,
+               slot_data);
+      }
+    }
+
+    auto hint = label(content,
+                      "To pair: on the scale's web page, choose Add "
+                      "touchscreen.",
+                      8, 310, 424, &lv_font_montserrat_14);
+    lv_obj_set_style_text_color(hint, lv_color_hex(MUTED), 0);
+  } else if (page == PAGE_SCALE_CONNECT) {
+    char title[24];
+    snprintf(title, sizeof(title), "Scale %u", (unsigned)(setup_scale_slot + 1));
+    page_header(title, PAGE_SCALES);
+
+    label(content, "Scales on your Wi-Fi", 8, 56, 260, &lv_font_montserrat_14);
+    small_button(content, "Search again", 302, 46, 130, discover);
+    scale_list = list_box(88, 124);
+
+    label(content, "Or type its address (IP or name)", 8, 220, 424,
+          &lv_font_montserrat_14);
+    scale_manual_host = lv_textarea_create(content);
+    lv_obj_set_pos(scale_manual_host, 8, 238);
+    lv_obj_set_size(scale_manual_host, 424, 40);
+    lv_textarea_set_one_line(scale_manual_host, true);
+    lv_textarea_set_max_length(scale_manual_host, 127);
+    lv_textarea_set_placeholder_text(scale_manual_host,
+                                     "e.g. KegScale-1234.local");
+    touchscreen_text::textarea_set_text(scale_manual_host,
+                                        scale_hosts_ui[setup_scale_slot]);
+    lv_obj_remove_flag(scale_manual_host, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_add_event_cb(scale_manual_host, focus, LV_EVENT_SHORT_CLICKED,
+                        nullptr);
+
+    button(content, "Connect", 8, 292, 207, scale_connect);
+    button(content, "Cancel", 225, 292, 207, nav, page_data(PAGE_SCALES));
+
+    discover(nullptr);
   } else {
     // Page 4 belongs entirely to the new OTA UI. Render it immediately rather
     // than drawing the legacy Firmware & diagnostics page first.
@@ -1588,6 +1990,8 @@ void render_update_page() {
   label(content, footer, 8, 312, 424, &lv_font_montserrat_14);
 }
 void update_page_watch(lv_timer_t *) {
+  if (wifi_status_label && touchscreen_wifi_connected() != wifi_status_shown)
+    render_wifi_status();
   if (ota_overlay)
     return;
   if (page_id != 4) {
@@ -1624,8 +2028,8 @@ void touchscreen_home_set_update_available(bool available) {
 // Clear the legacy pairing state and redraw Setup underneath the overlay.
 void touchscreen_pairing_timeout_cleanup() {
   pair_code[0] = 0;
-  if (page_id == 3)
-    build(3);
+  if (page_id == PAGE_SETUP || page_id == PAGE_SCALES)
+    build(page_id);
 }
 
 void ui_start(const Settings &s) {
@@ -1634,6 +2038,9 @@ void ui_start(const Settings &s) {
   static_assert(CONFIG_BSP_LCD_RGB_BUFFER_NUMS >= 2,
                 "Set BSP_LCD_RGB_BUFFER_NUMS=2 in menuconfig (Board Support Package)");
   lvgl_port_cfg_t port = ESP_LVGL_PORT_INIT_CONFIG();
+  // The 7 KB default overflowed on Home once the -O2 build inlined LVGL's
+  // draw path (V1.4.28 test build). Keep generous headroom.
+  port.task_stack = 16384;
   ESP_ERROR_CHECK(lvgl_port_init(&port));
   bsp_display_config_t panel_config = {};
   esp_lcd_panel_handle_t panel = nullptr;
@@ -1737,6 +2144,7 @@ void ui_state(const State &s) {
   if (!bsp_display_lock(1000))
     return;
   bool lost_connection = current.online && !s.online;
+  const bool online_changed = current.online != s.online;
   if (!s.online) {
     editor_valid = false;
     cal_step = 0;
@@ -1756,6 +2164,9 @@ void ui_state(const State &s) {
           lv_color_hex(current.online ? 0x42d3a2 : 0xc76a6a), 0);
   }
   if (lost_connection && (page_id == 0 || page_id == 1 || page_id == 2))
+    build(page_id);
+  else if (online_changed &&
+           (page_id == PAGE_SETUP || page_id == PAGE_SCALES) && !keyboard)
     build(page_id);
   else
     dashboard();
@@ -1792,7 +2203,7 @@ void ui_pair_code(const char *code) {
   if (!bsp_display_lock(1000))
     return;
   snprintf(pair_code, sizeof(pair_code), "%s", code);
-  build(3);
+  build(PAGE_SCALES);
   message("Enter this code on the scale's web page");
   bsp_display_unlock();
 }
@@ -1832,11 +2243,9 @@ void ui_discovered_options(const char *options) {
     return;
   snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
            options && options[0] ? options : "Manual IP / hostname...");
-  if (page_id == 3 && scale_host_dropdown) {
-    touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
-    select_host_option_for_slot(true);
-  }
-  message("Choose a scale from the list, or use Manual IP / hostname.");
+  if (page_id == PAGE_SCALE_CONNECT && scale_list)
+    fill_scale_list(discovered_scale_options);
+  message("Tap a scale, or type its address below.");
   bsp_display_unlock();
 }
 
@@ -1845,7 +2254,7 @@ void ui_discovered_options_for_generation(const char *options,
   if (!bsp_display_lock(1000))
     return;
   if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
-      page_id != 3 || !scale_host_dropdown) {
+      page_id != PAGE_SCALE_CONNECT || !scale_list) {
     ESP_LOGI("display",
              "Ignoring stale scale discovery result generation=%lu current=%lu page=%d",
              (unsigned long)generation,
@@ -1856,8 +2265,7 @@ void ui_discovered_options_for_generation(const char *options,
   }
   snprintf(discovered_scale_options, sizeof(discovered_scale_options), "%s",
            options && options[0] ? options : "Manual IP / hostname...");
-  touchscreen_text::dropdown_set_options(scale_host_dropdown, discovered_scale_options);
-  select_host_option_for_slot(true);
+  fill_scale_list(discovered_scale_options);
   bsp_display_unlock();
 }
 
@@ -1865,7 +2273,7 @@ void ui_networks(const char *options, uint32_t generation) {
   if (!bsp_display_lock(1000))
     return;
   if (!touchscreen_ui_generation_accepts(&content_generation, generation) ||
-      page_id != 3 || !networks) {
+      page_id != PAGE_WIFI || !networks) {
     ESP_LOGI("display",
              "Ignoring stale Wi-Fi scan result generation=%lu current=%lu page=%d",
              (unsigned long)generation,
@@ -1874,7 +2282,7 @@ void ui_networks(const char *options, uint32_t generation) {
     bsp_display_unlock();
     return;
   }
-  touchscreen_text::dropdown_set_options(networks, options);
+  fill_network_list(options);
   bsp_display_unlock();
 }
 void ui_paired(void) {
@@ -1902,15 +2310,14 @@ void ui_scale_profiles(const char *primary_host, bool primary_paired,
   scale_paired_ui[0] = primary_paired;
   scale_paired_ui[1] = secondary_paired;
   active_scale_ui = active_scale < 2 ? active_scale : 0;
-  setup_scale_slot = active_scale_ui;
 
   if (!ui_initialized)
     return;
   if (!bsp_display_lock(1000))
     return;
   update_home_nav_button();
-  if (page_id == 3)
-    build(3);
+  if (page_id == PAGE_SETUP || page_id == PAGE_SCALES)
+    build(page_id);
   bsp_display_unlock();
 }
 
@@ -1918,8 +2325,13 @@ void ui_settings_applied(const Settings &settings) {
   if (!bsp_display_lock(1000))
     return;
   initial = settings;
-  if (page_id == 3)
-    build(3);
+  // After a save, leave the edit page for the overview that shows the result.
+  if (page_id == PAGE_WIFI)
+    build(PAGE_SETUP);
+  else if (page_id == PAGE_SCALE_CONNECT)
+    build(PAGE_SCALES);
+  else if (page_id == PAGE_SETUP || page_id == PAGE_SCALES)
+    build(page_id);
   bsp_display_unlock();
 }
 

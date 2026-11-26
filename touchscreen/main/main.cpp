@@ -1093,7 +1093,24 @@ void action(const Action &a) {
     return;
   }
 
-  if (!strcmp(a.kind, "settings") && o) {
+  // Brightness has its own save so the Setup page can store it without
+  // touching Wi-Fi or re-running a scale connection attempt.
+  if (!strcmp(a.kind, "brightness") && o) {
+    double requested = num(o, "brightness");
+    if (!(requested >= 10))
+      requested = 10;
+    if (requested > 100)
+      requested = 100;
+    const uint8_t level = (uint8_t)requested;
+    if (settings.brightness != level) {
+      const uint8_t previous = settings.brightness;
+      settings.brightness = level;
+      if (persist() != ESP_OK) {
+        settings.brightness = previous;
+        touchscreen_ui_message("Could not save brightness");
+      }
+    }
+  } else if (!strcmp(a.kind, "settings") && o) {
     const char *host = str(o, "host");
     const int requested_slot = (int)num(o, "slot");
     const uint8_t slot = requested_slot == 1 ? 1 : 0;
@@ -1287,6 +1304,8 @@ void action(const Action &a) {
   cJSON_Delete(o);
 }
 } // namespace
+
+bool touchscreen_wifi_connected(void) { return wifi_ready.load(); }
 
 // Runtime services formerly layered through main_wrapper.cpp. They now use
 // explicit hooks from main.cpp so the application compiles as a normal source

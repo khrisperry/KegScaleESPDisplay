@@ -43,6 +43,8 @@ enum TouchscreenDiscoveryMode {
 };
 
 bool touchscreen_active_scale_paired(void);
+// True while the touchscreen's own Wi-Fi station has an IP address.
+bool touchscreen_wifi_connected(void);
 void touchscreen_home_discovery_result(int mode, const char *scale_name,
                                        const char *qr_payload,
                                        const char *detail);

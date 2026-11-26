@@ -82,13 +82,13 @@ void scale_scan_task(void *arg) {
   ui_discovered_options_for_generation(options, generation);
   if (count > 1)
     ui_message_for_generation(
-        "Several scales found. Choose one from the list.", generation);
+        "Several scales found. Tap the one to use.", generation);
   else if (count == 1)
     ui_message_for_generation(
-        "Scale found. Choose it or use Manual IP entry.", generation);
+        "Scale found. Tap it, then Connect.", generation);
   else
     ui_message_for_generation(
-        "No scale found. Choose Manual IP / hostname.", generation);
+        "No scale found. Type its address below.", generation);
 
   if (found)
     mdns_query_results_free(found);

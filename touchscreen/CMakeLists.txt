@@ -9,3 +9,9 @@ project(keg_scale_touchscreen)
 if(CONFIG_LV_USE_BUILTIN_MALLOC)
     message(FATAL_ERROR "Touchscreen LVGL must use system malloc. Reconfigure with CONFIG_LV_USE_CLIB_MALLOC=y.")
 endif()
+
+# ESP-IDF NimBLE store trips a false -Warray-bounds at -O2 with
+# BLE_STORE_MAX_BONDS=1: the [i+1] read sits behind a count>1 guard the
+# compiler cannot see through. Keep it a warning for that component only.
+idf_component_get_property(bt_lib bt COMPONENT_LIB)
+target_compile_options(${bt_lib} PRIVATE -Wno-error=array-bounds)
