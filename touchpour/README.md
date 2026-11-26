@@ -1,6 +1,6 @@
-# One-off 8×8 Christmas test · 0.2.0-grid-test.2
+# One-off 8×8 Christmas test · 0.2.0-grid-test.3
 
-See [test flashing, training and acceptance guide](docs/8X8_CHRISTMAS_TEST.md). This branch is TouchPour-only experimental firmware and must not be promoted to the regular OTA channels. It is the 8×8 test rebased onto V0.1.25, so it keeps everything below.
+See [test flashing, training and acceptance guide](docs/8X8_CHRISTMAS_TEST.md). This branch is TouchPour-only experimental firmware and must not be promoted to the regular OTA channels. It is the 8×8 test rebased onto V0.1.25, so it keeps everything below. grid-test.3 adds strict-by-default field tuning (invalid zones, ignore-nearest for the beer stream, bounded mid-pour dropout) on the 8×8 training page.
 
 # TouchPour Display — V0.1.23
 

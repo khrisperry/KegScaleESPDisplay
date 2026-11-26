@@ -12,12 +12,17 @@ GridFrame grid_frame;
 GridMatch grid_match;
 bool grid_sensor_present=false;
 int grid_stable_frames=0;
+GridTuning grid_tuning;
+int grid_missed_frames=0;
+uint32_t grid_last_recognized_at=0;
 static TAP_EXT_BSS VL53L7CX_Configuration dev;
 static TAP_EXT_BSS VL53L7CX_ResultsData results;
 void grid_load(){
   nvs_handle_t h;if(nvs_open("tap",NVS_READONLY,&h)!=ESP_OK)return;
   static TAP_EXT_BSS GridStore loaded;size_t n=sizeof(loaded);
   if(nvs_get_blob(h,"grid_v1",&loaded,&n)==ESP_OK&&n==sizeof(loaded)&&valid_grid_store(loaded))grid_store=loaded;
+  GridTuning tune;n=sizeof(tune);
+  if(nvs_get_blob(h,"grid_tune",&tune,&n)==ESP_OK&&n==sizeof(tune)&&valid_tuning(tune))grid_tuning=tune;
   nvs_close(h);
 }
 bool grid_save(const GridStore &s){
@@ -25,6 +30,18 @@ bool grid_save(const GridStore &s){
   nvs_handle_t h;if(nvs_open("tap",NVS_READWRITE,&h)!=ESP_OK)return false;
   esp_err_t e=nvs_set_blob(h,"grid_v1",&s,sizeof(s));if(e==ESP_OK)e=nvs_commit(h);
   nvs_close(h);return e==ESP_OK;
+}
+bool grid_tuning_save(const GridTuning &t){
+  if(!valid_tuning(t))return false;
+  nvs_handle_t h;if(nvs_open("tap",NVS_READWRITE,&h)!=ESP_OK)return false;
+  esp_err_t e=nvs_set_blob(h,"grid_tune",&t,sizeof(t));if(e==ESP_OK)e=nvs_commit(h);
+  nvs_close(h);return e==ESP_OK;
+}
+bool grid_pour_ok(uint32_t now,int selected_profile){
+  if(!grid_store.enabled)return true;
+  if(!grid_sensor_present)return false;
+  return grid_pour_continues(grid_match,selected_profile,now,grid_frame.at,grid_missed_frames,
+                             grid_last_recognized_at,uint32_t(settings.stale_ms),grid_tuning);
 }
 bool grid_ready(uint32_t now,bool half){
   if(!grid_store.enabled)return true;
@@ -106,7 +123,9 @@ void grid_sensor_task(void *){
       uint32_t now=esp_timer_get_time()/1000;last_frame=now;
       xSemaphoreTake(state_mutex,portMAX_DELAY);
       grid_sensor_present=use_grid;f.at=now;f.sequence=++sequence;grid_frame=f;
-      auto previous=grid_match;grid_match=match_grid(grid_store,f);
+      auto previous=grid_match;grid_match=match_grid(grid_store,f,grid_tuning);
+      if(grid_match.recognized){grid_missed_frames=0;grid_last_recognized_at=now;}
+      else if(grid_missed_frames<255)++grid_missed_frames;
       if(grid_match.recognized && previous.recognized && previous.profile==grid_match.profile)
         grid_stable_frames=std::min(5,grid_stable_frames+1);
       else grid_stable_frames=grid_match.recognized?1:0;
@@ -116,8 +135,14 @@ void grid_sensor_task(void *){
         mm=grid_match.nearest;status=5;
         valid=grid_store.enabled && grid_match.recognized && grid_match.nearest>=20;
       }
-      Sample s{mm,status,valid,now,sequence};
-      s.filtered_mm=filter.update(mm,valid,now,settings.stale_ms);s.filtered_valid=valid;sample=s;
+      // A tolerated mid-pour dropout publishes no sample: the controller keeps
+      // the last valid reading and its stale_ms deadline still closes the tap.
+      const bool tolerated=use_grid && grid_store.enabled && control.pouring && !grid_match.recognized &&
+                           grid_missed_frames<=grid_tuning.dropout_frames;
+      if(!tolerated){
+        Sample s{mm,status,valid,now,sequence};
+        s.filtered_mm=filter.update(mm,valid,now,settings.stale_ms);s.filtered_valid=valid;sample=s;
+      }
       xSemaphoreGive(state_mutex);
     }
     vTaskDelay(pdMS_TO_TICKS(initialized?20:1000));

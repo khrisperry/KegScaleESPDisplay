@@ -206,6 +206,12 @@ static esp_err_t status(httpd_req_t *r) {
   cJSON_AddNumberToObject(g,"stable_frames",grid_stable_frames);
   cJSON_AddNumberToObject(g,"rim_mm",grid_match.rim);
   cJSON_AddNumberToObject(g,"level_mm",grid_match.level);
+  cJSON_AddNumberToObject(g,"nearest_mm",grid_match.nearest);
+  cJSON_AddNumberToObject(g,"missed_frames",grid_missed_frames);
+  auto *tune=cJSON_AddObjectToObject(g,"tuning");
+  cJSON_AddNumberToObject(tune,"invalid_zones",grid_tuning.invalid_zones);
+  cJSON_AddNumberToObject(tune,"ignore_nearest",grid_tuning.ignore_nearest);
+  cJSON_AddNumberToObject(tune,"dropout_frames",grid_tuning.dropout_frames);
   cJSON_AddNumberToObject(g,"active_full_mm",runtime.stop_mm);
   cJSON_AddNumberToObject(g,"active_half_mm",runtime_half);
   auto *distances=cJSON_AddArrayToObject(g,"mm");auto *statuses=cJSON_AddArrayToObject(g,"status");
@@ -373,6 +379,21 @@ static esp_err_t train_grid(httpd_req_t *r){
     const char *op=a->valuestring;
     if(!strcmp(op,"disable"))next.enabled=false;
     else if(!strcmp(op,"enable")){ok=next.background_ready&&grid_sensor_present;next.enabled=ok;}
+    else if(!strcmp(op,"tune")){
+      // Field tuning is stored apart from training; 0/0/0 is the strict default.
+      auto field=[&](const char *k,int &out){auto *x=cJSON_GetObjectItemCaseSensitive(j,k);
+        if(!cJSON_IsNumber(x)||x->valuedouble!=x->valueint||x->valueint<0||x->valueint>255)return false;
+        out=x->valueint;return true;
+      };
+      int iz=0,in=0,df=0;GridTuning tune;
+      ok=field("invalid_zones",iz)&&field("ignore_nearest",in)&&field("dropout_frames",df);
+      if(ok){tune.invalid_zones=uint8_t(iz);tune.ignore_nearest=uint8_t(in);tune.dropout_frames=uint8_t(df);
+        ok=valid_tuning(tune)&&grid_tuning_save(tune);}
+      if(ok){grid_tuning=tune;grid_stable_frames=0;grid_missed_frames=0;}
+      xSemaphoreGive(state_mutex);cJSON_Delete(j);
+      if(!ok)return error(r,"Tuning rejected: stop pouring; invalid zones 0-4, ignore nearest 0-3, dropout frames 0-3.","409 Conflict");
+      return status(r);
+    }
     else if(!strcmp(op,"reset_profile")){
       ok=profile>=0&&profile<3;if(ok)clear_profile(next.profiles[profile]);
     }else{
@@ -380,7 +401,7 @@ static esp_err_t train_grid(httpd_req_t *r){
       if(ok){
         if(!strcmp(op,"background"))ok=capture_background(next,grid_frame);
         else if(!strcmp(op,"empty"))ok=capture_example(next,grid_frame,profile);
-        else if(!strcmp(op,"full")||!strcmp(op,"half"))ok=capture_target(next,grid_frame,profile,!strcmp(op,"half"));
+        else if(!strcmp(op,"full")||!strcmp(op,"half"))ok=capture_target(next,grid_frame,profile,!strcmp(op,"half"),grid_tuning);
         else ok=false;
       }
     }

@@ -36,11 +36,24 @@ inline uint64_t interior(uint64_t m){
     if((m&cross)==cross)out|=1ULL<<i;
   }return out;
 }
-inline int median_mask(const GridFrame &f,uint64_t m,bool minimum=false){
-  int v[64],n=0;for(int i=0;i<64;++i)if(m&(1ULL<<i)){if(!f.valid(i))return -1;v[n++]=f.mm[i];}
-  if(!n)return -1;
-  return minimum?*std::min_element(v,v+n):grid_median(v,n);
+// Field-tuning limits, stored separately from GridStore ("grid_tune"). All zero
+// is the strict grid-test.2 behaviour: any invalid zone rejects the match, the
+// nearest interior return is the cutoff, and one unrecognized frame closes.
+struct GridTuning {
+  uint8_t invalid_zones=0;  // invalid interior/boundary zones tolerated (0-4)
+  uint8_t ignore_nearest=0; // nearest interior returns skipped at cutoff (0-3), e.g. the beer stream
+  uint8_t dropout_frames=0; // consecutive unrecognized frames tolerated mid-pour (0-3); stale_ms still applies
+};
+inline bool valid_tuning(const GridTuning &t){return t.invalid_zones<=4&&t.ignore_nearest<=3&&t.dropout_frames<=3;}
+// Median (rank<0) or rank-th nearest valid zone of the mask. More than `allowed`
+// invalid zones, or a rank beyond the valid zones, fails closed (-1).
+inline int mask_stat(const GridFrame &f,uint64_t m,int allowed=0,int rank=-1){
+  int v[64],n=0,bad=0;
+  for(int i=0;i<64;++i)if(m&(1ULL<<i)){if(f.valid(i))v[n++]=f.mm[i];else if(++bad>allowed)return -1;}
+  if(!n||rank>=n)return -1;
+  std::sort(v,v+n);return rank<0?v[n/2]:v[rank];
 }
+inline int median_mask(const GridFrame &f,uint64_t m,bool minimum=false){return mask_stat(f,m,0,minimum?0:-1);}
 struct GridExample {uint64_t mask=0,inside=0;int16_t rim[64]{};};
 struct VesselProfile {
   GridExample examples[8]{};
@@ -81,7 +94,7 @@ inline uint64_t foreground(const GridStore &s,const GridFrame &f){
 }
 // Compare occupancy and boundary depth after translation. Interior depth is
 // deliberately excluded: filling a trained vessel must not change its identity.
-inline GridMatch match_grid(const GridStore &s,const GridFrame &f){
+inline GridMatch match_grid(const GridStore &s,const GridFrame &f,const GridTuning &tune={}){
   GridMatch best;int runner=0;const uint64_t observed=foreground(s,f);
   if(bits(observed)<6)return best;
   for(int p=0;p<3;++p){
@@ -93,24 +106,36 @@ inline GridMatch match_grid(const GridStore &s,const GridFrame &f){
         int score=100*bits(moved&observed)/bits(moved|observed);
         if(score<75)continue;
         uint64_t inside=shift_mask(t.inside,dx,dy),edge=moved&~inside;
-        int changes[64],n=0;
+        int changes[64],n=0,bad=0;
         for(int i=0;i<64;++i)if((t.mask&~t.inside)&(1ULL<<i)){
-          int j=i+dy*8+dx;if(!f.valid(j)){n=0;break;}changes[n++]=f.mm[j]-t.rim[i];
+          int j=i+dy*8+dx;
+          if(!f.valid(j)){if(++bad>tune.invalid_zones){n=0;break;}continue;}
+          changes[n++]=f.mm[j]-t.rim[i];
         }
         if(n<3)continue;
         const int offset=grid_median(changes,n);if(std::abs(offset)>80)continue;
         int deviation=0;for(int i=0;i<n;++i)deviation+=std::abs(changes[i]-offset);
         score-=std::min(30,deviation/n);
         if(score>candidate.score){
-          candidate={p,e,dx,dy,score,median_mask(f,edge),median_mask(f,inside),median_mask(f,inside,true),false,moved,inside};
+          const int allowed=tune.invalid_zones;
+          candidate={p,e,dx,dy,score,mask_stat(f,edge,allowed),mask_stat(f,inside,allowed),
+                     mask_stat(f,inside,allowed,tune.ignore_nearest),false,moved,inside};
         }
       }
     }
     if(candidate.score>best.score){runner=best.score;best=candidate;}
     else runner=std::max(runner,candidate.score);
   }
-  best.recognized=best.score>=75 && best.score-runner>=12 && best.level>0 && best.rim>0;
+  best.recognized=best.score>=75 && best.score-runner>=12 && best.level>0 && best.rim>0 && best.nearest>0;
   return best;
+}
+// Mid-pour recognition rule. A recognized frame must be the latched profile and
+// fresh. An unrecognized frame is tolerated only within tune.dropout_frames
+// consecutive frames and stale_ms of the last recognized frame.
+inline bool grid_pour_continues(const GridMatch &m,int selected,uint32_t now,uint32_t frame_at,
+                                int missed,uint32_t last_recognized_at,uint32_t stale_ms,const GridTuning &tune){
+  if(m.recognized)return m.profile==selected && uint32_t(now-frame_at)<=stale_ms;
+  return missed<=tune.dropout_frames && uint32_t(now-last_recognized_at)<=stale_ms;
 }
 inline bool capture_background(GridStore &s,const GridFrame &f){
   for(int i=0;i<64;++i)if(!f.valid(i)||f.mm[i]<50)return false;
@@ -130,13 +155,13 @@ inline bool capture_example(GridStore &s,const GridFrame &f,int p){
   for(int i=0;i<64;++i)t.rim[i]=f.mm[i];
   return true;
 }
-inline bool capture_target(GridStore &s,const GridFrame &f,int p,bool half){
+inline bool capture_target(GridStore &s,const GridFrame &f,int p,bool half,const GridTuning &tune={}){
   if(p<0||p>2)return false;
   // Match against this profile only: the operator explicitly selected its label.
   // Scratch copy is static (callers hold state_mutex) to keep it off the stack.
   static TAP_EXT_BSS GridStore one;
   one=s;for(int i=0;i<3;++i)if(i!=p)clear_profile(one.profiles[i]);
-  auto m=match_grid(one,f);if(!m.recognized || m.level<m.rim)return false;
+  auto m=match_grid(one,f,tune);if(!m.recognized || m.level<m.rim)return false;
   int gap=m.level-m.rim;auto &v=s.profiles[p];
   if(half){if(!v.full||gap<=v.full_gap)return false;v.half_gap=gap;v.half=true;}
   else {v.full_gap=gap;v.full=true;v.half=false;v.half_gap=0;}

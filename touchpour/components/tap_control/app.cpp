@@ -106,8 +106,7 @@ static void controller_task(void *) {
     if(screen_manual && manual_hold.pouring && !screen_down){
       manual_hold.stop("Manual fill: screen released");control.stop(manual_hold.reason);
     }
-    if(control.pouring && grid_store.enabled &&
-       (!grid_ready(now) || grid_match.profile!=selected_profile))control.stop("Container recognition lost");
+    if(control.pouring && !grid_pour_ok(now,selected_profile))control.stop("Container recognition lost");
     auto event = button.update(raw_high, now, was || manual_deadline || setup_mode || firmware_updating || history_saving || pin_lock::locked());
     const char *button_event = event.pressed ? "PRESSED (release to start; hold for manual fill)"
                              : event.released ? "RELEASED" : nullptr;

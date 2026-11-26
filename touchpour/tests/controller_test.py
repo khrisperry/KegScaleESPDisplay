@@ -22,6 +22,7 @@ Control control,manual_hold;
 GridStore grid_store;GridMatch grid_match;
 bool recognition_ok=true;
 bool grid_ready(uint32_t,bool=false){return !grid_store.enabled||recognition_ok;}
+bool grid_pour_ok(uint32_t,int){return !grid_store.enabled||recognition_ok;}
 Settings grid_settings(const Settings &s){return s;}
 int grid_half_target(int t){return t;}
 int grid_small_target(int t){return t;}

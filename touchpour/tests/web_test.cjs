@@ -53,6 +53,15 @@ const server=http.createServer((q,r)=>{
   state.grid.profiles[2].examples=3;state.grid.enabled=true;state.grid.recognized=true;state.grid.profile=2;state.grid.score=95;
   await page.waitForFunction(()=>document.getElementById('gridSummary').textContent.includes('Pitcher'));
   assert((await page.locator('#gridProfiles').textContent()).includes('Pitcher: 3/8'));
+  state.grid.tuning={invalid_zones:0,ignore_nearest:0,dropout_frames:0};
+  await page.locator('#gridTuning summary').click();
+  await page.waitForFunction(()=>document.getElementById('tuneNearest').value==='0');
+  await page.locator('#tuneInvalid').fill('2');await page.locator('#tuneNearest').fill('1');await page.locator('#tuneDropout').fill('3');
+  await page.locator('#saveTuning').click();
+  await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Tuning saved: 2/1/3'));
+  assert(requests.some(x=>x.url==='/api/grid/train'&&x.data.action==='tune'&&x.data.invalid_zones===2&&x.data.ignore_nearest===1&&x.data.dropout_frames===3));
+  await page.locator('#strictTuning').click();
+  await page.waitForFunction(()=>document.getElementById('message').textContent.includes('(strict)'));
   delete state.grid;
   await page.locator('[data-group=distance]').click();
   const boxes=await page.locator('[data-panel=distance] input').evaluateAll(inputs=>inputs.map(i=>i.getBoundingClientRect().top));

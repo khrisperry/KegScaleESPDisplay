@@ -15,7 +15,7 @@ cmake=(root/"CMakeLists.txt").read_text()
 workflow=(root/"../.github/workflows/touchpour.yml").read_text()
 checks={
     "independent TouchPour project": 'project(touchpour_display)' in cmake and
-        'set(PROJECT_VER "0.2.0-grid-test.2")' in cmake,
+        'set(PROJECT_VER "0.2.0-grid-test.3")' in cmake,
     "GPIO18 servo calibration enforced": "CONFIG_TAP_SERVO == 18" in app,
     "PWM initial duty calibrated closed only": "c.duty = settings.servo_calibrated" in app and
         "settings.closed_us * 16384 / 20000" in app,
@@ -41,4 +41,4 @@ checks={
 }
 failed=[x for x,v in checks.items() if not v]
 if failed: raise SystemExit("FAIL TouchPour manual maintenance safety: "+", ".join(failed))
-print("PASS TouchPour 0.2.0-grid-test.2 (V0.1.25 base) fail-closed manual maintenance safety guard")
+print("PASS TouchPour 0.2.0-grid-test.3 (V0.1.25 base) fail-closed manual maintenance safety guard")

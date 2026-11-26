@@ -1,8 +1,16 @@
 # TouchPour 8×8 one-off Christmas test
 
-Firmware identity: **0.2.0-grid-test.2**. This is an experimental TouchPour-only branch, not a normal release or OTA-channel update. No other scale/display firmware is changed. Do not merge into main or publish to the production/dev OTA feeds as part of this experiment. No device has been flashed or remotely updated.
+Firmware identity: **0.2.0-grid-test.3**. This is an experimental TouchPour-only branch, not a normal release or OTA-channel update. No other scale/display firmware is changed. Do not merge into main or publish to the production/dev OTA feeds as part of this experiment. No device has been flashed or remotely updated.
 
-## What changed from grid-test.1
+## What changed in grid-test.3
+
+- **Field tuning, strict by default.** Setup → 8×8 training → *Field tuning* adds three settings, saved under their own NVS key (`grid_tune`) apart from training. All three default to **0**, which is exactly the grid-test.2 behaviour. Loosen them only if strict pours keep stopping early on the real tap, and test with water first:
+  - **Invalid zones tolerated (0–4):** how many interior or boundary zones may return no valid reading (foam, liquid glare) before the match is rejected. Level and rim use the remaining valid zones.
+  - **Ignore nearest interior returns at cutoff (0–3):** the cutoff uses the Nth-nearest interior zone instead of the nearest. Use 1–2 if the beer stream crossing the view stops pours immediately. A setting that leaves no interior zone fails closed.
+  - **Unrecognized frames tolerated mid-pour (0–3):** brief recognition dropouts during a pour. No new sample is published while tolerated, so the existing 350 ms stale-data deadline still closes the tap. Recognizing a *different* profile always closes at once.
+- The live training summary now shows rim, level and the cutoff-zone distance, plus missed frames, so you can see what the cutoff is reading while you pour water.
+
+## What changed in grid-test.2 (from grid-test.1)
 
 - **Rebased onto TouchPour V0.1.25** (was V0.1.19). Keeps the V0.1.20 safe connection, V0.1.23 Small Cup and display refresh, V0.1.24 link diagnostics / 2 s reconnect and V0.1.25 Wi-Fi/lwIP buffers in PSRAM.
 - **Internal RAM.** V0.1.24 diagnostics showed the cottage unit at ~9 KB internal RAM free (minimum 5.3 KB). grid-test.1 added ~18 KB of internal use (two 3.6 KB training copies on a 16 KB web-server stack, an 8 KB LiDAR stack, driver buffers). Now the training store, scratch copies and VL53L7CX driver buffers are in PSRAM, the LiDAR task stack is in PSRAM, and the web-server stack is 9 KB (V0.1.25: 8 KB). Check the `link` heap figures in `/api/status` after flashing.
@@ -21,7 +29,7 @@ Mount the sensor looking down at the cup opening. The whole container outline mu
 
 The GitHub Actions test artifact includes the application, bootloader, partition table, OTA metadata, flash arguments, and this guide. Test artifacts are retained for 90 days, covering Christmas 2026; download a local copy before then.
 
-For an existing TouchPour device with the current partition table, use its website → Setup → Updates and upload **touchpour_display.bin**. Verify that the installed version reads **0.2.0-grid-test.2**. This is a manual upload only; the regular OTA feed is unchanged. Keep the normal firmware binary available to return to it.
+For an existing TouchPour device with the current partition table, use its website → Setup → Updates and upload **touchpour_display.bin**. Verify that the installed version reads **0.2.0-grid-test.3**. This is a manual upload only; the regular OTA feed is unchanged. Keep the normal firmware binary available to return to it.
 
 For USB on an ESP-IDF/esptool terminal, replace COM18 with the display's actual port:
 
